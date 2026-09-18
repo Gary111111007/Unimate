@@ -4,3 +4,4 @@ android/
 artifacts/
 *.log
 .DS_Store
+build-gradle*.log
