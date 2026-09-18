@@ -4,7 +4,7 @@ import { useDb } from '../stores/db.ts';
 import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
 import { readBinaryBase64, remove, writeBinaryBase64 } from '../services/io.ts';
-import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, cancelAll, scheduleTest } from '../services/notify.ts';
+import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
 import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts';
 
@@ -16,25 +16,26 @@ const restoreB64 = ref('');
 const restoreMode = ref<'overwrite' | 'merge'>('overwrite');
 const restoreInfo = ref('');
 const sched = ref(0);
+const stats = ref({ total: 0, classReminders: 0, todoReminders: 0, testReminders: 0, nextFireAt: '' });
 const schedMsg = ref('');
 
 const sub = computed(() => SECOND_CLASS_BLOCKS.map((b) => b.name + ' ' + db.blockScore(b.key)).join(' · '));
 
 async function open(name: typeof panel.value): Promise<void> {
   panel.value = name;
-  if (name === 'notify') { perm.value = await permissionState(); sched.value = await scheduledCount(); }
+  if (name === 'notify') { perm.value = await permissionState(); stats.value = await scheduleStats(); sched.value = stats.value.total; }
 }
 
 async function test(minutes: number): Promise<void> {
   const r = await scheduleTest(minutes);
   schedMsg.value = r.ok ? '已排期，' + r.at + ' 触发' : '失败：' + r.error;
-  sched.value = await scheduledCount();
+  stats.value = await scheduleStats(); sched.value = stats.value.total;
   db.notify(r.ok ? '已安排 ' + minutes + ' 分钟后的测试提醒' : '测试提醒失败：' + r.error);
 }
 
 async function clearAll(): Promise<void> {
   await cancelAll();
-  sched.value = await scheduledCount();
+  stats.value = await scheduleStats(); sched.value = stats.value.total;
   schedMsg.value = '已清空';
   db.notify('已取消全部排期提醒');
 }
@@ -85,7 +86,7 @@ async function resetDemo(): Promise<void> {
 
 async function reschedule(): Promise<void> {
   const r = await rescheduleAll(db.courses, db.timetables, db.notes, db.settings);
-  sched.value = await scheduledCount();
+  stats.value = await scheduleStats(); sched.value = stats.value.total;
   schedMsg.value = '排期 ' + r.scheduled + ' 条' + (r.error ? ' · ' + r.error : '');
   perm.value = r.permission;
   db.notify(r.error ? '队列已重建，但有异常' : '已重建通知队列，共 ' + r.scheduled + ' 条');
@@ -142,17 +143,18 @@ async function reschedule(): Promise<void> {
         <div class="card" style="box-shadow: none; background: #F7F9FC">
           <div class="row"><span class="grow small">系统通知权限</span><span class="pill" :class="perm === 'granted' ? 'live' : 'danger'">{{ perm === 'granted' ? '已允许' : (perm === 'unsupported' ? '当前环境不支持' : '未允许') }}</span></div>
           <button v-if="perm !== 'granted'" class="btn block sm" style="margin-top: 8px" @click="askPerm">去开启</button>
-          <div class="small muted" style="margin-top: 8px">部分国产 ROM 会冻结后台，建议在系统设置中允许 Unimate 自启动并加锁后台，否则提醒可能延迟。</div>
+          <div class="small muted" style="margin-top: 8px">部分国产 ROM 会冻结后台导致提醒延迟。小米/澎湃：设置 → 应用设置 → 应用管理 → Unimate → 省电策略选「无限制」，并在最近任务里下拉卡片锁定后台，同处打开「自启动」。</div>
         </div>
         <div class="card" style="box-shadow: none; background: #F7F9FC; margin-top: 10px">
           <div class="row" style="justify-content: space-between"><span class="small">系统已排期提醒</span><b class="small">{{ sched }} 条</b></div>
+          <div class="small muted" style="margin-top: 4px">上课 {{ stats.classReminders }} · 待办 {{ stats.todoReminders }} · 测试 {{ stats.testReminders }}<template v-if="stats.nextFireAt">；下一条 {{ stats.nextFireAt }}</template></div>
           <div class="row" style="justify-content: space-between; margin-top: 4px"><span class="small">最近一次重建结果</span><span class="small">{{ schedMsg || '—' }}</span></div>
           <div class="row" style="gap: 8px; margin-top: 10px">
             <button class="btn sm grow" @click="test(1)">测试提醒（1 分钟）</button>
             <button class="btn sm grey grow" @click="test(2)">2 分钟</button>
             <button class="btn sm danger grow" @click="clearAll()">清空排期</button>
           </div>
-          <div class="small muted" style="margin-top: 8px">测试提醒会真的在指定时间弹一条系统通知；若没弹，请把上面"已排期"与"重建结果"两行的内容告诉我。</div>
+          <div class="small muted" style="margin-top: 8px">测试提醒会在指定时间弹一条系统横幅通知。若到点没弹：先看上面「下一条」时间是否已过，再确认系统设置里 Unimate 的通知横幅已开启。</div>
         </div>
         <button class="btn block grey" style="margin-top: 10px" @click="reschedule()">重建提醒队列</button>
         <button class="btn block ghost" style="margin-top: 8px" @click="db.saveData()">保存设置</button>

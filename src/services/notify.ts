@@ -8,6 +8,7 @@ const NOTE_ID_BASE = 200000;
 const TEST_ID = 900;
 const DEMO_ID = 999;
 const HORIZON_DAYS = 14;
+const CHANNEL_TAG = 'v2';
 
 export interface RescheduleResult { scheduled: number; permission: string; error: string }
 
@@ -34,9 +35,11 @@ export async function permissionState(): Promise<string> {
 async function ensureChannels(): Promise<void> {
   const anyLocal = LocalNotifications as any;
   if (typeof anyLocal.createChannel !== 'function') return;
+  // Android 8+ 的通知渠道一旦创建，importance 与声音就改不动了，用同 id 重建无效。
+  // 因此渠道 id 带版本号：需要调整横幅等级时递增 CHANNEL_TAG，新设置才会真正落到手机上。
   for (const ch of [
-    { id: 'class', name: '上课提醒', description: '课前提醒', importance: 5, sound: null },
-    { id: 'todo', name: '待办提醒', description: '记事本到期提醒', importance: 5, sound: null }
+    { id: 'class-' + CHANNEL_TAG, name: '上课提醒', description: '课前提醒，横幅弹出并响铃', importance: 5, vibration: true, lightColor: '#2E5AAC', lockScreenVisibility: 1, audioAttributes: { contentType: 4, flags: 1, source: 2, usage: 5 } },
+    { id: 'todo-' + CHANNEL_TAG, name: '待办提醒', description: '记事本到期提醒，横幅弹出并响铃', importance: 5, vibration: true, lightColor: '#2E5AAC', lockScreenVisibility: 1, audioAttributes: { contentType: 4, flags: 1, source: 2, usage: 5 } }
   ]) { try { await anyLocal.createChannel(ch); } catch { /* 已存在或不支持 */ } }
 }
 
@@ -52,10 +55,30 @@ async function cancelIds(ids: number[]): Promise<void> {
   try { await LocalNotifications.cancel({ notifications: ids.map((id) => ({ id })) }); } catch { /* noop */ }
 }
 
-export async function scheduledCount(): Promise<number> {
-  const ids = await safeScheduled();
-  return ids.filter((id) => id >= CLASS_ID_BASE).length;
+export interface ScheduleStats { total: number; classReminders: number; todoReminders: number; testReminders: number; nextFireAt: string }
+
+// 口径修正：TEST_ID/DEMO_ID 的 id 小于 CLASS_ID_BASE，旧代码用 id>=CLASS_ID_BASE 过滤，
+// 把测试提醒整个滤掉了，导致闹钟明明排进去了却永远显示"0 条"。这里改为全量分类统计。
+export async function scheduleStats(): Promise<ScheduleStats> {
+  const s: ScheduleStats = { total: 0, classReminders: 0, todoReminders: 0, testReminders: 0, nextFireAt: '' };
+  try {
+    const all = await LocalNotifications.scheduled();
+    s.total = all.length;
+    const times: number[] = [];
+    for (const n of all) {
+      if (n.id === TEST_ID || n.id === DEMO_ID) s.testReminders++;
+      else if (n.id >= NOTE_ID_BASE) s.todoReminders++;
+      else if (n.id >= CLASS_ID_BASE) s.classReminders++;
+      const at = (n as any).at || ((n as any).schedule && (n as any).schedule.at);
+      if (at) { const t = new Date(at).getTime(); if (t > 0) times.push(t); }
+    }
+    times.sort((a, b) => a - b);
+    if (times.length) s.nextFireAt = new Date(times[0]).toTimeString().slice(0, 5);
+  } catch { /* noop */ }
+  return s;
 }
+
+export async function scheduledCount(): Promise<number> { return (await scheduleStats()).total; }
 
 export async function cancelAll(): Promise<void> {
   await cancelIds(await safeScheduled());
@@ -95,7 +118,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           list.push({
             id, title: '上课提醒',
             body: '还有 ' + settings.classReminderMinutes + ' 分钟：' + c.name + (c.room ? ' · ' + c.room : ''),
-            startTime: new Date(fire), notificationChannelId: 'class',
+            startTime: new Date(fire), notificationChannelId: 'class-' + CHANNEL_TAG, forceAlert: true,
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
         }
@@ -115,7 +138,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           seen.add(String(id));
           list.push({
             id, title: '待办提醒', body: n.title + '（' + n.remindAt.slice(5, 16) + '）',
-            startTime: new Date(fire), notificationChannelId: 'todo',
+            startTime: new Date(fire), notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true,
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
         }
@@ -152,7 +175,7 @@ export async function scheduleTest(minutes: number): Promise<{ ok: boolean; at: 
       notifications: [{
         id: TEST_ID, title: 'Unimate 测试提醒',
         body: '这条是 ' + minutes + ' 分钟前设置的，收到就说明提醒链路正常',
-        startTime: when, notificationChannelId: 'todo', smallIcon: 'ic_stat_icon', autoCancel: true
+        startTime: when, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     });
     return { ok: true, at: when.toTimeString().slice(0, 8), error: '' };
@@ -169,7 +192,7 @@ export async function scheduleDemoPing(): Promise<boolean> {
     await LocalNotifications.schedule({
       notifications: [{
         id: DEMO_ID, title: 'Uni 提醒', body: '演示通知：Uni 已经准备好提醒你啦',
-        startTime: new Date(fire), notificationChannelId: 'todo', smallIcon: 'ic_stat_icon', autoCancel: true
+        startTime: new Date(fire), notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     });
     return true;

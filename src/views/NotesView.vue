@@ -67,11 +67,26 @@ const monthCount = computed(() => {
   return live.value.filter((n) => noteDate(n).startsWith(prefix)).length;
 });
 
-function shiftMonth(d: number): void {
+const calAnim = ref('');
+let touchX = 0; let touchY = 0;
+
+function shiftMonth(d: number, animate = true): void {
   let mm = m.value + d;
   let yy = y.value;
   if (mm < 0) { mm = 11; yy -= 1; } else if (mm > 11) { mm = 0; yy += 1; }
+  if (animate) calAnim.value = d > 0 ? 'slide-l' : 'slide-r';
   y.value = yy; m.value = mm;
+}
+function endCal(): void { calAnim.value = ''; }
+function onCalTouchStart(e: TouchEvent): void {
+  touchX = e.changedTouches[0].clientX; touchY = e.changedTouches[0].clientY;
+}
+function onCalTouchEnd(e: TouchEvent): void {
+  const dx = e.changedTouches[0].clientX - touchX;
+  const dy = e.changedTouches[0].clientY - touchY;
+  // 横向位移足够大且明显大于纵向才判定为切月手势，避免和上下滚动打架
+  if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
+  shiftMonth(dx < 0 ? 1 : -1);
 }
 function goToday(): void {
   const d = new Date();
@@ -173,7 +188,7 @@ function toggleAlarm(v: number): void {
         <button class="btn sm ghost" @click="goToday">今天</button>
       </div>
 
-      <div class="card cal">
+      <div class="card cal" :class="calAnim" @animationend="endCal" @touchstart="onCalTouchStart" @touchend="onCalTouchEnd">
         <div v-for="w in WEEK" :key="w" class="wd">{{ w }}</div>
         <div
           v-for="c in cells" :key="c.key" class="dc"
@@ -256,6 +271,10 @@ function toggleAlarm(v: number): void {
 .modes button.on { background: var(--brand); color: #fff; }
 .mhead { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .mnav { width: 34px; height: 34px; border-radius: 10px; background: #fff; color: var(--brand); font-size: 20px; box-shadow: var(--shadow); flex: none; }
+.cal.slide-l { animation: cal-slide-l .28s cubic-bezier(.22,.61,.36,1); }
+.cal.slide-r { animation: cal-slide-r .28s cubic-bezier(.22,.61,.36,1); }
+@keyframes cal-slide-l { from { opacity: .25; transform: translateX(26%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes cal-slide-r { from { opacity: .25; transform: translateX(-26%); } to { opacity: 1; transform: translateX(0); } }
 .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; padding: 8px 6px; }
 .wd { text-align: center; font-size: 11px; color: var(--muted); padding-bottom: 4px; }
 .dc { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 10px; gap: 2px; }
