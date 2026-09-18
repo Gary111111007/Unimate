@@ -82,7 +82,7 @@ export const BUCT_PROFILE: SchoolProfile = {
   campusApps: [
     { key: 'health', name: '健康云', url: 'https://tygl.buct.edu.cn/', icon: '🩺', desc: '体质测试与健康数据', builtin: true },
     { key: 'jwglxt', name: '教务系统', url: 'https://jwglxt.buct.edu.cn/', icon: '🏛', desc: '课表 · 成绩 · 选课', builtin: true },
-    { key: 'course', name: '网络课程', url: 'https://course.buct.edu.cn/', icon: '📚', desc: '在线课程与作业', builtin: true },
+    { key: 'course', name: '北化在线', url: 'https://course.buct.edu.cn/', icon: '📚', desc: '在线课程与作业', builtin: true },
     { key: 'library', name: '图书馆', url: 'https://library.buct.edu.cn/', icon: '📖', desc: '馆藏检索 · 数据库导航', builtin: true },
     { key: 'zy', name: '电子资源', url: 'https://zy.buct.edu.cn/', icon: '🔑', desc: '统一身份认证 · 校外访问', builtin: true },
     { key: 'portal', name: '信息门户', url: 'https://portal.buct.edu.cn/', icon: '🧭', desc: '统一身份认证主入口', builtin: true },

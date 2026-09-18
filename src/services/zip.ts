@@ -26,18 +26,37 @@ function cat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
+/**
+ * 文件名含非 ASCII 时必须置 general purpose bit 11（0x0800 = UTF-8）。
+ * 不置位的话，Windows 资源管理器会按 OEM 码页（简体中文即 cp437/GBK）解文件名 ——
+ * 手机解压软件宽容所以看着正常，拷到电脑上全是乱码。这是真实交付缺陷。
+ */
+function nameFlag(name: string): number {
+  return /[^\x00-\x7F]/.test(name) ? 0x0800 : 0x0000;
+}
+
+/** DOS 时间格式（本地时区），避免解压后文件时间全是 1980-01-01。 */
+function dosDateTime(d: Date): { time: number; date: number } {
+  return {
+    time: (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2),
+    date: (Math.max(0, d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()
+  };
+}
+
 export function makeZip(entries: { name: string; data: Uint8Array }[]): Uint8Array {
   const enc = new TextEncoder();
   const locals: Uint8Array[] = [];
   const centrals: Uint8Array[] = [];
+  const { time: dTime, date: dDate } = dosDateTime(new Date());
   let offset = 0;
   for (const e of entries) {
     const nameBytes = enc.encode(e.name);
+    const flag = nameFlag(e.name);
     const crc = crc32(e.data);
-    const local = cat([u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
+    const local = cat([u32(0x04034b50), u16(20), u16(flag), u16(0), u16(dTime), u16(dDate),
       u32(crc), u32(e.data.length), u32(e.data.length), u16(nameBytes.length), u16(0), nameBytes, e.data]);
     locals.push(local);
-    centrals.push(cat([u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
+    centrals.push(cat([u32(0x02014b50), u16(20), u16(20), u16(flag), u16(0), u16(dTime), u16(dDate),
       u32(crc), u32(e.data.length), u32(e.data.length), u16(nameBytes.length), u16(0), u16(0),
       u16(0), u16(0), u32(0), u32(offset), nameBytes]));
     offset += local.length;

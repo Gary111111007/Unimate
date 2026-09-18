@@ -76,11 +76,55 @@ function resetForm(): void {
 }
 function openForm(): void { resetForm(); showForm.value = true; }
 
-async function locate(): Promise<{ lat: number | null; lng: number | null; acc: number | null }> {
+/** 定位状态要在界面上看得见。旧写法 catch 后静默返回 null，用户只会发现"经纬度没了"。 */
+const locState = ref({ text: '尚未定位', ok: false });
+const manLat = ref(''); const manLng = ref('');
+
+function manualCoords(): { lat: number | null; lng: number | null } {
+  const la = parseFloat(manLat.value); const lo = parseFloat(manLng.value);
+  if (Number.isFinite(la) && Number.isFinite(lo) && Math.abs(la) <= 90 && Math.abs(lo) <= 180) return { lat: la, lng: lo };
+  return { lat: null, lng: null };
+}
+
+async function locate(): Promise<{ lat: number | null; lng: number | null; acc: number | null; error: string; from: 'gps' | 'network' | 'manual' | 'none' }> {
+  const mc = manualCoords();
+  if (mc.lat !== null && mc.lng !== null) {
+    locState.value = { text: '使用手填坐标 ' + mc.lat.toFixed(5) + ', ' + mc.lng.toFixed(5), ok: true };
+    return { lat: mc.lat, lng: mc.lng, acc: null, error: '', from: 'manual' };
+  }
+  // 先把权限要到手，并明确告知失败原因，而不是让插件抛个匿名异常
   try {
-    const p = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000 });
-    return { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy || 0) };
-  } catch { return { lat: null, lng: null, acc: null }; }
+    const cur = await Geolocation.checkPermissions();
+    if (cur.location !== 'granted' && cur.coarseLocation !== 'granted') {
+      const req = await Geolocation.requestPermissions();
+      if (req.location !== 'granted' && req.coarseLocation !== 'granted') {
+        locState.value = { text: '定位权限未授予', ok: false };
+        return { lat: null, lng: null, acc: null, error: '定位权限未授予（系统设置 → 应用 → Unimate → 权限 → 位置信息）', from: 'none' };
+      }
+    }
+  } catch { /* 预览环境没有该插件，继续往下试 */ }
+  // 室内 GPS 常常 8 秒定不出来，先高精度再退到 WiFi/基站定位，别一次失败就放弃
+  const attempts: { opt: any; from: 'gps' | 'network' }[] = [
+    { opt: { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 }, from: 'gps' },
+    { opt: { enableHighAccuracy: false, timeout: 7000, maximumAge: 300000 }, from: 'network' }
+  ];
+  let lastErr = '定位超时或系统未返回坐标';
+  for (const a of attempts) {
+    try {
+      const p = await Geolocation.getCurrentPosition(a.opt);
+      const acc = Math.round(p.coords.accuracy || 0);
+      locState.value = { text: (a.from === 'gps' ? '卫星定位' : 'WiFi/基站定位') + ' ' + p.coords.latitude.toFixed(5) + ', ' + p.coords.longitude.toFixed(5) + (acc ? ' ±' + acc + 'm' : ''), ok: true };
+      return { lat: p.coords.latitude, lng: p.coords.longitude, acc, error: '', from: a.from };
+    } catch (e: any) { lastErr = (e && e.message) ? e.message : lastErr; }
+  }
+  locState.value = { text: '未取到坐标：' + lastErr, ok: false };
+  return { lat: null, lng: null, acc: null, error: lastErr, from: 'none' };
+}
+
+async function relocate(): Promise<void> {
+  locState.value = { text: '定位中…', ok: false };
+  const r = await locate();
+  db.notify(r.lat !== null ? '坐标已获取（' + (r.from === 'gps' ? '卫星' : '网络') + '）' : '仍未取到坐标：' + r.error);
 }
 
 async function addPhoto(source: 'camera' | 'gallery' | 'sample'): Promise<void> {
@@ -107,6 +151,7 @@ async function addPhoto(source: 'camera' | 'gallery' | 'sample'): Promise<void> 
       if (!base64) throw new Error('没有拿到照片数据');
     }
     const loc = await locate();
+    if (loc.lat === null) db.notify('本张照片未获取到经纬度：' + loc.error);
     const customText = (form.value.activityName || '第二课堂活动') + (db.settings.watermarkCustomText ? ' · ' + db.settings.watermarkCustomText : '');
     const wm = form.value.watermark
       ? await applyWatermark({
@@ -125,6 +170,7 @@ async function addPhoto(source: 'camera' | 'gallery' | 'sample'): Promise<void> 
       id, originalPath: relO, watermarkPath: relW, capturedAt,
       latitude: loc.lat, longitude: loc.lng, accuracyMeters: loc.acc,
       address: form.value.address, addressSource: form.value.address ? 'manual' : (loc.lat !== null ? 'coordinate-only' : 'none'),
+      coordSource: (loc as any).from && (loc as any).from !== 'none' ? (loc as any).from : undefined,
       source: source === 'gallery' ? 'gallery' : 'camera', watermarked: form.value.watermark,
       originalSha256: await sha256Base64(base64), watermarkSha256: await sha256Base64(wm.base64),
       deviceLabel: navigator.userAgent.slice(0, 40), appVersion: '1.0.0'
@@ -176,7 +222,7 @@ async function openDetail(r: SecondClassRecord): Promise<void> {
 function copyEvidence(r: SecondClassRecord): void {
   const lines = r.photos.map((p) => [
     p.capturedAt, p.watermarked ? '有水印' : '无水印',
-    p.latitude !== null ? p.latitude.toFixed(5) + ',' + p.longitude.toFixed(5) : '无坐标',
+    p.latitude !== null ? p.latitude.toFixed(5) + ',' + p.longitude.toFixed(5) + (p.coordSource === 'manual' ? '（手填）' : p.coordSource === 'network' ? '（网络）' : '（卫星）') : '无坐标',
     p.address || '未填地址', 'sha256:' + p.watermarkSha256.slice(0, 16)
   ].join(' | ')).join('\n');
   const text = '【Unimate 第二课堂存证】' + r.activityName + '\n板块：' + blockDef(r.block).name + ' 自评分：' + r.score + '\n日期：' + r.activityDate + '\n' + lines +
@@ -273,7 +319,17 @@ const total = computed(() => db.totalScore());
           <button class="chip sm" :class="{ on: form.watermark }" @click="form.watermark = !form.watermark">{{ form.watermark ? '已开启' : '已关闭' }}</button>
         </div>
         <div class="small muted" style="margin-top: 6px">将烧录：{{ db.settings.watermarkLines.time ? '拍摄时间 ' : '' }}{{ db.settings.watermarkLines.coordinate ? '经纬度 ' : '' }}{{ db.settings.watermarkLines.custom ? '自定义文字 ' : '' }}{{ db.settings.watermarkLines.address && form.address ? '地址 ' : '' }}校名角标。不依赖任何第三方地图服务。</div>
-        <input v-model="form.address" class="addr" placeholder="地址（选填，本机手写，不做逆地理编码）" />
+        <div class="locrow">
+          <span class="locdot" :class="{ ok: locState.ok }"></span>
+          <span class="small grow">{{ locState.text }}</span>
+          <button class="btn sm ghost" @click="relocate">重新定位</button>
+        </div>
+        <div class="row" style="gap: 8px; margin-top: 8px">
+          <input v-model="manLat" class="addr grow" placeholder="纬度（手填可覆盖，选填）" inputmode="decimal" />
+          <input v-model="manLng" class="addr grow" placeholder="经度" inputmode="decimal" />
+        </div>
+        <div class="small muted" style="margin-top: 4px">手填坐标会在水印与存证里标为 manual，与卫星定位区分开，不冒充 GPS。</div>
+        <input v-model="form.address" class="addr" style="margin-top: 8px" placeholder="地址（选填，本机手写，不做逆地理编码）" />
       </div>
       <div class="field" style="margin-top: 12px"><label>自评分数</label>
         <div class="chips"><button v-for="s in QUICK_SCORES" :key="s" class="chip sm" :class="{ on: form.score === s }" @click="form.score = s">{{ s }} 分</button></div>
@@ -336,6 +392,9 @@ const total = computed(() => db.totalScore());
 .nw { position: absolute; left: 4px; bottom: 4px; font-size: 10px; background: rgba(0, 0, 0, .6); color: #fff; padding: 1px 5px; border-radius: 6px; }
 .big-p img { width: 100%; border-radius: 10px; cursor: pointer; }
 .ph img { cursor: pointer; }
+.locrow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.locdot { width: 8px; height: 8px; border-radius: 50%; background: #C9CED6; flex: none; }
+.locdot.ok { background: #2FA35C; }
 .addr { width: 100%; margin-top: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; }
 .exp { background: #F7F9FC; box-shadow: none; }
 .path { word-break: break-all; color: #3A424E; }

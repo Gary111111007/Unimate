@@ -12,8 +12,59 @@ import type { CampusApp } from '../types.ts';
 const db = useDb();
 const status = ref('');
 const p = () => db.profile!;
-const builtin = computed<CampusApp[]>(() => p().campusApps || []);
-const custom = computed<CampusApp[]>(() => db.settings.customApps || []);
+/** 内置条目被长按改过的，用 appEdits 覆盖；自定义条目直接改本体。 */
+function merged(a: CampusApp): CampusApp {
+  const e = (db.settings.appEdits || {})[a.key];
+  return e ? { ...a, ...e } : a;
+}
+const builtin = computed<CampusApp[]>(() => (p().campusApps || []).map(merged));
+const custom = computed<CampusApp[]>(() => (db.settings.customApps || []).map(merged));
+
+const editedKeys = computed<Set<string>>(() => new Set(Object.keys(db.settings.appEdits || {})));
+
+// ---------- 长按编辑 ----------
+const editing = ref<CampusApp | null>(null);
+const editingBuiltin = ref(false);
+let lpTimer: number | null = null;
+let lpFired = false;
+
+function openEdit(a: CampusApp, isB: boolean): void { editing.value = { ...a }; editingBuiltin.value = isB; showIcons.value = false; }
+function lpStart(a: CampusApp, isB: boolean): void {
+  lpFired = false;
+  lpTimer = window.setTimeout(() => { lpFired = true; openEdit(a, isB); }, 500);
+}
+function lpCancel(): void { if (lpTimer !== null) { clearTimeout(lpTimer); lpTimer = null; } }
+function onTap(a: CampusApp, isB: boolean): void {
+  if (lpFired) { lpFired = false; return; }   // 长按已触发，别顺带打开页面
+  void a; void isB; openTarget(a);
+}
+
+async function saveEdit(): Promise<void> {
+  const e = editing.value; if (!e) return;
+  const url = normUrl(e.url);
+  if (!e.name.trim()) { db.notify('名称不能为空'); return; }
+  if (!/^https?:\/\/[^\s.]+\.[^\s]{2,}$/.test(url)) { db.notify('网址格式不对，例：tygl.buct.edu.cn'); return; }
+  const patch: Partial<CampusApp> = {
+    name: e.name.trim(), url, desc: (e.desc || '').trim(),
+    icon: (e.icon || '').trim() || '🔗', iconData: e.iconData || undefined
+  };
+  if (editingBuiltin.value) {
+    if (!db.settings.appEdits) db.settings.appEdits = {};
+    db.settings.appEdits[e.key] = patch;
+  } else {
+    db.settings.customApps = (db.settings.customApps || []).map((x) => (x.key === e.key ? { ...x, ...patch } : x));
+  }
+  await db.saveData();
+  editing.value = null;
+  db.notify('已保存，只改本机显示，不影响学校网站本身');
+}
+async function revertEdit(): Promise<void> {
+  const e = editing.value; if (!e) return;
+  if (db.settings.appEdits) delete db.settings.appEdits[e.key];
+  await db.saveData();
+  editing.value = null;
+  db.notify('已恢复默认名称与信息');
+}
 
 const showAdd = ref(false);
 const nf = ref({ name: '', url: '', icon: '🔗', iconData: '' });
@@ -36,12 +87,12 @@ async function pickIcon(): Promise<void> {
       resultType: CameraResultType.DataUrl, source: CameraSource.Prompt, correctOrientation: true
     });
     if (ph && ph.dataUrl) {
-      nf.value.iconData = ph.dataUrl;
+      if (editing.value) editing.value.iconData = ph.dataUrl; else nf.value.iconData = ph.dataUrl;
       db.notify('图标已换成你上传的图片');
     }
   } catch { /* 用户取消，不算错误 */ }
 }
-function clearIcon(): void { nf.value.iconData = ''; }
+function clearIcon(): void { if (editing.value) editing.value.iconData = ''; else nf.value.iconData = ''; }
 async function openTarget(a: CampusApp): Promise<void> {
   status.value = '正在打开 ' + a.name + '…';
   if (!isNativeWebView()) {
@@ -115,19 +166,57 @@ async function delApp(a: CampusApp): Promise<void> {
       <div class="small muted" style="margin-top: 6px">自定义入口只写进你手机的本地文件，不上传、不联网；换机或清除数据即消失。</div>
     </div>
 
+    <div class="tip">长按任意入口可改名、改网址、换图标</div>
     <div class="grid">
-      <div v-for="a in builtin" :key="a.key" class="app" @click="openTarget(a)">
+      <div v-for="a in builtin" :key="a.key" class="app" :class="{ edited: !!a.desc && editedKeys.has(a.key) }"
+           @click="onTap(a, true)" @touchstart="lpStart(a, true)" @touchend="lpCancel" @touchmove="lpCancel" @touchcancel="lpCancel" @contextmenu.prevent>
+
         <img v-if="a.iconData" :src="a.iconData" class="icoimg" alt="" />
         <span v-else class="ico">{{ a.icon }}</span>
         <div class="an">{{ a.name }}</div>
         <div class="ad">{{ a.desc }}</div>
+        <span v-if="editedKeys.has(a.key)" class="tag-edited">已自定义</span>
       </div>
-      <div v-for="a in custom" :key="a.key" class="app mine" @click="openTarget(a)">
+      <div v-for="a in custom" :key="a.key" class="app mine" @click="onTap(a, false)" @touchstart="lpStart(a, false)" @touchend="lpCancel" @touchmove="lpCancel" @touchcancel="lpCancel" @contextmenu.prevent>
         <img v-if="a.iconData" :src="a.iconData" class="icoimg" alt="" />
         <span v-else class="ico">{{ a.icon }}</span>
         <div class="an">{{ a.name }}</div>
         <div class="ad">{{ a.desc }}</div>
+        <span v-if="editedKeys.has(a.key)" class="tag-edited">已改</span>
         <button class="del" @click.stop="delApp(a)">×</button>
+      </div>
+    </div>
+
+    <div v-if="editing" class="mask" @click.self="editing = null">
+      <div class="sheet">
+        <div class="row"><div class="title grow">编辑入口</div><button class="btn sm ghost" @click="editing = null">取消</button></div>
+        <div class="hairline"></div>
+        <div class="field"><label>名称</label><input v-model="editing.name" placeholder="显示名" /></div>
+        <div class="field"><label>网址</label><input v-model="editing.url" placeholder="https://…" /></div>
+        <div class="field"><label>说明</label><input v-model="editing.desc" placeholder="一句话说明，显示在名字下面" /></div>
+        <div class="field">
+          <label>图标</label>
+          <div class="iconbar">
+            <div class="preview">
+              <img v-if="editing.iconData" :src="editing.iconData" class="icoimg big" alt="" />
+              <span v-else class="prevemoji">{{ editing.icon || '🔗' }}</span>
+            </div>
+            <div class="grow">
+              <button class="btn sm ghost block" @click="showIcons = !showIcons">{{ showIcons ? '收起预设' : '选预设图标' }}</button>
+              <button class="btn sm grey block" style="margin-top: 6px" @click="pickIcon">从相册/拍照上传</button>
+            </div>
+            <button v-if="editing.iconData" class="btn sm danger" style="margin-left:6px" @click="clearIcon">清除</button>
+          </div>
+          <div v-if="showIcons" class="icongrid">
+            <button v-for="ic in ICON_CHOICES" :key="ic" class="ichip" :class="{ on: !editing.iconData && editing.icon === ic }"
+                    @click="editing.icon = ic; editing.iconData = ''">{{ ic }}</button>
+          </div>
+        </div>
+        <div class="small muted" style="margin-bottom: 8px">改动只影响本机显示，不上传、不联网，也不会改变学校网站本身。</div>
+        <div class="row" style="gap: 8px">
+          <button v-if="editingBuiltin" class="btn grey grow" @click="revertEdit">恢复默认</button>
+          <button class="btn grow" @click="saveEdit">保存</button>
+        </div>
       </div>
     </div>
 
@@ -157,6 +246,16 @@ async function delApp(a: CampusApp): Promise<void> {
 </template>
 
 <style scoped>
+.tip { font-size: 11.5px; color: var(--muted); margin: 2px 2px 8px; }
+.tag-edited { position: absolute; top: 5px; left: 6px; font-size: 9px; color: #7A6A1F; background: #FFF3C4; border-radius: 5px; padding: 1px 4px; }
+.app { user-select: none; -webkit-touch-callout: none; -webkit-user-select: none; }
+.mask { position: fixed; inset: 0; z-index: 110; background: rgba(8,12,20,.46); display: flex; align-items: flex-end; }
+.sheet { width: 100%; max-height: 86vh; overflow: auto; background: #fff; border-radius: 18px 18px 0 0; padding: 14px 14px calc(16px + var(--safe-b)); }
+.sheet .title { font-size: 16px; font-weight: 700; }
+.sheet .field { margin-bottom: 11px; }
+.sheet .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+.sheet .field input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #FBFCFE; font-size: 14px; }
+.hairline { height: 1px; background: var(--line); margin: 10px 0 12px; }
 .hero { background: linear-gradient(140deg, #2E5AAC, #3E6FBF); color: #fff; }
 .hero .title { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
 .hero .small { color: rgba(255, 255, 255, .82); font-size: 12.5px; line-height: 1.6; }

@@ -72,6 +72,8 @@ export interface PhotoEvidence {
   accuracyMeters: number | null;
   address: string;
   addressSource: 'manual' | 'coordinate-only' | 'none';
+  /** 坐标来源：gps=卫星定位 network=WiFi/基站 manual=人工填写。可信度材料必须能区分。 */
+  coordSource?: 'gps' | 'network' | 'manual';
   source: 'camera' | 'gallery';
   watermarked: boolean;
   originalSha256: string;
@@ -163,6 +165,8 @@ export interface Settings {
   webviewKeepSession: boolean;
   autoBackup: boolean;
   lastActiveTimetableId: string | null;
+  /** 长按北化通条目后可改的名称/网址/说明/图标，按 key 覆盖内置档案 */
+  appEdits: Record<string, Partial<CampusApp>>;
   /** 用户自己添加的校园入口（本校未收录的服务由用户自行补全） */
   customApps: CampusApp[];
 }
