@@ -111,6 +111,11 @@ export interface PeriodTime { period: number; start: string; end: string }
 
 export interface SecondClassBlockDef { key: BlockKey; name: string; fullName: string; fullScore: number; basicCap: number; extendedCap: number }
 
+/** 校园服务入口（"北化通"这类一站式聚合页的一项）。 */
+export interface CampusApp { key: string; name: string; url: string; icon: string; desc: string; builtin?: boolean;
+  /** 用户上传的自定义图标（data URL）。为空时用 icon 里的 emoji。 */
+  iconData?: string; }
+
 export interface SchoolProfile {
   schoolId: string;
   name: string;
@@ -120,6 +125,8 @@ export interface SchoolProfile {
   province: string;
   brand: { primaryColor: string; accentColor: string; iconLetter: string };
   tabs: { online: string };
+  /** 一站式校园服务入口。除北化外的高校接入后各自填写。 */
+  campusApps: CampusApp[];
   academic: {
     semesterLabel: string;
     semesterStartMonday: string;
@@ -156,6 +163,8 @@ export interface Settings {
   webviewKeepSession: boolean;
   autoBackup: boolean;
   lastActiveTimetableId: string | null;
+  /** 用户自己添加的校园入口（本校未收录的服务由用户自行补全） */
+  customApps: CampusApp[];
 }
 
 export interface InterestEntry { schoolId: string; schoolName: string; contact: string; createdAt: string }

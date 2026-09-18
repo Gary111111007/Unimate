@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type {
   Account, Course, InterestEntry, NoteItem, SchoolProfile, SecondClassRecord,
   Settings, Timetable
@@ -26,7 +26,9 @@ function defaultSettings(p: SchoolProfile): Settings {
     semesterStartMonday: p.academic.semesterStartMonday,
     totalWeeks: p.academic.totalWeeks,
     showWeekend: true, theme: 'light', webviewKeepSession: true, autoBackup: true,
-    lastActiveTimetableId: null
+    lastActiveTimetableId: null,
+    // 用户自行添加的校园入口（本校档案没收录的服务）
+    customApps: []
   };
 }
 
@@ -58,6 +60,14 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   const activeTimetable = computed(() =>
     timetables.value.find((t) => t.id === settings.value.lastActiveTimetableId) || timetables.value[0] || null);
 
+  // 学期字段以"当前使用中的课表"为唯一真相：settings 里的值只是设置面板的编辑缓冲。
+  // 不做这层同步的话，切换课表后设置面板仍显示上一张的起始周，一保存就把新课表的
+  // 学期起始日与总周数静默覆盖掉（多课表场景下的真实缺陷）。
+  watch(activeTimetable, (tt) => {
+    if (!tt) return;
+    settings.value.semesterStartMonday = tt.semesterStartMonday;
+    settings.value.totalWeeks = tt.totalWeeks;
+  }, { immediate: true });
   const currentWeek = computed(() => {
     const t = activeTimetable.value;
     if (!t) return 1;

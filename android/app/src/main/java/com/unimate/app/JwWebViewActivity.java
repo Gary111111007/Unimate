@@ -69,12 +69,13 @@ public class JwWebViewActivity extends Activity {
         label.setLayoutParams(labelLp);
 
         Button back = small("←");
+        Button fwd = small("→");
         Button reload = small("刷新");
+        Button home = small("主页");
         Button grab = small("一键保存并识别");
         grab.setMinWidth(0);
         grab.setBackgroundColor(Color.parseColor("#2E5AAC"));
         Button openExt = small("浏览器");
-
         Button closeBtn = small("关闭");
         row1.addView(label);
         row1.addView(closeBtn);
@@ -83,7 +84,9 @@ public class JwWebViewActivity extends Activity {
         row2.setOrientation(LinearLayout.HORIZONTAL);
         row2.setGravity(Gravity.CENTER_VERTICAL);
         row2.addView(back);
+        row2.addView(fwd);
         row2.addView(reload);
+        row2.addView(home);
         row2.addView(grab);
         row2.addView(openExt);
 
@@ -169,6 +172,8 @@ public class JwWebViewActivity extends Activity {
         root.addView(webView);
         setContentView(root);
 
+        fwd.setOnClickListener(v -> { if (webView.canGoForward()) webView.goForward(); });
+        home.setOnClickListener(v -> webView.loadUrl(homeUrl));
         back.setOnClickListener(v -> { if (webView.canGoBack()) webView.goBack(); else finishWith("", "cancelled"); });
         reload.setOnClickListener(v -> webView.reload());
         closeBtn.setOnClickListener(v -> finishWith("", "cancelled"));

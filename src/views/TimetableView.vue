@@ -27,6 +27,20 @@ const dayIndexes = computed(() => {
   return db.settings.showWeekend ? all : all.slice(0, 5);
 });
 const todayIdx = computed(() => (new Date().getDay() + 6) % 7);
+/** 当前展示周次内、第 di 天（0=周一）对应的真实日期。改"课表设置 → 学期第一周周一"即整体平移。 */
+function dateForDay(di: number): Date {
+  const tt = db.activeTimetable;
+  const d = tt ? new Date(tt.semesterStartMonday.replace(/-/g, '/') + ' 00:00:00') : new Date();
+  d.setDate(d.getDate() + (week.value - 1) * 7 + di);
+  return d;
+}
+function mdOf(di: number): string { const d = dateForDay(di); return (d.getMonth() + 1) + '/' + d.getDate(); }
+/** 只有"本周"视图下才高亮今天，翻到别周不该继续标红。 */
+function isTodayCol(di: number): boolean { return di === todayIdx.value && week.value === db.currentWeek; }
+const weekRange = computed(() => {
+  const f = (d: Date) => (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  return f(dateForDay(0)) + '–' + f(dateForDay(6));
+});
 const nowPeriod = computed(() => {
   const mins = new Date().getHours() * 60 + new Date().getMinutes();
   for (const p of db.settings.periodTimes) {
@@ -186,8 +200,8 @@ function toggleWeek(w: number): void {
     <div class="card weeknav">
       <button class="nav" @click="shift(-1)" :disabled="week <= 1">‹</button>
       <div class="cur" @click="showWeekPicker = true">
-        <div class="bold">第 {{ week }} 周</div>
-        <div class="small muted">{{ db.activeTimetable?.name || '还没有课表' }}</div>
+        <div class="bold">第 {{ week }} 周 <span class="wr">{{ weekRange }}</span></div>
+        <div class="small muted">{{ db.activeTimetable?.name || '还没有课表' }} · 共 {{ db.activeTimetable?.totalWeeks || 0 }} 周</div>
       </div>
       <button class="nav" @click="shift(1)" :disabled="week >= (db.activeTimetable?.totalWeeks || 18)">›</button>
       <button v-if="week !== db.currentWeek" class="btn sm ghost today" @click="goToday">回本周</button>
@@ -214,11 +228,11 @@ function toggleWeek(w: number): void {
     <transition :name="'wk-' + wkDir" mode="out-in">
     <div v-if="placed.length" class="grid" :key="week" :style="{ gridTemplateColumns: '38px repeat(' + dayIndexes.length + ', 1fr)' }">
       <div class="corner">节次</div>
-      <div v-for="di in dayIndexes" :key="di" class="dayhead" :class="{ today: di === todayIdx }">{{ DAY_FULL[di] }}</div>
+      <div v-for="di in dayIndexes" :key="di" class="dayhead" :class="{ today: isTodayCol(di) }"><div class="dw">{{ DAY_FULL[di] }}</div><div class="dd">{{ mdOf(di) }}</div></div>
       <div class="timecol">
         <div v-for="p in 12" :key="p" class="timelab" :style="{ height: ROW_H + 'px' }"><b>{{ p }}</b><span>{{ timeOf(p) }}</span></div>
       </div>
-      <div v-for="(day, i) in placed" :key="i" class="daycol" :class="{ today: dayIndexes[i] === todayIdx }">
+      <div v-for="(day, i) in placed" :key="i" class="daycol" :class="{ today: isTodayCol(dayIndexes[i]) }">
         <div v-for="p in 12" :key="p" class="cell" :style="{ height: ROW_H + 'px' }"></div>
         <div
           v-for="x in day" :key="x.b.key" class="block"
@@ -278,6 +292,10 @@ function toggleWeek(w: number): void {
         <button v-for="w in db.activeTimetable?.totalWeeks || 18" :key="w" class="chip" :class="{ on: w === week }" @click="week = w; showWeekPicker = false">{{ w }}</button>
       </div>
       <button class="btn block grey" style="margin-top: 14px" @click="goToday(); showWeekPicker = false">回到本周（第 {{ db.currentWeek }} 周）</button>
+      <div class="hairline" style="margin:14px 0 8px"></div>
+      <div class="row" style="justify-content: space-between"><span class="small muted">第 1 周周一</span><b class="small">{{ db.activeTimetable?.semesterStartMonday || '未设置' }}</b></div>
+      <div class="row" style="justify-content: space-between; margin-top: 4px"><span class="small muted">学期总周数</span><b class="small">{{ db.activeTimetable?.totalWeeks || '—' }} 周</b></div>
+      <button class="btn block ghost" style="margin-top: 10px" @click="showWeekPicker = false; showSettings = true">调整学期起始周与总周数</button>
     </div>
   </div>
 
@@ -338,12 +356,18 @@ function toggleWeek(w: number): void {
 .nav:disabled { opacity: .35; }
 .cur { flex: 1; text-align: center; }
 .today { flex: none; }
+.wr { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 4px; }
 .swipe-hint { margin: 4px 0 8px; }
 .next { display: flex; gap: 10px; align-items: center; border-left: 4px solid var(--brand); }
 .dot { width: 12px; height: 12px; border-radius: 4px; flex: none; }
 .grid { display: grid; grid-template-columns: 38px repeat(7, 1fr); background: #fff; border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
-.corner, .dayhead { font-size: 11px; color: var(--muted); text-align: center; padding: 7px 0; border-bottom: 1px solid var(--line); background: #F7F9FC; }
-.dayhead.today { color: var(--brand); font-weight: 700; background: #EDF3FF; }
+.corner { font-size: 11px; color: var(--muted); text-align: center; padding: 7px 0; border-bottom: 1px solid var(--line); background: #F7F9FC; }
+.dayhead { font-size: 11px; color: var(--muted); text-align: center; padding: 5px 0 6px; border-bottom: 1px solid var(--line); background: #F7F9FC; line-height: 1.25; }
+.dayhead .dw { font-size: 11.5px; }
+.dayhead .dd { font-size: 10px; opacity: .78; font-variant-numeric: tabular-nums; }
+.dayhead.today { color: var(--brand); background: #EDF3FF; }
+.dayhead.today .dw { font-weight: 700; }
+.dayhead.today .dd { opacity: 1; font-weight: 600; }
 .timecol { border-right: 1px solid var(--line); }
 .timelab { display: flex; flex-direction: column; align-items: center; padding-top: 3px; font-size: 10px; color: var(--muted); border-bottom: 1px dashed var(--line); }
 .timelab b { font-size: 12px; color: #3A424E; }
