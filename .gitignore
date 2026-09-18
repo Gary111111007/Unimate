@@ -1,7 +1,20 @@
 node_modules/
 dist/
-android/
 artifacts/
 *.log
-.DS_Store
 build-gradle*.log
+.DS_Store
+
+# android/ 只忽略生成物。AndroidManifest.xml、res/xml/file_paths.xml、
+# network_security_config.xml、java 源码与 gradle 配置都是**手写源文件**，
+# 必须纳入版本控制，否则换机或误删 android/ 后这些修复会凭空消失。
+android/build/
+android/app/build/
+android/.gradle/
+android/app/.gradle/
+android/capacitor-cordova-android-plugins/build/
+android/capacitor-cordova-android-plugins/src/main/assets/
+# cap sync 的产物（真源在 ../dist）
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json

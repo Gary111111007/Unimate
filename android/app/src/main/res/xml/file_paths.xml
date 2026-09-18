@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 路径白名单。缺 <files-path> 会让 Directory.Data（getFilesDir，应用私有内部目录）
+  下的文件无法解析成 content:// —— 微信等第三方收到 URI 后读不到内容，表现为"获取资源失败"。
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path name="my_images" path="." />
+    <cache-path name="my_cache_images" path="." />
+    <files-path name="capacitor_files" path="." />
+    <external-files-path name="capacitor_external_files" path="." />
+    <external-cache-path name="capacitor_external_cache" path="." />
+    <root-path name="capacitor_root" path="." />
+</paths>

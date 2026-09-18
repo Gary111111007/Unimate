@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Unimate</string>
+    <string name="title_activity_main">Unimate</string>
+    <string name="package_name">com.unimate.app</string>
+    <string name="custom_url_scheme">com.unimate.app</string>
+</resources>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  北化教务系统会把登录跳转到 http://jwglxt.buct.edu.cn/sso/jziotlogin，
+  Android 9+ 默认禁止明文 HTTP（net::ERR_CLEARTEXT_NOT_PERMITTED）。
+  这里只对 buct.edu.cn 及其子域放开明文，其他域名仍然强制 HTTPS。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">buct.edu.cn</domain>
+        <domain includeSubdomains="true">jwglxt.buct.edu.cn</domain>
+        <domain includeSubdomains="true">course.buct.edu.cn</domain>
+    </domain-config>
+</network-security-config>
