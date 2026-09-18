@@ -11,8 +11,13 @@ const scale = ref(1);
 const tx = ref(0);
 const ty = ref(0);
 const cur = computed(() => props.items[i.value]);
+const zoomed = computed(() => scale.value > 1.02);
 
 function reset(): void { scale.value = 1; tx.value = 0; ty.value = 0; }
+function zoomTo(v: number): void {
+  scale.value = Math.min(5, Math.max(1, v));
+  if (scale.value <= 1.02) { tx.value = 0; ty.value = 0; }
+}
 function step(d: number): void {
   if (d > 0 && i.value < props.items.length - 1) i.value++;
   else if (d < 0 && i.value > 0) i.value--;
@@ -21,7 +26,10 @@ function step(d: number): void {
 
 let pinchDist = 0; let pinchScale = 1;
 let lastX = 0; let lastY = 0; let dragging = false;
-let lastTap = 0; let startX = 0; let moved = 0;
+let startX = 0; let moved = 0;
+// 手势归零判定：只有"所有手指都离开屏幕"时才评估双击，
+// 否则抬起第二根手指会被误判成第二次点击，把刚放大的倍率强制 reset()。
+let downAt = 0; let sawMulti = false;
 
 function dist(t: TouchList): number {
   const dx = t[0].clientX - t[1].clientX;
@@ -30,11 +38,14 @@ function dist(t: TouchList): number {
 }
 function onStart(e: TouchEvent): void {
   moved = 0;
-  if (e.touches.length === 2) {
+  if (e.touches.length >= 2) {
+    sawMulti = true;
     pinchDist = dist(e.touches); pinchScale = scale.value;
+    dragging = false;
     return;
   }
   dragging = true;
+  downAt = Date.now();
   lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
   startX = lastX;
 }
@@ -48,30 +59,36 @@ function onMove(e: TouchEvent): void {
   if (!dragging) return;
   const x = e.touches[0].clientX; const y = e.touches[0].clientY;
   moved += Math.abs(x - startX);
-  if (scale.value > 1.02) {
+  if (zoomed.value) {
     tx.value += x - lastX; ty.value += y - lastY;
     e.preventDefault();
   }
   lastX = x; lastY = y;
 }
 function onEnd(e: TouchEvent): void {
-  if (pinchDist > 0 && e.touches.length < 2) pinchDist = 0;
-  if (scale.value <= 1.02) {
-    const dx = lastX - startX;
-    if (Math.abs(dx) > 56) step(dx < 0 ? 1 : -1);
+  // 还有手指按在屏上（双指抬起其中一根）：只结束捏合，不做任何手势判定
+  if (e.touches.length > 0) {
+    if (e.touches.length < 2) pinchDist = 0;
+    return;
   }
-  if (scale.value <= 1.02) { tx.value = 0; ty.value = 0; }
+  pinchDist = 0;
   dragging = false;
-  const now = Date.now();
-  if (now - lastTap < 300) {
-    if (scale.value > 1.05) reset(); else { scale.value = 2.4; }
+  if (!zoomed.value) {
+    const dx = lastX - startX;
+    if (Math.abs(dx) > 56) { step(dx < 0 ? 1 : -1); sawMulti = false; return; }
+    tx.value = 0; ty.value = 0;
   }
-  lastTap = now;
+  // 双击放大/还原：必须是"单指、快速、几乎没移动、且本次手势没出现过多指"
+  const quick = Date.now() - downAt < 260;
+  if (!sawMulti && quick && moved < 14) {
+    if (zoomed.value) reset(); else scale.value = 2.4;
+  }
+  sawMulti = false;
 }
 </script>
 
 <template>
-  <div class="viewer" @touchstart="onStart" @touchmove="onMove" @touchend="onEnd">
+  <div class="viewer" @touchstart="onStart" @touchmove="onMove" @touchend="onEnd" @touchcancel="onEnd">
     <div class="vbar">
       <button class="vb" @click="emit('close')">✕ 关闭</button>
       <div class="vt grow">{{ cur.title }}</div>
@@ -80,11 +97,18 @@ function onEnd(e: TouchEvent): void {
 
     <img :src="cur.url" :style="{ transform: 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')' }" />
 
+    <div class="zbar">
+      <button class="zb" :disabled="scale <= 1.02" @click="zoomTo(scale - 0.6)">－</button>
+      <div class="zval" :class="{ on: zoomed }">{{ Math.round(scale * 100) }}%{{ zoomed ? ' · 已固定' : '' }}</div>
+      <button class="zb" :disabled="scale >= 5" @click="zoomTo(scale + 0.6)">＋</button>
+      <button class="zb wide" :disabled="!zoomed" @click="reset">还原</button>
+    </div>
+
     <div class="vfoot">
       <div class="small">{{ cur.sub }}</div>
       <div class="row" style="justify-content: space-between; margin-top: 8px">
         <button class="vb" :disabled="i === 0" @click="step(-1)">‹ 上一张</button>
-        <span class="small hint">双指缩放 · 双击放大 · 拖动平移</span>
+        <span class="small hint">双指缩放后松手即保持 · 双击切换 · 放大后可拖动</span>
         <button class="vb" :disabled="i >= items.length - 1" @click="step(1)">下一张 ›</button>
       </div>
     </div>
@@ -99,6 +123,12 @@ function onEnd(e: TouchEvent): void {
 .vb { color: #fff; background: rgba(255, 255, 255, .12); border-radius: 9px; padding: 7px 11px; font-size: 13px; }
 .vb:disabled { opacity: .35; }
 img { flex: 1; width: 100%; object-fit: contain; transition: transform .08s ease-out; will-change: transform; }
+.zbar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 6px 12px; }
+.zb { min-width: 40px; height: 34px; border-radius: 10px; background: rgba(255,255,255,.14); color: #fff; font-size: 17px; line-height: 1; }
+.zb.wide { font-size: 13px; padding: 0 12px; }
+.zb:disabled { opacity: .32; }
+.zval { min-width: 96px; text-align: center; font-size: 12.5px; color: rgba(255,255,255,.62); font-variant-numeric: tabular-nums; }
+.zval.on { color: #8FD3A0; }
 .vfoot { padding: 10px 12px calc(14px + var(--safe-b)); color: #fff; }
 .hint { opacity: .55; }
 </style>
