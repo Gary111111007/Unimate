@@ -18,6 +18,12 @@ function zoomTo(v: number): void {
   scale.value = Math.min(5, Math.max(1, v));
   if (scale.value <= 1.02) { tx.value = 0; ty.value = 0; }
 }
+/** 平移范围限制：不允许把图片拖到屏幕外看不见。 */
+function clampPan(): void {
+  const lim = Math.max(0, (scale.value - 1) * 400);
+  tx.value = Math.max(-lim, Math.min(lim, tx.value));
+  ty.value = Math.max(-lim, Math.min(lim, ty.value));
+}
 function step(d: number): void {
   if (d > 0 && i.value < props.items.length - 1) i.value++;
   else if (d < 0 && i.value > 0) i.value--;
@@ -53,6 +59,9 @@ function onMove(e: TouchEvent): void {
   if (e.touches.length === 2 && pinchDist > 0) {
     const d = dist(e.touches);
     scale.value = Math.min(5, Math.max(1, pinchScale * (d / pinchDist)));
+    // 缩回 1 倍时把平移量归零，否则"放大→拖动→缩小"会停在偏移位置（真机反馈）。
+    if (scale.value <= 1.02) { tx.value = 0; ty.value = 0; }
+    else clampPan();
     e.preventDefault();
     return;
   }
@@ -61,6 +70,7 @@ function onMove(e: TouchEvent): void {
   moved += Math.abs(x - startX);
   if (zoomed.value) {
     tx.value += x - lastX; ty.value += y - lastY;
+    clampPan();
     e.preventDefault();
   }
   lastX = x; lastY = y;

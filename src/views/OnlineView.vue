@@ -98,6 +98,7 @@ const overKey = ref('');
 let lpTimer: number | null = null;
 let lpFired = false;
 let originX = 0; let originY = 0;
+let curX = 0; let curY = 0;
 const editZone = ref<HTMLElement | null>(null);
 const delZone = ref<HTMLElement | null>(null);
 const dragEls = new Map<string, HTMLElement>();
@@ -114,10 +115,12 @@ function inZone(el: HTMLElement | null, x: number, y: number): boolean {
 function lpStart(a: CampusApp, e: TouchEvent): void {
   lpFired = false;
   const t = e.touches[0];
-  originX = t.clientX; originY = t.clientY;
+  curX = originX = t.clientX; curY = originY = t.clientY;
   lpTimer = window.setTimeout(() => {
     lpFired = true;
     dragging.value = a;
+    // 以"当前指尖"而不是"按下时"为基准，否则长按到进入拖动之间的那点位移会让卡片突然跳一下
+    originX = curX; originY = curY;
     dragDX.value = 0; dragDY.value = 0;
     overZone.value = ''; overKey.value = '';
     if (navigator.vibrate) { try { navigator.vibrate(18); } catch { /* 不支持就算了 */ } }
@@ -126,21 +129,20 @@ function lpStart(a: CampusApp, e: TouchEvent): void {
 function lpCancel(): void { if (lpTimer !== null) { clearTimeout(lpTimer); lpTimer = null; } }
 
 function onDragMove(e: TouchEvent): void {
+  curX = e.touches[0].clientX; curY = e.touches[0].clientY;
   if (!dragging.value) return;
   const t = e.touches[0];
   dragDX.value = t.clientX - originX;
   dragDY.value = t.clientY - originY;
   overZone.value = inZone(editZone.value, t.clientX, t.clientY) ? 'edit'
     : inZone(delZone.value, t.clientX, t.clientY) ? 'del' : '';
-  // 悬停在别的卡片上就实时换位，所见即所得
+  // 不在拖动过程中实时换位（那样列表会在手指底下乱跳，手感很差）；
+  // 只记下手指压在谁身上，松手时一次性落位。
   if (!overZone.value) {
     const under = document.elementsFromPoint(t.clientX, t.clientY)
       .map((el) => (el as HTMLElement).closest('[data-akind]') as HTMLElement | null)
       .find((el) => el && el.dataset.akind !== dragging.value!.key);
-    if (under) {
-      const target = under.dataset.akind || '';
-      if (target && target !== overKey.value) { reorderTo(dragging.value.key, target); overKey.value = target; }
-    }
+    overKey.value = under ? (under.dataset.akind || '') : '';
   }
   e.preventDefault();
 }
@@ -153,19 +155,26 @@ function reorderFrom(dragKey: string, dropKey: string): void {
   keys.splice(to, 0, keys.splice(from, 1)[0]);
   db.settings.appOrder = keys;
 }
-function reorderTo(dragKey: string, dropKey: string): void { reorderFrom(dragKey, dropKey); }
+
 
 async function onDragEnd(): Promise<void> {
   lpCancel();
   const a = dragging.value;
   if (!a) return;
   const zone = overZone.value;
+  const target = overKey.value;
   dragging.value = null; overZone.value = ''; overKey.value = '';
   dragDX.value = 0; dragDY.value = 0;
-  await db.saveData();
-  if (zone === 'edit') openEdit(a);
-  else if (zone === 'del') { confirmDel.value = a; }
-  else if (zone === '') db.notify('顺序已保存');
+  // 落在两个投放区里就只做对应操作，**不动排序**；只有落在空白/卡片上才换位置
+  if (zone === 'edit') { openEdit(a); return; }
+  if (zone === 'del') { confirmDel.value = a; return; }
+  if (target) {
+    reorderFrom(a.key, target);
+    await db.saveData();
+    db.notify('已把「' + a.name + '」放到「' + (apps.value.find((x) => x.key === target)?.name || '') + '」的位置');
+  } else {
+    await db.saveData();
+  }
 }
 function onTap(a: CampusApp): void {
   if (lpFired) { lpFired = false; return; }
@@ -299,8 +308,8 @@ async function probeAll(): Promise<void> {
 
     <div class="grid">
       <div v-for="a in apps" :key="a.key" class="app" :data-akind="a.key"
-           :class="{ mine: customKeys.has(a.key), edited: !!cookieMap[a.key], dragging: dragging?.key === a.key, lift: !!dragging && dragging.key !== a.key }"
-           :style="dragging?.key === a.key ? { transform: 'translate(' + dragDX + 'px,' + dragDY + 'px)' } : {}"
+           :class="{ mine: customKeys.has(a.key), edited: !!cookieMap[a.key], dragging: dragging?.key === a.key, drop: !!dragging && overKey === a.key && dragging.key !== a.key }"
+           :style="dragging?.key === a.key ? { transform: 'translate3d(' + dragDX + 'px,' + dragDY + 'px,0)' } : {}"
            @click="onTap(a)" @touchstart="lpStart(a, $event)" @touchend="onDragEnd" @touchmove="onDragMove" @touchcancel="onDragEnd" @contextmenu.prevent>
         <span v-if="customKeys.has(a.key)" class="tag-mine">我的</span>
         <span v-else-if="(db.settings.appEdits || {})[a.key]" class="tag-edited">已改</span>
@@ -336,7 +345,7 @@ async function probeAll(): Promise<void> {
     <!-- 拖动时浮现的两个投放区 -->
     <div v-if="dragging" ref="editZone" class="zone zedit" :class="{ on: overZone === 'edit' }">拖到这里：更改信息</div>
     <div v-if="dragging" ref="delZone" class="zone zdel" :class="{ on: overZone === 'del' }">拖到这里：删除此板块</div>
-    <div v-if="dragging" class="dragtip">正在拖动「{{ dragging.name }}」· 移到别的卡片上可直接换位置</div>
+    <div v-if="dragging" class="dragtip">正在拖动「{{ dragging.name }}」· 松手放到目标卡片上即换位置，拖到上/下方面板可改信息或删除</div>
     <!-- 两步确认删除 -->
     <div v-if="confirmDel" class="mask" @click.self="confirmDel = null">
       <div class="sheet">
@@ -394,8 +403,9 @@ async function probeAll(): Promise<void> {
 .zdel { bottom: 0; padding-bottom: var(--safe-b); background: rgba(176, 67, 59, .93); }
 .zone.on { outline: 3px solid #FFD37A; outline-offset: -6px; }
 .dragtip { position: fixed; left: 50%; transform: translateX(-50%); top: 50%; z-index: 131; background: rgba(16,24,38,.9); color: #fff; font-size: 12px; padding: 7px 12px; border-radius: 999px; pointer-events: none; white-space: nowrap; }
-.app.dragging { z-index: 140; position: relative; box-shadow: 0 12px 28px rgba(0,0,0,.34); opacity: .96; transition: none; }
-.app.lift { opacity: .55; }
+.app.dragging { z-index: 140; position: relative; box-shadow: 0 12px 28px rgba(0,0,0,.34); opacity: .97; transition: none; will-change: transform; transform-origin: center; }
+.app.drop { outline: 2px solid var(--brand); outline-offset: -2px; }
+
 .grid { position: relative; }
 .hero { background: linear-gradient(140deg, #2E5AAC, #3E6FBF); color: #fff; }
 .hero .title { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
