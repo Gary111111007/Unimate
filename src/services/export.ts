@@ -27,18 +27,38 @@ function stamp(): string {
  * 复制失败则退回私有目录 URI（file_paths.xml 已补 <files-path>，同样可分享）。
  */
 const PUB_DIR = 'Unimate导出';
+
+/**
+ * 依次尝试三个落点，取第一个成功的：
+ *  1) Directory.PublicDocuments —— Android 10+ 经 MediaStore 写入**真正的公共 Documents**，
+ *     任何文件管理器和微信都能直接读到（首选，因为小米/澎湃默认不允许浏览 Android/data）；
+ *  2) Directory.Documents —— 应用私有的外部目录，低版本或 MediaStore 失败时兜底；
+ *  3) 应用内部 exports/ —— 至少保证数据不丢。
+ * 三者都在 FileProvider 白名单内（file_paths.xml 已补 files-path / external-files-path）。
+ */
+async function publishFile(relPath: string, fileName: string): Promise<{ uri: string; hint: string }> {
+  const b64 = await readBinaryBase64(relPath);
+  const attempts: { dir: any; label: string }[] = [
+    { dir: Directory.PublicDocuments, label: '手机存储 → Documents/' + PUB_DIR },
+    { dir: Directory.Documents, label: '文件管理器 → Android/data/com.unimate.app/files/Documents/' + PUB_DIR }
+  ];
+  for (const a of attempts) {
+    try {
+      const dest = a.dir === Directory.Documents ? PUB_DIR + '/' + fileName : fileName;
+      if (a.dir === Directory.Documents) {
+        await Filesystem.mkdir({ path: PUB_DIR, directory: a.dir, recursive: true }).catch(() => { /* 已存在 */ });
+      }
+      await Filesystem.writeFile({ path: dest, data: b64, directory: a.dir, recursive: true });
+      const u = await Filesystem.getUri({ path: dest, directory: a.dir });
+      return { uri: u.uri, hint: '已存入：' + a.label + '（微信可从"手机文件"里直接选到）' };
+    } catch { /* 换下一个落点 */ }
+  }
+  return { uri: await nativeUri(relPath), hint: '公共目录写入失败，仅存于应用私有目录 exports/' };
+}
+
 async function shareableUri(relPath: string, fileName: string): Promise<{ uri: string; hint: string }> {
   if (!Capacitor.isNativePlatform()) return { uri: relPath, hint: '浏览器预览环境，未写入手机存储' };
-  try {
-    const b64 = await readBinaryBase64(relPath);
-    await Filesystem.mkdir({ path: PUB_DIR, directory: Directory.Documents, recursive: true }).catch(() => { /* 已存在 */ });
-    const dest = PUB_DIR + '/' + fileName;
-    await Filesystem.writeFile({ path: dest, data: b64, directory: Directory.Documents, recursive: true });
-    const u = await Filesystem.getUri({ path: dest, directory: Directory.Documents });
-    return { uri: u.uri, hint: '已存入手机：文件管理器 → Android/data/com.unimate.app/files/Documents/' + PUB_DIR };
-  } catch {
-    return { uri: await nativeUri(relPath), hint: '仅存于应用私有目录 exports/（可在"我的→备份与恢复"取出）' };
-  }
+  return publishFile(relPath, fileName);
 }
 function evidenceLines(r: SecondClassRecord): string {
   return r.photos.map((p, i) => [
@@ -130,9 +150,24 @@ export async function savePhotoToDevice(r: SecondClassRecord, index: number): Pr
   if (!b64) throw new Error('照片文件不存在');
   const name = safeName(r.activityName) + '_' + (index + 1) + '.jpg';
   if (!Capacitor.isNativePlatform()) { await writeBinaryBase64('pictures/' + name, b64); return '（预览环境）pictures/' + name; }
-  await Filesystem.writeFile({ path: 'Unimate/' + name, data: b64, directory: Directory.Pictures });
-  const u = await Filesystem.getUri({ path: 'Unimate/' + name, directory: Directory.Pictures });
-  return u.uri;
+  // 优先写真正的公共 Pictures（Android 10+ 经 MediaStore），小米/澎湃的相册与文件
+  // 管理器才能直接看到；失败再退回应用私有的 Pictures 子目录。
+  // 注意：写到哪个目录就必须用哪个目录取 URI，取错目录会直接抛"文件不存在"。
+  const tries: { dir: any; path: string; label: string }[] = [
+    { dir: Directory.PublicPictures, path: name, label: '公共相册 Pictures/' + name },
+    { dir: Directory.Pictures, path: 'Unimate/' + name, label: 'Android/data/com.unimate.app/files/Pictures/Unimate/' + name }
+  ];
+  for (const c of tries) {
+    try {
+      if (c.dir === Directory.Pictures) {
+        await Filesystem.mkdir({ path: 'Unimate', directory: c.dir, recursive: true }).catch(() => { /* 已存在 */ });
+      }
+      await Filesystem.writeFile({ path: c.path, data: b64, directory: c.dir, recursive: true });
+      await Filesystem.getUri({ path: c.path, directory: c.dir });   // 确认可寻址后再报路径
+      return c.label;
+    } catch { /* 换下一个落点 */ }
+  }
+  throw new Error('无法写入手机存储，请检查存储权限');
 }
 
 /** 系统分享（可发到微信/QQ/文件管理/网盘） */
