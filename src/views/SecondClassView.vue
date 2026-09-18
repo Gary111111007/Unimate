@@ -43,7 +43,10 @@ async function doSaveOne(r: SecondClassRecord, i: number): Promise<void> {
 }
 async function doShare(): Promise<void> {
   if (!lastExport.value) return;
-  const okShare = await shareFile('exports/' + lastExport.value.fileName, lastExport.value.fileName);
+  // 直接分享"可分享副本"的 URI（外部 Documents，FileProvider 一定能解析），
+// 不再回退到私有目录相对路径 —— 那正是微信"获取资源失败"的来源。
+const okShare = await shareFile(lastExport.value.path, lastExport.value.fileName);
+if (!okShare) db.notify('系统分享未打开，请按下方路径手动取文件');
   if (!okShare) db.notify('已保存到：' + lastExport.value.path);
 }
 const viewer = ref<{ items: { url: string; title: string; sub: string }[]; index: number } | null>(null);
@@ -203,6 +206,7 @@ const total = computed(() => db.totalScore());
       <div class="row"><b class="small grow">📦 {{ lastExport.fileName }}</b><button class="btn sm ghost" @click="doShare">分享</button></div>
       <div class="small muted" style="margin-top: 4px">{{ lastExport.photos }} 张照片 · 已保存到</div>
       <div class="small path">{{ lastExport.path }}</div>
+        <div v-if="lastExport.hint" class="small muted" style="margin-top: 4px">{{ lastExport.hint }}</div>
     </div>
 
     <div class="chips" style="margin: 12px 0">

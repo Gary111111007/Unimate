@@ -17,6 +17,29 @@ function stamp(): string {
   const d = new Date(); const p = (n: number) => String(n).padStart(2, '0');
   return '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
 }
+/**
+ * 导出文件的"可分享副本"。
+ * 先写进应用私有目录（数据归属），再复制一份到 Directory.Documents
+ * （= getExternalFilesDir(DIRECTORY_DOCUMENTS)，实际路径
+ *  /storage/emulated/0/Android/data/com.unimate.app/files/Documents），
+ * 这样用户能在文件管理器里直接取到，微信也能从"手机文件"里选到；
+ * 同时该位置落在 FileProvider 的 <external-path> 白名单内，content:// 一定能解析。
+ * 复制失败则退回私有目录 URI（file_paths.xml 已补 <files-path>，同样可分享）。
+ */
+const PUB_DIR = 'Unimate导出';
+async function shareableUri(relPath: string, fileName: string): Promise<{ uri: string; hint: string }> {
+  if (!Capacitor.isNativePlatform()) return { uri: relPath, hint: '浏览器预览环境，未写入手机存储' };
+  try {
+    const b64 = await readBinaryBase64(relPath);
+    await Filesystem.mkdir({ path: PUB_DIR, directory: Directory.Documents, recursive: true }).catch(() => { /* 已存在 */ });
+    const dest = PUB_DIR + '/' + fileName;
+    await Filesystem.writeFile({ path: dest, data: b64, directory: Directory.Documents, recursive: true });
+    const u = await Filesystem.getUri({ path: dest, directory: Directory.Documents });
+    return { uri: u.uri, hint: '已存入手机：文件管理器 → Android/data/com.unimate.app/files/Documents/' + PUB_DIR };
+  } catch {
+    return { uri: await nativeUri(relPath), hint: '仅存于应用私有目录 exports/（可在"我的→备份与恢复"取出）' };
+  }
+}
 function evidenceLines(r: SecondClassRecord): string {
   return r.photos.map((p, i) => [
     '  照片' + (i + 1) + '：' + (p.watermarked ? '有水印' : '无水印'),
@@ -52,7 +75,7 @@ async function photoBytes(r: SecondClassRecord, index: number): Promise<{ name: 
 }
 
 /** 单条记录导出为 zip：照片 + 说明.txt */
-export async function exportRecordZip(r: SecondClassRecord): Promise<{ fileName: string; path: string; photos: number }> {
+export async function exportRecordZip(r: SecondClassRecord): Promise<{ fileName: string; path: string; hint: string; photos: number }> {
   const entries: { name: string; data: Uint8Array }[] = [];
   const dir = safeName(blockDef(r.block).name + '_' + r.activityName);
   let n = 0;
@@ -65,11 +88,12 @@ export async function exportRecordZip(r: SecondClassRecord): Promise<{ fileName:
   const fileName = 'unimate-二课-' + safeName(r.activityName) + '-' + stamp() + '.zip';
   const outPath = 'exports/' + fileName;
   await writeBinaryBase64(outPath, bytesToBase64(zip));
-  return { fileName, path: await nativeUri(outPath), photos: n };
+  const s = await shareableUri(outPath, fileName);
+  return { fileName, path: s.uri, hint: s.hint, photos: n };
 }
 
 /** 全部记录导出为一个材料包：按板块分目录 + 总清单.txt */
-export async function exportAllZip(records: SecondClassRecord[]): Promise<{ fileName: string; path: string; photos: number }> {
+export async function exportAllZip(records: SecondClassRecord[]): Promise<{ fileName: string; path: string; hint: string; photos: number }> {
   const entries: { name: string; data: Uint8Array }[] = [];
   let n = 0;
   const lines: string[] = ['第二课堂填报材料清单', '导出时间：' + nowStamp(), ''];
@@ -95,7 +119,8 @@ export async function exportAllZip(records: SecondClassRecord[]): Promise<{ file
   const fileName = 'unimate-二课材料包-' + stamp() + '.zip';
   const outPath = 'exports/' + fileName;
   await writeBinaryBase64(outPath, bytesToBase64(zip));
-  return { fileName, path: await nativeUri(outPath), photos: n };
+  const s = await shareableUri(outPath, fileName);
+  return { fileName, path: s.uri, hint: s.hint, photos: n };
 }
 
 /** 把单张照片写到手机存储（文件管理器可见），便于直接上传到学校系统 */

@@ -1,6 +1,6 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v1.9 ｜ 日期 2026-09-18 ｜ 状态：已实现并出包，待真机验收
+> 版本 v2.0 ｜ 日期 2026-09-18 ｜ 状态：已实现并出包，待真机验收
 > 范围：第一版 = 完全本地运行的 Android App + 可安装 APK（不依赖自建服务器）
 > 来源：由《要求.docx》已确认内容整理，并补充基于真实教务课表页面样本（个人课表查询.html）推导出的解析规范与可检查的验收标准。
 > 标注【待确认 Qx】的条目需产品负责人拍板后才进入开发（见第 12 节）。
@@ -1033,6 +1033,21 @@
 **测试**：Login 25 / Golden 57 / Zip 9 断言全通过；`npm run build` 通过；APK 6.52 MB，`com.unimate.app` / `Unimate` / minSdk 24 / targetSdk 34，签名校验 exit 0。
 
 **未验证项（诚实标注）**：横幅是否真弹出、切月动画观感、导出 zip 能否被学校二课系统接受，均需装机确认，尚无真机日志。
+### 11.9 第四轮真机反馈修订（v2.0，2026-09-18，4 项）
+
+| # | 现象 | 根因（定位到源码行，非推测） | 处理 |
+| --- | --- | --- | --- |
+| 1 | 仍然是"先选学校再登录" | `db.ts` 中 `screen` 的**初始值就是 `'school'`**，而 `boot()` 在没有历史账号时根本不写 `screen`，于是全新安装 / 未记住登录态一律先看到选校页 | 初始值改为 `'login'`；`boot()` 显式补 `else { screen.value = 'login' }`；测试新增"全新启动落在登录页""未登录时 selectSchool 不会进主界面"两条断言（Login 27 条全通过） |
+| 2 | 学校列表按拼音排序 | 原按"大区"分组、组内是录入顺序；且不能依赖设备 ICU（部分国产 ROM 的 WebView 缺完整拼音 collation） | 构建期用 Node 的 `zh-u-co-pinyin` 预算拼音名次，把 `order`（拼音序）与 `letter`（首字母）**硬编码进 `universities.ts`**，运行时零依赖；选校页改为 A–Z 字母分组，北化仍 `order=0` 置顶 |
+| 3 | zip 转发到微信提示"获取资源失败" | `file_paths.xml` 只声明 `<external-path>` 与 `<cache-path>`，**缺 `<files-path>`**；导出 zip 写在 `Directory.Data`（= `getFilesDir()` 内部私有目录），FileProvider 解析不到 → 第三方拿到 URI 却读不到内容 | ① 补 `<files-path>` / `<external-files-path>` / `<external-cache-path>` / `<root-path>`；② 新增 `shareableUri()`，把 zip 额外复制一份到 `Directory.Documents`（`/storage/emulated/0/Android/data/com.unimate.app/files/Documents/Unimate导出/`），分享直接用该副本 URI，并在界面显示这条**文件管理器可见路径**兜底 |
+| 4 | App 不开时不提醒，一打开所有提醒一起涌出 | **同一根因**。`notify.ts` 用 `startTime` 且从未设 `allowWhileIdle`，而 `LocalNotificationManager.setExactIfPossible()`（第 380–396 行）在 `!canScheduleExactAlarms()` 且 `!allowWhileIdle` 时落到 `alarmManager.set(AlarmManager.RTC, …)` —— **非唤醒 + 非精确的批量闹钟**：打盹期间不触发，等 App 打开唤醒设备时一次性补发 | ① 4 处调度全部改为 `schedule: { at, allowWhileIdle: true }`，即使无精确闹钟授权也走 `setAndAllowWhileIdle(RTC_WAKEUP)`；② 清单补 `SCHEDULE_EXACT_ALARM`；③ 通知面板新增「精确闹钟授权」状态与一键跳转；④ 新增 `cancelAllScheduledOnBoot()` 并在 `boot()` 调用 |
+
+**插件源码依据**：`LocalNotificationRestoreReceiver` 第 38–44 行会把过期项 `setAt(now + 15s)`，注释原文 "show notifications that would have been delivered while device was off" —— 这是开机恢复路径的补发风险，故第 ④ 项一并加上。授权 API 为 `checkExactNotificationSetting()` / `changeExactNotificationSetting()`（插件 6.0.0+，仅 Android）。
+
+**产物**：`index-B1WNtfOV.js` 与 APK 内嵌 bundle 一致；APK 6.52 MB；SHA-256 `451ADD1B44B38DDE5EFA910664DC534082AF42CF23AEDE93373B9FD768861D22`；`aapt dump xmltree` 确认 `SCHEDULE_EXACT_ALARM`、`POST_NOTIFICATIONS`、`file_paths.xml` 的 `files-path` 均已编译进包；`apksigner verify` exit 0；包内不含真实姓名。
+
+**未验证项（诚实标注）**：微信能否成功接收该 zip、授予精确闹钟后后台是否准点、A–Z 分组真机观感，均需装机确认。
+
 ### 11.4 已安装的 Codex Skill（需求第 8 项，已完成)
 
 | Skill | 位置 | 用途 | 状态 |
@@ -1189,6 +1204,7 @@
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| v2.0 | 2026-09-18 | 第四轮真机反馈（详见 11.9）：修**启动仍先选校**（`screen` 初始值 bug）、学校列表改**拼音 A–Z 分组**（拼音名次构建期烘焙，不依赖设备 ICU）、**微信"获取资源失败"**（FileProvider 缺 `<files-path>` + 导出副本落到文件管理器可见目录）、**"后台不提醒 / 一打开全涌出"**（闹钟类型 `set(RTC)` → `setAndAllowWhileIdle(RTC_WAKEUP)` + `SCHEDULE_EXACT_ALARM` 授权入口 + 启动清理遗留排期）。Login 断言增至 27 条 |
 | v1.9 | 2026-09-18 | 第三轮真机反馈（详见 11.8）：修 WebView 顶部工具条按钮被截断（改两行 + 横向滚动）、日历跨月首行日期错乱、"已逾期 1 天"改为分钟/小时/天分级措辞；新增开屏动画、**先登录账号再选学校**（账号改为全局 accounts.json + 绑定学校）、二课材料导出（zip / 存图到手机存储 / 分享）、启动即申请通知权限；**修通知横幅不弹（渠道 v2 + forceAlert）与"已排期 0 条"计数口径 bug**；记事本日历切月动画 + 左右滑动手势。同时发现并修复**上一版 APK 交付缺陷**（内嵌 bundle 落后于 dist），构建脚本新增产物完整性校验。SHA-256 = 4C3F55D0EE920A0C93BD69506A613AE4A2551A1B708C3702ED4886AB41758D51 |
 | v1.8 | 2026-09-18 | 修好教务系统打不开（明文 HTTP 白名单，见 11.7 与 5.4.8 新增硬性要求）、周次切换加方向滑动动画、照片支持全屏放大（双指缩放/双击/平移/翻页）；内嵌 WebView 增加失败原因提示与系统浏览器出口 |
 | v1.7 | 2026-09-18 | 处理真机 13 项反馈（详见 11.6）：修"周周一"、去 Sheet 前缀、底栏 fixed 常驻、周次左右滑动、二课照片改 data URL + 响应式缓存修复破图、新增手册分值表实时查询页、补全图标、通知加固 + 诊断面板、课表设置移入课表页、教务直开首页、原生 WebView 支持双指缩放、课表同名同时段多机房合并显示、记事本重构为日历视图；新增 Q17 待确认提醒的具体现象 |

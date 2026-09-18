@@ -57,12 +57,15 @@ await db.selectSchool('buct');
 ok('选校后进入主界面', db.screen === 'app', 'screen=' + db.screen);
 ok('新账号数据与演示账号隔离（无课表）', db.courses.length === 0, 'courses=' + db.courses.length);
 
+ok('全新启动落在登录页而非选校页（先登录后选校）', fresh().screen === 'login');
 console.log('--- 错误口令与未注册口令 ---');
 db = fresh();
 await db.selectSchool('buct');
 await db.ensureDemoAccount();
 ok('密码错误返回 false', (await db.login('admin', 'wrong')) === false);
-ok('密码错误时 screen 仍为 school', db.screen === 'school');
+// 产品口径：先登录账号，再选学校。所以未登录时任何时刻都不该停在选校页。
+ok('密码错误时 screen 仍为 login', db.screen === 'login');
+ok('未登录时 selectSchool 不会把界面切进主界面', db.screen !== 'app');
 ok('密码错误给出提示文案', db.toast.includes('用户名或密码错误'), db.toast);
 ok('不存在的用户名返回 false 且提示', (await db.login('nobody', 'x12345')) === false && db.toast.includes('该用户名在本机不存在'), db.toast);
 

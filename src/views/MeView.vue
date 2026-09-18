@@ -4,7 +4,7 @@ import { useDb } from '../stores/db.ts';
 import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
 import { readBinaryBase64, remove, writeBinaryBase64 } from '../services/io.ts';
-import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest } from '../services/notify.ts';
+import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
 import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts';
 
@@ -18,12 +18,13 @@ const restoreInfo = ref('');
 const sched = ref(0);
 const stats = ref({ total: 0, classReminders: 0, todoReminders: 0, testReminders: 0, nextFireAt: '' });
 const schedMsg = ref('');
+const exact = ref('unknown');
 
 const sub = computed(() => SECOND_CLASS_BLOCKS.map((b) => b.name + ' ' + db.blockScore(b.key)).join(' · '));
 
 async function open(name: typeof panel.value): Promise<void> {
   panel.value = name;
-  if (name === 'notify') { perm.value = await permissionState(); stats.value = await scheduleStats(); sched.value = stats.value.total; }
+  if (name === 'notify') { perm.value = await permissionState(); stats.value = await scheduleStats(); sched.value = stats.value.total; exact.value = await exactAlarmState(); }
 }
 
 async function test(minutes: number): Promise<void> {
@@ -46,6 +47,10 @@ async function askPerm(): Promise<void> {
   db.notify(g ? '通知权限已开启' : '请在系统设置中允许 Unimate 发送通知');
 }
 
+async function askExact(): Promise<void> {
+  exact.value = await requestExactAlarmSetting();
+  db.notify(exact.value === 'granted' ? '精确闹钟已授权，提醒会按时到点触发' : '返回后请重新打开通知设置查看状态');
+}
 async function doExport(): Promise<void> {
   const r = await exportBackup(db.profile!.schoolId, db.profile!.name, db.session!.username,
     'schools/' + db.profile!.schoolId + '/users/' + db.session!.accountId, db.accounts, db.session!.accountId);
@@ -143,6 +148,9 @@ async function reschedule(): Promise<void> {
         <div class="card" style="box-shadow: none; background: #F7F9FC">
           <div class="row"><span class="grow small">系统通知权限</span><span class="pill" :class="perm === 'granted' ? 'live' : 'danger'">{{ perm === 'granted' ? '已允许' : (perm === 'unsupported' ? '当前环境不支持' : '未允许') }}</span></div>
           <button v-if="perm !== 'granted'" class="btn block sm" style="margin-top: 8px" @click="askPerm">去开启</button>
+          <div class="row" style="justify-content: space-between; margin-top: 10px"><span class="grow small">精确闹钟授权</span><span class="pill" :class="exact === 'granted' ? 'live' : 'danger'">{{ exact === 'granted' ? '已授权' : (exact === 'unsupported' ? '系统无需此授权' : '未授权') }}</span></div>
+          <button v-if="exact !== 'granted' && exact !== 'unsupported'" class="btn block sm grey" style="margin-top: 8px" @click="askExact">去授权精确闹钟</button>
+          <div v-if="exact !== 'granted' && exact !== 'unsupported'" class="small muted" style="margin-top: 6px">未授权时系统会把提醒并入省电批处理：后台基本不响，等你打开 App 才一次性补发。这就是"不打开不提醒、一打开全涌出"的成因。</div>
           <div class="small muted" style="margin-top: 8px">部分国产 ROM 会冻结后台导致提醒延迟。小米/澎湃：设置 → 应用设置 → 应用管理 → Unimate → 省电策略选「无限制」，并在最近任务里下拉卡片锁定后台，同处打开「自启动」。</div>
         </div>
         <div class="card" style="box-shadow: none; background: #F7F9FC; margin-top: 10px">

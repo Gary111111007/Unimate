@@ -10,7 +10,7 @@ import { uuid, nowStamp, dateStamp } from '../services/id.ts';
 import { readJson, writeJson, readText, writeText, remove, probeStorage } from '../services/io.ts';
 import { randomSalt, sha256Text } from '../services/crypto.ts';
 import { buildDemoNotes, buildDemoRecords, buildDemoTimetable } from '../services/demo.ts';
-import { rescheduleAll, scheduleDemoPing } from '../services/notify.ts';
+import { rescheduleAll, scheduleDemoPing, cancelAllScheduledOnBoot } from '../services/notify.ts';
 
 export const SCHEMA_VERSION = 1;
 export const APP_VERSION = '1.0.0';
@@ -32,7 +32,10 @@ function defaultSettings(p: SchoolProfile): Settings {
 
 export const useDb = defineStore('db', () => {
   const booted = ref(false);
-  const screen = ref<'school' | 'login' | 'app'>('school');
+  // 启动默认落在**登录页**：产品口径是「先登录账号，再选学校」。
+// 早期这里初始化为 'school'，且 boot() 在没有历史账号时不改写 screen，
+// 导致全新安装 / 未记住登录态时仍然先看到选校页。
+const screen = ref<'school' | 'login' | 'app'>('login');
   const profile = ref<SchoolProfile | null>(null);
   const accounts = ref<Account[]>([]);
   const session = ref<{ accountId: string; username: string; displayName: string; isDemo: boolean } | null>(null);
@@ -97,7 +100,13 @@ export const useDb = defineStore('db', () => {
       if (acc) {
         session.value = { accountId: acc.id, username: acc.username, displayName: acc.displayName, isDemo: acc.isDemo };
         await finishLogin();          // 已绑定高校则直接进主界面，否则进学校选择页
+      } else {
+        screen.value = 'login';       // 无历史登录态：先登录，不展示选校页
       }
+      // 冷启动先清空系统里遗留的排期，再按当前课表重建。
+      // Capacitor 启动时会恢复上次注册的本地通知，其中已过期的会被立即补发，
+      // 这正是「App 没开时不提醒、一打开所有提醒一起涌出」的成因。
+      try { await cancelAllScheduledOnBoot(); } catch { /* 预览环境忽略 */ }
     } catch (e) { fail('启动', e); }
     booted.value = true;
   }

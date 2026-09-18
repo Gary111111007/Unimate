@@ -8,28 +8,24 @@ const q = ref('');
 const pending = ref<SchoolEntry | null>(null);
 const contact = ref('');
 
-const REGION: Record<string, string> = {
-  北京: '华北', 天津: '华北', 河北: '华北', 山西: '华北', 内蒙古: '华北',
-  辽宁: '东北', 吉林: '东北', 黑龙江: '东北',
-  上海: '华东', 江苏: '华东', 浙江: '华东', 安徽: '华东', 福建: '华东', 江西: '华东', 山东: '华东',
-  河南: '华中', 湖北: '华中', 湖南: '华中',
-  广东: '华南', 广西: '华南', 海南: '华南',
-  重庆: '西南', 四川: '西南', 贵州: '西南', 云南: '西南',
-  陕西: '西北', 甘肃: '西北', 青海: '西北', 宁夏: '西北', 新疆: '西北'
-};
-
-const filtered = computed(() => {
+// 分组口径：按校名拼音首字母（A–Z）分组，组内顺序即 SCHOOLS 的 order（拼音名次）。
+// 北京化工大学 order=0 且 status=live，置顶在"首个落地高校"区，不参与字母分组。
+const sorted = computed<SchoolEntry[]>(() => {
   const k = q.value.trim().toLowerCase();
-  if (!k) return SCHOOLS;
-  return SCHOOLS.filter((s) => s.name.toLowerCase().includes(k) || s.shortName.toLowerCase().includes(k) || s.province.includes(k));
+  const list = !k
+    ? SCHOOLS.slice()
+    : SCHOOLS.filter((s) =>
+        s.name.toLowerCase().includes(k) || s.shortName.toLowerCase().includes(k)
+        || s.province.includes(k) || s.letter.toLowerCase().includes(k));
+  return list.sort((a, b) => a.order - b.order);
 });
-const live = computed(() => filtered.value.filter((s) => s.status === 'live'));
+const live = computed(() => sorted.value.filter((s) => s.status === 'live'));
 const groups = computed(() => {
   const map = new Map<string, SchoolEntry[]>();
-  for (const s of filtered.value.filter((x) => x.status !== 'live')) {
-    const r = REGION[s.province] || '其他';
-    if (!map.has(r)) map.set(r, []);
-    map.get(r)!.push(s);
+  for (const s of sorted.value.filter((x) => x.status !== 'live')) {
+    const letter = s.letter || '#';
+    if (!map.has(letter)) map.set(letter, []);
+    map.get(letter)!.push(s);
   }
   return [...map.entries()];
 });
@@ -77,8 +73,8 @@ async function submitInterest(): Promise<void> {
 
       <div v-if="!live.length" class="empty"><div class="big">🔍</div>没有匹配的高校</div>
 
-      <template v-for="[region, list] in groups" :key="region">
-        <div class="group">{{ region }}</div>
+      <template v-for="[letter, list] in groups" :key="letter">
+        <div class="group">{{ letter }}</div>
         <div v-for="s in list" :key="s.schoolId" class="school" @click="pick(s)">
           <div class="badge grey">{{ s.shortName.slice(0, 1) }}</div>
           <div class="grow"><div class="bold">{{ s.name }}</div><div class="small muted">{{ s.province }}</div></div>

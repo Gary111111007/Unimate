@@ -118,7 +118,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           list.push({
             id, title: '上课提醒',
             body: '还有 ' + settings.classReminderMinutes + ' 分钟：' + c.name + (c.room ? ' · ' + c.room : ''),
-            startTime: new Date(fire), notificationChannelId: 'class-' + CHANNEL_TAG, forceAlert: true,
+            schedule: { at: new Date(fire), allowWhileIdle: true }, notificationChannelId: 'class-' + CHANNEL_TAG, forceAlert: true,
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
         }
@@ -138,7 +138,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           seen.add(String(id));
           list.push({
             id, title: '待办提醒', body: n.title + '（' + n.remindAt.slice(5, 16) + '）',
-            startTime: new Date(fire), notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true,
+            schedule: { at: new Date(fire), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true,
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
         }
@@ -175,7 +175,7 @@ export async function scheduleTest(minutes: number): Promise<{ ok: boolean; at: 
       notifications: [{
         id: TEST_ID, title: 'Unimate 测试提醒',
         body: '这条是 ' + minutes + ' 分钟前设置的，收到就说明提醒链路正常',
-        startTime: when, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
+        schedule: { at: when, allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     });
     return { ok: true, at: when.toTimeString().slice(0, 8), error: '' };
@@ -192,9 +192,32 @@ export async function scheduleDemoPing(): Promise<boolean> {
     await LocalNotifications.schedule({
       notifications: [{
         id: DEMO_ID, title: 'Uni 提醒', body: '演示通知：Uni 已经准备好提醒你啦',
-        startTime: new Date(fire), notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
+        schedule: { at: new Date(fire), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     });
     return true;
   } catch { return false; }
+}
+
+/**
+ * 冷启动清理：Capacitor 的恢复广播（BOOT_COMPLETED / QUICKBOOT_POWERON）会把所有
+ * 已过期的排期改写成"15 秒后立即发送"。启动时先清空遗留排期，再由 rescheduleAll
+ * 只重建未来时间点的通知，避免开机后一堆过期提醒一次性涌出。
+ */
+export async function cancelAllScheduledOnBoot(): Promise<void> {
+  await cancelIds(await safeScheduled());
+}
+
+/** Android 12+ 精确闹钟授权状态。未授权时提醒会被系统延后（只有原生环境才有意义）。 */
+export async function exactAlarmState(): Promise<string> {
+  const anyLocal = LocalNotifications as any;
+  if (typeof anyLocal.checkExactNotificationSetting !== 'function') return 'unsupported';
+  try { return (await anyLocal.checkExactNotificationSetting()).exact_alarm; } catch { return 'unsupported'; }
+}
+
+/** 跳到系统的"闹钟和提醒"设置页让用户授权（Android 12 以下直接返回 granted）。 */
+export async function requestExactAlarmSetting(): Promise<string> {
+  const anyLocal = LocalNotifications as any;
+  if (typeof anyLocal.changeExactNotificationSetting !== 'function') return 'unsupported';
+  try { return (await anyLocal.changeExactNotificationSetting()).exact_alarm; } catch { return 'unknown'; }
 }
