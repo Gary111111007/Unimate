@@ -111,16 +111,55 @@ const listShown = computed(() => {
     });
 });
 
-/** 逾期时长：不足 1 小时按分钟、不足 1 天按小时，避免"晚了 5 分钟却显示逾期 1 天" */
+/**
+ * 解析 remindAt。老数据里同时存在 "2026-09-18 19:52:33" 与带 T 的 ISO 串，
+ * 统一斜杠写法可避免部分 WebView 把 "2026-09-18" 当 UTC 零点解析（会整体偏 8 小时）。
+ * 只有日期没有时间时按当天 23:59 算 —— 用户写"9月20日交"不会一过零点就变成逾期一天。
+ */
+function parseWhen(s: string): number | null {
+  if (!s) return null;
+  const iso = s.trim().replace('T', ' ');
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  const norm = (dateOnly ? iso + ' 23:59:00' : iso).replace(/-/g, '/');
+  const ms = new Date(norm).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** 分钟数转"X 天 X 小时 X 分"里非零的高位部分，最多两级，避免出现"1 小时"这种看不出精度的显示 */
+function span(mins: number): string {
+  const d = Math.floor(mins / 1440); const h = Math.floor((mins % 1440) / 60); const m = mins % 60;
+  if (d > 0) return h > 0 ? d + ' 天 ' + h + ' 小时' : d + ' 天';
+  if (h > 0) return m > 0 ? h + ' 小时 ' + m + ' 分' : h + ' 小时';
+  return Math.max(1, m) + ' 分钟';
+}
+
+/** 逾期：显示到"小时+分钟"两级精度，不再把 1 小时 42 分糊成"1 小时" */
 function overdueText(n: NoteItem): string {
   if (!n.remindAt || n.done) return '';
-  const diff = Date.now() - new Date(n.remindAt.replace(/-/g, '/')).getTime();
+  const at = parseWhen(n.remindAt);
+  if (at === null) return '';
+  const diff = Date.now() - at;
   if (diff <= 0) return '';
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return '已逾期 ' + Math.max(1, mins) + ' 分钟';
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return '已逾期 ' + hours + ' 小时';
-  return '已逾期 ' + Math.floor(hours / 24) + ' 天';
+  return '已逾期 ' + span(Math.floor(diff / 60000));
+}
+
+/** 未到期也要明确显示，否则用户无法区分"还没到"和"算错了" */
+function dueText(n: NoteItem): string {
+  if (!n.remindAt || n.done) return '';
+  const at = parseWhen(n.remindAt);
+  if (at === null) return '';
+  const diff = at - Date.now();
+  if (diff <= 0) return '';
+  return '还有 ' + span(Math.ceil(diff / 60000)) + ' 到期';
+}
+
+/** 提前量文案：alarms 只含 0 表示"发生时"，不能渲染成空白的"提前 分" */
+function alarmText(n: NoteItem): string {
+  const a = (n.alarms || []).slice().sort((x, y) => x - y);
+  const pos = a.filter((x) => x > 0);
+  if (!a.length) return '';
+  if (!pos.length) return ' · 发生时提醒';
+  return ' · 提前 ' + pos.join('/') + ' 分';
 }
 function toInput(s: string): string { return s ? s.slice(0, 16).replace(' ', 'T') : ''; }
 function fromInput(v: string): string { return v ? v.replace('T', ' ') + (v.length === 16 ? ':00' : '') : ''; }
@@ -212,7 +251,8 @@ function toggleAlarm(v: number): void {
           <div class="bold">{{ n.title }}</div>
           <div v-if="n.content" class="small muted">{{ n.content }}</div>
           <div class="row" style="margin-top: 5px; gap: 6px; flex-wrap: wrap">
-            <span class="pill">{{ n.remindAt.slice(11, 16) }}<span v-if="n.alarms.length"> · 提前 {{ n.alarms.filter((a) => a > 0).join('/') }} 分</span></span>
+            <span class="pill">{{ n.remindAt ? n.remindAt.slice(11, 16) : '未设时间' }}{{ alarmText(n) }}</span>
+            <span v-if="dueText(n)" class="pill live">{{ dueText(n) }}</span>
             <span v-if="overdueText(n)" class="pill danger">{{ overdueText(n) }}</span>
             <span v-if="n.repeat !== 'none'" class="pill">{{ n.repeat === 'daily' ? '每天' : n.repeat === 'weekly' ? '每周' : '每月' }}</span>
           </div>

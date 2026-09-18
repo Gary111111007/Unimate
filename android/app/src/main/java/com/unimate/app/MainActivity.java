@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(JwWebViewPlugin.class);
+        registerPlugin(VaultPlugin.class);
         super.onCreate(savedInstanceState);
     }
 

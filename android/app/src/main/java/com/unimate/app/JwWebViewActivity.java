@@ -32,6 +32,10 @@ public class JwWebViewActivity extends Activity {
     private String homeUrl = "";
     private android.widget.LinearLayout errBox;
     private android.widget.TextView errText;
+    private Button grabBtn;
+    private Button fillBtn;
+    private boolean retriedOnce;
+    private boolean vaultReady;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -43,6 +47,7 @@ public class JwWebViewActivity extends Activity {
         selector = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_SELECTOR), "");
         allowExternal = args.getBooleanExtra(JwWebViewPlugin.EXTRA_ALLOW_EXTERNAL, false);
 
+        vaultReady = Vault.has(this);
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
 
@@ -72,9 +77,13 @@ public class JwWebViewActivity extends Activity {
         Button fwd = small("→");
         Button reload = small("刷新");
         Button home = small("主页");
-        Button grab = small("一键保存并识别");
-        grab.setMinWidth(0);
-        grab.setBackgroundColor(Color.parseColor("#2E5AAC"));
+        // 「保存课表」是这一页最重要的动作，之前和别的按钮一样大、还挤在横向滚动区里，
+        // 真机反馈"按钮太隐藏"。改成主按钮：更大字号、更高内边距、品牌色，且只在教务
+        // 域名下出现（在别的站点显示它只会让人困惑）。
+        grabBtn = primary("保存课表");
+        grabBtn.setMinWidth(0);
+        fillBtn = small("自动填充");
+        fillBtn.setBackgroundColor(Color.parseColor("#1E6E46"));
         Button openExt = small("浏览器");
         Button closeBtn = small("关闭");
         row1.addView(label);
@@ -87,7 +96,8 @@ public class JwWebViewActivity extends Activity {
         row2.addView(fwd);
         row2.addView(reload);
         row2.addView(home);
-        row2.addView(grab);
+        row2.addView(grabBtn);
+        row2.addView(fillBtn);
         row2.addView(openExt);
 
         HorizontalScrollView scroll = new HorizontalScrollView(this);
@@ -150,10 +160,25 @@ public class JwWebViewActivity extends Activity {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
                 if (request != null && request.isForMainFrame()) {
-                    String msg = "页面加载失败：" + (error == null ? "未知错误" : error.getDescription());
                     Uri u = request == null ? null : request.getUrl();
-                    if (u != null && "http".equalsIgnoreCase(u.getScheme())) {
-                        msg += "（该地址是明文 HTTP，已放开 buct.edu.cn 的明文访问，请重试或改用系统浏览器）";
+                    int code = error == null ? -1 : error.getErrorCode();
+                    String host = u == null ? hostOf(currentUrl()) : String.valueOf(u.getHost());
+                    // DNS 解析失败多为对方网络/路由器的问题（真机出现过同一地址在
+                    // 一台手机可解析、另一台报 ERR_NAME_NOT_RESOLVED）。先自动重试一次，
+                    // 别把一次抖动直接甩给用户。
+                    if (code == android.webkit.WebViewClient.ERROR_HOST_LOOKUP && !retriedOnce) {
+                        retriedOnce = true;
+                        errText.setText("正在重试「" + host + "」的地址解析…");
+                        errBox.setVisibility(View.VISIBLE);
+                        webView.postDelayed(() -> { errBox.setVisibility(View.GONE); webView.reload(); }, 900);
+                        return;
+                    }
+                    String msg = "打不开 " + host + "\n原因：" + (error == null ? "未知错误" : error.getDescription());
+                    if (code == android.webkit.WebViewClient.ERROR_HOST_LOOKUP) {
+                        msg += "\n这台设备当前解析不到该域名。换用移动数据/校园 Wi‑Fi 再试，"
+                             + "或点下方「用系统浏览器打开」；若系统浏览器也打不开，说明学校这个入口对你所在网络不可达。";
+                    } else if (u != null && "http".equalsIgnoreCase(u.getScheme())) {
+                        msg += "\n（明文 HTTP 地址，已对 buct.edu.cn 放开，请重试或改用系统浏览器）";
                     }
                     showError(msg);
                 }
@@ -166,6 +191,7 @@ public class JwWebViewActivity extends Activity {
                 // 刚登录拿到的会话 Cookie 就随内存一起没了。页面一加载完就刷盘，
                 // 把丢失窗口从"整个使用期间"压到"秒级"。
                 flushCookies();
+                refreshToolbar(url);
                 if (bar != null) {
                     bar.postDelayed(new Runnable() {
                         @Override public void run() { flushCookies(); }
@@ -185,14 +211,130 @@ public class JwWebViewActivity extends Activity {
         home.setOnClickListener(v -> webView.loadUrl(homeUrl));
         back.setOnClickListener(v -> { if (webView.canGoBack()) webView.goBack(); else finishWith("", "cancelled"); });
         reload.setOnClickListener(v -> webView.reload());
-        closeBtn.setOnClickListener(v -> finishWith("", "cancelled"));
-        grab.setOnClickListener(v -> scrape());
+        closeBtn.setOnClickListener(v -> maybeOfferSaveThen(() -> finishWith("", "cancelled")));
+        grabBtn.setOnClickListener(v -> scrape());
+        fillBtn.setOnClickListener(v -> doAutofill());
         openExt.setOnClickListener(v -> openExternally(currentUrl()));
 
         homeUrl = url;
         webView.loadUrl(url);
     }
 
+
+    /** 在教务/门户页用完且本机还没存凭据时，问一次要不要保存，方便下次一键填充。 */
+    private void maybeOfferSaveThen(Runnable then) {
+        String h = hostOf(currentUrl());
+        boolean relevant = h.contains("portal") || h.contains("jwglxt");
+        if (!relevant || vaultReady) { then.run(); return; }
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("要保存账号到本机吗？")
+            .setMessage("下次进入这个页面可以一键自动填充。\n\n"
+                + "· 账号密码用 Android 系统密钥库加密后存在这台手机上，不联网、不上传、不进备份文件；\n"
+                + "· App 只会把它写进登录框，不会读取页面上已输入的内容；\n"
+                + "· 随时可在「我的 → 校园账号（自动填充）」里清除。")
+            .setPositiveButton("保存到本机", (d, w) -> showVaultForm(then))
+            .setNegativeButton("这次不用", (d, w) -> then.run())
+            .setNeutralButton("以后再说", (d, w) -> then.run())
+            .setOnCancelListener(d -> then.run())
+            .show();
+    }
+
+    private void showVaultForm(final Runnable then) {
+        int dp = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 1, getResources().getDisplayMetrics());
+        android.widget.EditText acc = new android.widget.EditText(this);
+        acc.setHint("学号 / 工号");
+        acc.setSingleLine(true);
+        android.widget.EditText pw = new android.widget.EditText(this);
+        pw.setHint("密码");
+        pw.setSingleLine(true);
+        pw.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(20 * dp, 12 * dp, 20 * dp, 0);
+        box.addView(acc);
+        box.addView(pw);
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("保存到本机")
+            .setView(box)
+            .setPositiveButton("保存", (d, w) -> {
+                String a = acc.getText().toString().trim();
+                String b = pw.getText().toString();
+                if (a.isEmpty() || b.isEmpty()) { toast("账号和密码都要填"); then.run(); return; }
+                try {
+                    Vault.save(this, a, b);
+                    vaultReady = true;
+                    refreshToolbar(currentUrl());
+                    toast("已加密保存到本机，下次点「自动填充」即可");
+                } catch (Exception e) {
+                    toast("保存失败：" + e.getMessage());
+                }
+                then.run();
+            })
+            .setNegativeButton("取消", (d, w) -> then.run())
+            .setOnCancelListener(d -> then.run())
+            .show();
+    }
+    private Button primary(String text) {
+        Button b = small(text);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        b.setTypeface(b.getTypeface(), android.graphics.Typeface.BOLD);
+        b.setBackgroundColor(Color.parseColor("#2E5AAC"));
+        int dp = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 1, getResources().getDisplayMetrics());
+        b.setPadding(18 * dp, 12 * dp, 18 * dp, 12 * dp);
+        return b;
+    }
+
+    private static String hostOf(String url) {
+        try { Uri u = Uri.parse(url); return u.getHost() == null ? "" : u.getHost().toLowerCase(); }
+        catch (Exception e) { return ""; }
+    }
+
+    /** 按当前页面决定哪些按钮该露出来，避免在无关站点上显示"保存课表"。 */
+    private void refreshToolbar(String url) {
+        String h = hostOf(url);
+        boolean jw = h.contains("jwglxt") || h.contains("buct.edu.cn") && !selector.isEmpty();
+        if (grabBtn != null) grabBtn.setVisibility(jw ? View.VISIBLE : View.GONE);
+        boolean canFill = vaultReady && (h.contains("portal") || h.contains("jwglxt"));
+        if (fillBtn != null) fillBtn.setVisibility(canFill ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * 自动填充：只把本机保管库里的值**写入**表单，绝不读取页面上已有的内容。
+     * 用原生 setter + 派发 input/change 事件，兼容 Vue/React 受控输入框。
+     */
+    private void doAutofill() {
+        final String[] kv = Vault.reveal(this);
+        if (kv == null) {
+        showError("本机凭据解不开（可能系统密钥已被重置）。请到「我的 → 校园账号（自动填充）」重新保存一次。");
+            return;
+        }
+        String js = "(function(){var u=" + JSONObject.quote(kv[0]) + ",p=" + JSONObject.quote(kv[1]) + ";"
+            + "function set(el,v){if(!el)return false;try{var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;"
+            + "d.call(el,v);}catch(e){el.value=v;}el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true;}"
+            + "var pw=document.querySelector('input[type=password]');var user=null;var all=document.getElementsByTagName('input');"
+            + "for(var i=0;i<all.length;i++){var f=all[i];var ty=(f.type||'').toLowerCase();"
+            + "if(ty==='password'||ty==='hidden'||ty==='submit'||ty==='button')continue;"
+            + "var sig=((f.name||'')+' '+(f.id||'')+' '+(f.placeholder||'')).toLowerCase();"
+            + "if(ty==='text'||ty==='tel'||ty==='number'||ty===''||/user|account|login|zh|学号|工号|账/.test(sig)){user=f;break;}}"
+            + "var a=set(user,u),b=set(pw,p);return (a&&b)?'ok':(a?'no-pw':(b?'no-user':'none'));})();";
+        webView.evaluateJavascript(js, value -> {
+            String r = value == null ? "" : value.replace("\"", "");
+            if (r.contains("ok")) {
+                toast("已填入本机保存的账号，请自己核对后点登录");
+            } else if (r.contains("no-pw")) {
+                toast("已填账号，但没找到密码框");
+            } else if (r.contains("no-user")) {
+                toast("已填密码，但没找到账号框");
+            } else {
+                toast("这个页面没找到可填写的登录框");
+            }
+        });
+    }
+
+    private void toast(String msg) {
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show();
+    }
 
     private void flushCookies() {
         try { CookieManager.getInstance().flush(); } catch (Exception ignored) { }

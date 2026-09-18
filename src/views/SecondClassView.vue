@@ -59,7 +59,7 @@ function openViewer(items: { url: string; title: string; sub: string }[], index:
 
 const form = ref({
   block: 'de' as BlockKey, stage: 'basic' as 'basic' | 'extended', activityName: '', description: '',
-  activityDate: dateStamp(), score: 10, scorePreset: '', watermark: true, address: '', photos: [] as { ev: PhotoEvidence; uri: string }[]
+  activityDate: dateStamp(), score: 10, scorePreset: '', hours: 0, watermark: true, address: '', photos: [] as { ev: PhotoEvidence; uri: string }[]
 });
 
 const records = computed(() => db.records
@@ -71,8 +71,25 @@ const stats = computed(() => SECOND_CLASS_BLOCKS.map((b) => ({
   over: b.key === active.value && db.blockScore(b.key) > b.fullScore
 })));
 
+/** 志愿时长统计（对应需求：像课表/记事本那样能累计）。 */
+const HOUR_PRESETS = [1, 2, 3, 4, 6, 8, 10, 12, 20, 24];
+const hourTotal = computed(() => Math.round(db.records.filter((r) => !r.deletedAt).reduce((a, r) => a + (r.hours || 0), 0) * 10) / 10);
+const hourCount = computed(() => db.records.filter((r) => !r.deletedAt && (r.hours || 0) > 0).length);
+const hourThisMonth = computed(() => {
+  const m = new Date().toISOString().slice(0, 7);
+  return Math.round(db.records.filter((r) => !r.deletedAt && (r.activityDate || '').startsWith(m)).reduce((a, r) => a + (r.hours || 0), 0) * 10) / 10;
+});
+const hourByBlock = computed(() => SECOND_CLASS_BLOCKS.map((b) => ({
+  name: b.name,
+  h: Math.round(db.records.filter((r) => !r.deletedAt && r.block === b.key).reduce((a, r) => a + (r.hours || 0), 0) * 10) / 10
+})).filter((x) => x.h > 0));
+/** 模板里避免嵌套引号：时长文案统一由这里生成。 */
+function hoursText(r: SecondClassRecord): string {
+  const h = (r && (r as any).hours) || 0;
+  return h > 0 ? ' · 志愿时长 ' + h + ' 小时' : '';
+}
 function resetForm(): void {
-  form.value = { block: (active.value === 'all' ? 'de' : active.value) as BlockKey, stage: 'basic', activityName: '', description: '', activityDate: dateStamp(), score: 10, scorePreset: '', watermark: db.settings.watermarkEnabledDefault, address: '', photos: [] };
+  form.value = { block: (active.value === 'all' ? 'de' : active.value) as BlockKey, stage: 'basic', activityName: '', description: '', activityDate: dateStamp(), score: 10, scorePreset: '', hours: 0, watermark: db.settings.watermarkEnabledDefault, address: '', photos: [] };
 }
 function openForm(): void { resetForm(); showForm.value = true; }
 
@@ -142,12 +159,18 @@ async function addPhoto(source: 'camera' | 'gallery' | 'sample'): Promise<void> 
       for (let i = 0; i < 20; i++) { g.beginPath(); g.arc(70 + i * 45, 150 + (i % 4) * 110, 26, 0, Math.PI * 2); g.fill(); }
       base64 = c.toDataURL('image/jpeg', 0.85).split(',')[1];
     } else {
-      const p = await Camera.getPhoto({
-        resultType: 'base64', allowEditing: false,
-        source: source === 'camera' ? CameraSource.Camera : CameraSource.PhotosLibrary,
-        quality: 85
-      } as any);
-      base64 = (p as any).base64String || (p as any).base64 || '';
+      // 关键：必须传 width/height。不传时 resultType:'base64' 会把千万像素原图整张编码成
+      // 5~6MB 字符串过 JS 桥，部分 vivo/iQOO 机型直接卡死在"处理中"（真机已复现）。
+      // 1600px 足够看清证书/现场照片上的文字，体积降到几百 KB。
+      const photo = await Promise.race([
+        Camera.getPhoto({
+          resultType: 'base64', allowEditing: false,
+          source: source === 'camera' ? CameraSource.Camera : CameraSource.PhotosLibrary,
+          quality: 82, width: 1600, height: 1600, correctOrientation: true
+        } as any),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('系统相册未在 45 秒内返回，请重试或改用拍照')), 45000))
+      ]);
+      base64 = (photo as any).base64String || (photo as any).base64 || '';
       if (!base64) throw new Error('没有拿到照片数据');
     }
     const loc = await locate();
@@ -191,12 +214,13 @@ async function saveRecord(): Promise<void> {
   db.addRecord({
     block: f.block, stage: f.stage, activityName: f.activityName.trim(), description: f.description.trim(),
     activityDate: f.activityDate, score: Math.round(f.score * 2) / 2, scorePreset: f.scorePreset,
+    hours: Math.round((Number(f.hours) || 0) * 10) / 10,
     photos: f.photos.map((p) => p.ev)
   });
   await db.saveData();
   showForm.value = false;
   active.value = f.block;
-  db.notify('已保存：' + blockDef(f.block).name + ' +' + f.score + ' 分');
+  db.notify('已保存：' + blockDef(f.block).name + ' +' + f.score + ' 分' + (f.hours ? ' · ' + f.hours + ' 小时' : '') + ')');
 }
 
 async function delRecord(r: SecondClassRecord): Promise<void> {
@@ -267,11 +291,20 @@ const total = computed(() => db.totalScore());
 
     <div v-if="!records.length" class="empty"><div class="big">🏅</div>还没有填报记录<div class="small">点右下角「填报活动」</div></div>
 
+    <div v-if="hourCount" class="card hoursum">
+      <div class="row" style="align-items: flex-end; gap: 10px">
+        <div><div class="hnum">{{ hourTotal }}</div><div class="small muted">累计志愿时长（小时）</div></div>
+        <div class="grow" style="text-align: right">
+          <div class="small">本月 {{ hourThisMonth }} 小时 · 有时长记录 {{ hourCount }} 条</div>
+          <div v-for="hb in hourByBlock" :key="hb.name" class="small muted">{{ hb.name }} {{ hb.h }} 小时</div>
+        </div>
+      </div>
+    </div>
     <div v-for="r in records" :key="r.id" class="card rec" @click="openDetail(r)">
       <div class="tag">{{ blockDef(r.block).name }}</div>
       <div class="grow">
         <div class="bold">{{ r.activityName }}</div>
-        <div class="small muted">{{ r.activityDate }} · {{ r.photos.length }} 张照片 · {{ r.photos.every((p) => p.watermarked) ? '全部有水印' : '含无水印照片' }}</div>
+        <div class="small muted">{{ r.activityDate }}<span v-if="r.hours"> · 志愿时长 <b>{{ r.hours }} 小时</b></span> · {{ r.photos.length }} 张照片 · {{ r.photos.every((p) => p.watermarked) ? '全部有水印' : '含无水印照片' }}</div>
       </div>
       <div class="score">+{{ r.score }}</div>
     </div>
@@ -300,7 +333,13 @@ const total = computed(() => db.totalScore());
           <select v-model="form.stage"><option value="basic">基础评定</option><option value="extended">拓展评定</option></select>
         </div>
       </div>
-      <div class="field"><label>照片（含水印，最多 9 张）</label>
+      <div class="field"><label>志愿 / 活动时长（小时，选填）</label>
+        <div class="chips"><button v-for="h in HOUR_PRESETS" :key="h" class="chip sm" :class="{ on: form.hours === h }" @click="form.hours = h">{{ h }} 小时</button></div>
+        <div class="row" style="margin-top: 8px">
+          <input v-model.number="form.hours" type="number" min="0" max="400" step="0.5" style="flex: 1; padding: 10px; border: 1px solid var(--line); border-radius: 10px" />
+          <span class="small muted">0 ~ 400，0.5 小时步进；用于志愿时长统计与填报</span>
+        </div>
+      </div>      <div class="field"><label>照片（含水印，最多 9 张）</label>
         <div class="row" style="gap: 8px; margin-bottom: 8px">
           <button class="btn sm grow" @click="addPhoto('camera')">📷 拍照</button>
           <button class="btn sm grey grow" @click="addPhoto('gallery')">🖼 相册</button>
@@ -352,7 +391,7 @@ const total = computed(() => db.totalScore());
     <div class="sheet">
       <div class="row"><div class="tag">{{ blockDef(detail.block).name }}</div><div class="title grow">{{ detail.activityName }}</div><div class="score">+{{ detail.score }}</div></div>
       <div class="hairline"></div>
-      <div class="small muted">{{ detail.activityDate }} · {{ blockDef(detail.block).fullName }} · {{ detail.stage === 'basic' ? '基础评定' : '拓展评定' }}</div>
+      <div class="small muted">{{ detail.activityDate }}{{ hoursText(detail) }} · {{ blockDef(detail.block).fullName }} · {{ detail.stage === 'basic' ? '基础评定' : '拓展评定' }}</div>
       <p v-if="detail.description">{{ detail.description }}</p>
       <div class="photos big-p">
         <div v-for="p in detail.photos" :key="p.id">
@@ -384,6 +423,8 @@ const total = computed(() => db.totalScore());
 .tag { width: 34px; height: 34px; border-radius: 10px; background: var(--brand); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; flex: none; }
 .score { font-size: 19px; font-weight: 800; color: var(--brand-2); }
 .hints { background: #FFF9EC; }
+.hoursum { background: #F3F8F5; border: 1px solid #D6E7DC; }
+.hnum { font-size: 26px; font-weight: 800; color: #2F7A52; line-height: 1.1; }
 .disclaim { padding: 14px 6px; line-height: 1.6; }
 .photos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .ph { position: relative; }

@@ -6,10 +6,11 @@ import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
 import { readBinaryBase64, remove, writeBinaryBase64 } from '../services/io.ts';
 import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
+import { Vault, vaultSupported } from '../services/vault.ts';
 import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts';
 
 const db = useDb();
-const panel = ref<'' | 'notify' | 'watermark' | 'backup' | 'about' | 'interests'>('');
+const panel = ref<'' | 'notify' | 'vault' | 'watermark' | 'backup' | 'about' | 'interests'>('');
 const perm = ref('unknown');
 const lastBackup = ref('');
 const restoreB64 = ref('');
@@ -47,6 +48,29 @@ async function askPerm(): Promise<void> {
   db.notify(g ? '通知权限已开启' : '请在系统设置中允许 Unimate 发送通知');
 }
 
+// ---------------- 校园账号（自动填充） ----------------
+const vstat = ref<VaultStatus>({ saved: false, account: '', masked: '' });
+const vAcc = ref(''); const vPw = ref(''); const vErr = ref('');
+async function openVault(): Promise<void> {
+  panel.value = 'vault'; vErr.value = '';
+  try { vstat.value = await Vault.status(); } catch { vstat.value = { saved: false, account: '', masked: '' }; }
+}
+async function saveVault(): Promise<void> {
+  vErr.value = '';
+  const a = vAcc.value.trim();
+  if (!a || !vPw.value) { vErr.value = '账号和密码都要填'; return; }
+  const r = await Vault.save({ account: a, password: vPw.value });
+  if (!r.ok) { vErr.value = r.error || '保存失败'; return; }
+  vPw.value = '';
+  vstat.value = await Vault.status();
+  db.notify('已加密保存到本机');
+}
+async function clearVault(): Promise<void> {
+  await Vault.clear();
+  vstat.value = { saved: false, account: '', masked: '' };
+  vAcc.value = ''; vPw.value = '';
+  db.notify('已清除本机保存的账号');
+}
 async function askExact(): Promise<void> {
   exact.value = await requestExactAlarmSetting();
   db.notify(exact.value === 'granted' ? '精确闹钟已授权，提醒会按时到点触发' : '返回后请重新打开通知设置查看状态');
@@ -128,6 +152,7 @@ async function reschedule(): Promise<void> {
       <div v-if="db.session?.isDemo" class="row" style="margin-bottom: 10px">
         <button class="btn grow grey" @click="resetDemo">重置演示数据</button>
         <button class="btn grow ghost" @click="scheduleDemoPing(); db.notify('已排期：2 分钟后弹通知')">演示一条通知</button>
+        <button v-if="vaultSupported()" class="btn grow ghost" @click="openVault">校园账号</button>
       </div>
       <button class="btn block ghost" @click="db.logout()">退出登录</button>
       <button class="btn block ghost" style="margin-top: 8px" @click="db.changeSchool()">切换学校</button>
@@ -169,6 +194,34 @@ async function reschedule(): Promise<void> {
       </template>
 
       
+      <template v-else-if="panel === 'vault'">
+        <div class="card" style="box-shadow: none; background: #F1F7F3; border: 1px solid #CFE6D8">
+          <div class="small" style="line-height: 1.7">
+            <b>这个页面解决的是：学校门户每次进 App 都要重登一遍。</b><br />
+            把学号和密码加密存在<b>这台手机</b>上，之后进入教务/门户页会出现「自动填充」按钮，点一下替你写进登录框。<br />
+            密码<b>永不明文显示</b>，也<b>不会</b>出现在备份包或任何网络请求里。
+          </div>
+        </div>
+        <div class="card" style="box-shadow: none; background: #F7F9FC; margin-top: 10px">
+          <div class="row" style="justify-content: space-between">
+            <span class="small">本机状态</span>
+            <span class="pill" :class="vstat.saved ? 'live' : ''">{{ vstat.saved ? ('已保存：' + vstat.masked) : '未保存' }}</span>
+          </div>
+        </div>
+        <div class="field" style="margin-top: 12px"><label>学号 / 工号</label><input v-model="vAcc" placeholder="只用于自动填充，不上传" /></div>
+        <div class="field"><label>密码</label><input v-model="vPw" type="password" placeholder="输入后点保存，界面不会回显" autocomplete="off" /></div>
+        <div v-if="vErr" class="small" style="color:#B0433B; margin-bottom: 8px">{{ vErr }}</div>
+        <div class="row" style="gap: 8px">
+          <button class="btn grow" @click="saveVault">{{ vstat.saved ? '更新为本机新输入的账号' : '加密保存到本机' }}</button>
+          <button v-if="vstat.saved" class="btn danger grow" @click="clearVault">清除</button>
+        </div>
+        <div class="small muted" style="margin-top: 10px; line-height: 1.7">
+          · 加密用的是 Android 系统密钥库（Keystore，AES/GCM 256 位），密钥存在硬件后端，<b>导出这台手机的存储也解不开</b>；<br />
+          · App 只把值<b>写进</b>登录框，<b>不读取</b>页面上已输入的内容，也不记录日志；<br />
+          · 自动填充只认教务与门户域名，在别的网站不会替你填；<br />
+          · 换机需要重新输入一次（这是有意为之：不做云同步就不上传凭据）。
+        </div>
+      </template>
       <template v-else-if="panel === 'watermark'">
         <div class="li" style="padding: 10px 0"><span class="grow small">默认给新照片加水印</span><button class="chip sm" :class="{ on: db.settings.watermarkEnabledDefault }" @click="db.settings.watermarkEnabledDefault = !db.settings.watermarkEnabledDefault">{{ db.settings.watermarkEnabledDefault ? '开' : '关' }}</button></div>
         <div class="field"><label>水印包含哪些行（自主组合）</label>

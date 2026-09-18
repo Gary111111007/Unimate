@@ -27,12 +27,12 @@ export function buildDemoNotes(): NoteItem[] {
 
 // 五板块各 1 条，照片用 Canvas 现场生成并烧录水印（离线可演示，无真实人脸信息）
 export async function buildDemoRecords(baseDir: string): Promise<SecondClassRecord[]> {
-  const plan: { block: any; name: string; desc: string; score: number; daysAgo: number; color: string }[] = [
-    { block: 'de', name: '学院主题团日', desc: '参与"开学第一课"主题团日，负责拍照与记录', score: 10, daysAgo: 12, color: '#2E5AAC' },
-    { block: 'zhi', name: '学科竞赛校内选拔', desc: '全国大学生电子设计竞赛校内选拔，提交作品一份', score: 25, daysAgo: 9, color: '#8E6BC9' },
-    { block: 'ti', name: '"奔跑在北化"打卡', desc: '本周完成 5 次打卡，累计 15 公里', score: 30, daysAgo: 5, color: '#3FA97B' },
-    { block: 'mei', name: '美育讲座：交响乐赏析', desc: '音乐厅观看院线美育讲座，提交听后感', score: 10, daysAgo: 3, color: '#C9547E' },
-    { block: 'lao', name: '社区志愿服务', desc: '清理楼道小广告 + 垃圾分类引导，累计 6 小时', score: 20, daysAgo: 1, color: '#E8A33D' }
+  const plan: { block: any; name: string; desc: string; score: number; daysAgo: number; color: string; hours: number }[] = [
+    { block: 'de', name: '学院主题团日', desc: '参与"开学第一课"主题团日，负责拍照与记录', score: 10, daysAgo: 12, color: '#2E5AAC', hours: 2 },
+    { block: 'zhi', name: '学科竞赛校内选拔', desc: '全国大学生电子设计竞赛校内选拔，提交作品一份', score: 25, daysAgo: 9, color: '#8E6BC9', hours: 6 },
+    { block: 'ti', name: '"奔跑在北化"打卡', desc: '本周完成 5 次打卡，累计 15 公里', score: 30, daysAgo: 5, color: '#3FA97B', hours: 5 },
+    { block: 'mei', name: '美育讲座：交响乐赏析', desc: '音乐厅观看院线美育讲座，提交听后感', score: 10, daysAgo: 3, color: '#C9547E', hours: 2 },
+    { block: 'lao', name: '社区志愿服务', desc: '清理楼道小广告 + 垃圾分类引导，累计 6 小时', score: 20, daysAgo: 1, color: '#E8A33D', hours: 6 }
   ];
   const out: SecondClassRecord[] = [];
   for (const item of plan) {

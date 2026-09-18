@@ -90,16 +90,83 @@ async function addApp(): Promise<void> {
   db.notify('已添加，只存在你这台手机上');
 }
 
-// ---------- 长按：操作面板（换位置 / 改信息 / 删除） ----------
-const sheet = ref<CampusApp | null>(null);
+// ---------- 长按进入拖动排序：拖到上方面板改信息，拖到下方面板删除 ----------
+const dragging = ref<CampusApp | null>(null);
+const dragDX = ref(0); const dragDY = ref(0);
+const overZone = ref<'' | 'edit' | 'del'>('');
+const overKey = ref('');
 let lpTimer: number | null = null;
 let lpFired = false;
+let originX = 0; let originY = 0;
+const editZone = ref<HTMLElement | null>(null);
+const delZone = ref<HTMLElement | null>(null);
+const dragEls = new Map<string, HTMLElement>();
 
-function lpStart(a: CampusApp): void {
+function setDragEl(k: string, el: Element | null): void {
+  if (el) dragEls.set(k, el as HTMLElement); else dragEls.delete(k);
+}
+function inZone(el: HTMLElement | null, x: number, y: number): boolean {
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+}
+
+function lpStart(a: CampusApp, e: TouchEvent): void {
   lpFired = false;
-  lpTimer = window.setTimeout(() => { lpFired = true; sheet.value = a; }, 500);
+  const t = e.touches[0];
+  originX = t.clientX; originY = t.clientY;
+  lpTimer = window.setTimeout(() => {
+    lpFired = true;
+    dragging.value = a;
+    dragDX.value = 0; dragDY.value = 0;
+    overZone.value = ''; overKey.value = '';
+    if (navigator.vibrate) { try { navigator.vibrate(18); } catch { /* 不支持就算了 */ } }
+  }, 380);
 }
 function lpCancel(): void { if (lpTimer !== null) { clearTimeout(lpTimer); lpTimer = null; } }
+
+function onDragMove(e: TouchEvent): void {
+  if (!dragging.value) return;
+  const t = e.touches[0];
+  dragDX.value = t.clientX - originX;
+  dragDY.value = t.clientY - originY;
+  overZone.value = inZone(editZone.value, t.clientX, t.clientY) ? 'edit'
+    : inZone(delZone.value, t.clientX, t.clientY) ? 'del' : '';
+  // 悬停在别的卡片上就实时换位，所见即所得
+  if (!overZone.value) {
+    const under = document.elementsFromPoint(t.clientX, t.clientY)
+      .map((el) => (el as HTMLElement).closest('[data-akind]') as HTMLElement | null)
+      .find((el) => el && el.dataset.akind !== dragging.value!.key);
+    if (under) {
+      const target = under.dataset.akind || '';
+      if (target && target !== overKey.value) { reorderTo(dragging.value.key, target); overKey.value = target; }
+    }
+  }
+  e.preventDefault();
+}
+
+function reorderFrom(dragKey: string, dropKey: string): void {
+  const keys = apps.value.map((x) => x.key);
+  const from = keys.indexOf(dragKey);
+  const to = keys.indexOf(dropKey);
+  if (from < 0 || to < 0 || from === to) return;
+  keys.splice(to, 0, keys.splice(from, 1)[0]);
+  db.settings.appOrder = keys;
+}
+function reorderTo(dragKey: string, dropKey: string): void { reorderFrom(dragKey, dropKey); }
+
+async function onDragEnd(): Promise<void> {
+  lpCancel();
+  const a = dragging.value;
+  if (!a) return;
+  const zone = overZone.value;
+  dragging.value = null; overZone.value = ''; overKey.value = '';
+  dragDX.value = 0; dragDY.value = 0;
+  await db.saveData();
+  if (zone === 'edit') openEdit(a);
+  else if (zone === 'del') { confirmDel.value = a; }
+  else if (zone === '') db.notify('顺序已保存');
+}
 function onTap(a: CampusApp): void {
   if (lpFired) { lpFired = false; return; }
   void openTarget(a);
@@ -115,19 +182,11 @@ async function move(a: CampusApp, dir: -1 | 1): Promise<void> {
   keys.splice(j, 0, keys.splice(i, 1)[0]);
   db.settings.appOrder = keys;
   await db.saveData();
-  sheet.value = apps.value.find((x) => x.key === a.key) || null;   // 面板留在原地，便于连续挪
-}
-
-async function moveToEnd(a: CampusApp): Promise<void> {
-  const keys = apps.value.map((x) => x.key).filter((k) => k !== a.key);
-  db.settings.appOrder = [...keys, a.key];
-  await db.saveData();
-  sheet.value = null;
 }
 
 // ---------- 删除：两步确认，防误触 ----------
 const confirmDel = ref<CampusApp | null>(null);
-function askDelete(a: CampusApp): void { sheet.value = null; confirmDel.value = a; }
+function askDelete(a: CampusApp): void { confirmDel.value = a; }
 async function doDelete(): Promise<void> {
   const a = confirmDel.value; if (!a) return;
   if (customKeys.value.has(a.key)) {
@@ -154,7 +213,6 @@ const editingBuiltin = ref(false);
 function openEdit(a: CampusApp): void {
   editing.value = { ...a };
   editingBuiltin.value = !customKeys.value.has(a.key);
-  sheet.value = null;
   showIcons.value = false;
 }
 async function saveEdit(): Promise<void> {
@@ -204,7 +262,7 @@ async function probeAll(): Promise<void> {
   <div class="scroll">
     <div class="card hero">
       <div class="title">{{ p().tabs.online }}</div>
-      <div class="small">把{{ p().shortName }}要用的东西收在一页里。长按任意入口可调整顺序、改名或删除。</div>
+      <div class="small">把{{ p().shortName }}要用的东西收在一页里。<b>长按并拖动</b>可换位置，拖到上方改信息、拖到下方删除。</div>
     </div>
 
     <div class="secrow">
@@ -240,8 +298,10 @@ async function probeAll(): Promise<void> {
     </div>
 
     <div class="grid">
-      <div v-for="a in apps" :key="a.key" class="app" :class="{ mine: customKeys.has(a.key), edited: !!cookieMap[a.key] }"
-           @click="onTap(a)" @touchstart="lpStart(a)" @touchend="lpCancel" @touchmove="lpCancel" @touchcancel="lpCancel" @contextmenu.prevent>
+      <div v-for="a in apps" :key="a.key" class="app" :data-akind="a.key"
+           :class="{ mine: customKeys.has(a.key), edited: !!cookieMap[a.key], dragging: dragging?.key === a.key, lift: !!dragging && dragging.key !== a.key }"
+           :style="dragging?.key === a.key ? { transform: 'translate(' + dragDX + 'px,' + dragDY + 'px)' } : {}"
+           @click="onTap(a)" @touchstart="lpStart(a, $event)" @touchend="onDragEnd" @touchmove="onDragMove" @touchcancel="onDragEnd" @contextmenu.prevent>
         <span v-if="customKeys.has(a.key)" class="tag-mine">我的</span>
         <span v-else-if="(db.settings.appEdits || {})[a.key]" class="tag-edited">已改</span>
         <img v-if="a.iconData" :src="a.iconData" class="icoimg" alt="" />
@@ -273,31 +333,10 @@ async function probeAll(): Promise<void> {
       </div>
     </div>
 
-    <!-- 长按操作面板 -->
-    <div v-if="sheet" class="mask" @click.self="sheet = null">
-      <div class="sheet">
-        <div class="row"><div class="title grow">{{ sheet.name }}</div><button class="btn sm ghost" @click="sheet = null">关闭</button></div>
-        <div class="small muted">{{ sheet.url }}</div>
-
-        <div class="sect">更换位置</div>
-        <div class="row" style="gap: 8px">
-          <button class="btn grey grow" :disabled="isFirst(sheet.key)" @click="move(sheet, -1)">⬆ 上移</button>
-          <button class="btn grey grow" :disabled="isLast(sheet.key)" @click="move(sheet, 1)">⬇ 下移</button>
-        </div>
-        <div class="row" style="gap: 8px; margin-top: 8px">
-          <button class="btn ghost grow" @click="moveToEnd(sheet)">移到最后</button>
-        </div>
-        <div class="small muted" style="margin-top: 6px">当前第 {{ apps.findIndex(x => x.key === sheet.key) + 1 }} / {{ apps.length }} 位。</div>
-
-        <div class="sect">更改信息</div>
-        <button class="btn block grey" @click="openEdit(sheet)">修改名称 / 网址 / 说明 / 图标</button>
-
-        <div class="sect danger">删除此板块</div>
-        <button class="btn block danger" @click="askDelete(sheet)">删除「{{ sheet.name }}」</button>
-        <div class="small muted" style="margin-top: 6px">删除会要求再确认一次，避免手滑。内置入口删错可在页面上方「恢复全部」找回。</div>
-      </div>
-    </div>
-
+    <!-- 拖动时浮现的两个投放区 -->
+    <div v-if="dragging" ref="editZone" class="zone zedit" :class="{ on: overZone === 'edit' }">拖到这里：更改信息</div>
+    <div v-if="dragging" ref="delZone" class="zone zdel" :class="{ on: overZone === 'del' }">拖到这里：删除此板块</div>
+    <div v-if="dragging" class="dragtip">正在拖动「{{ dragging.name }}」· 移到别的卡片上可直接换位置</div>
     <!-- 两步确认删除 -->
     <div v-if="confirmDel" class="mask" @click.self="confirmDel = null">
       <div class="sheet">
@@ -350,6 +389,14 @@ async function probeAll(): Promise<void> {
 </template>
 
 <style scoped>
+.zone { position: fixed; left: 0; right: 0; z-index: 130; height: 74px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: #fff; border-radius: 0; }
+.zedit { top: 0; padding-top: var(--safe-t); background: rgba(46, 90, 172, .93); }
+.zdel { bottom: 0; padding-bottom: var(--safe-b); background: rgba(176, 67, 59, .93); }
+.zone.on { outline: 3px solid #FFD37A; outline-offset: -6px; }
+.dragtip { position: fixed; left: 50%; transform: translateX(-50%); top: 50%; z-index: 131; background: rgba(16,24,38,.9); color: #fff; font-size: 12px; padding: 7px 12px; border-radius: 999px; pointer-events: none; white-space: nowrap; }
+.app.dragging { z-index: 140; position: relative; box-shadow: 0 12px 28px rgba(0,0,0,.34); opacity: .96; transition: none; }
+.app.lift { opacity: .55; }
+.grid { position: relative; }
 .hero { background: linear-gradient(140deg, #2E5AAC, #3E6FBF); color: #fff; }
 .hero .title { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
 .hero .small { color: rgba(255, 255, 255, .82); font-size: 12.5px; line-height: 1.6; }

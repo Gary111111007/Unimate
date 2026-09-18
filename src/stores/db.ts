@@ -375,7 +375,7 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   function addRecord(part: Partial<SecondClassRecord>): SecondClassRecord {
     const r: SecondClassRecord = {
       id: uuid(), block: 'de', stage: 'basic', activityName: '', description: '', activityDate: dateStamp(),
-      photos: [], score: 10, scorePreset: '', createdAt: nowStamp(), updatedAt: nowStamp(), deletedAt: null, ...part
+      photos: [], score: 10, scorePreset: '', hours: 0, createdAt: nowStamp(), updatedAt: nowStamp(), deletedAt: null, ...part
     } as SecondClassRecord;
     records.value.unshift(r);
     return r;

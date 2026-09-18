@@ -75,6 +75,7 @@ function recordTxt(r: SecondClassRecord): string {
     '板块：' + blockDef(r.block).name + ' · ' + blockDef(r.block).fullName + '（' + (r.stage === 'basic' ? '基础评定' : '拓展评定') + '）',
     '自评分数：' + r.score + ' 分' + (r.scorePreset ? '（参考档：' + r.scorePreset + '）' : ''),
     '活动时间：' + r.activityDate,
+    '志愿 / 活动时长：' + ((r as any).hours || 0) + ' 小时',
     '描述：' + (r.description || '（无）'),
     '照片数量：' + r.photos.length,
     '',
@@ -116,14 +117,14 @@ export async function exportRecordZip(r: SecondClassRecord): Promise<{ fileName:
 export async function exportAllZip(records: SecondClassRecord[]): Promise<{ fileName: string; path: string; hint: string; photos: number }> {
   const entries: { name: string; data: Uint8Array }[] = [];
   let n = 0;
-  const lines: string[] = ['第二课堂填报材料清单', '导出时间：' + nowStamp(), ''];
+  const lines: string[] = ['第二课堂填报材料清单', '导出时间：' + nowStamp(), '', '全部志愿时长合计：' + (Math.round(records.filter((x) => !x.deletedAt).reduce((a, x) => a + ((x as any).hours || 0), 0) * 10) / 10) + ' 小时', ''];
   for (const b of ['de', 'zhi', 'ti', 'mei', 'lao'] as const) {
     const list = records.filter((r) => r.block === b && !r.deletedAt);
     const sum = list.reduce((a, r) => a + r.score, 0);
     const def = blockDef(b);
-    lines.push('【' + def.name + ' · ' + def.fullName + '】自评合计 ' + sum + ' / ' + def.fullScore + ' 分，共 ' + list.length + ' 条');
+    lines.push('【' + def.name + ' · ' + def.fullName + '】自评合计 ' + sum + ' / ' + def.fullScore + ' 分，共 ' + list.length + ' 条，志愿时长合计 ' + (Math.round(list.reduce((a, x) => a + ((x as any).hours || 0), 0) * 10) / 10) + ' 小时');
     for (const r of list) {
-      lines.push('  · ' + r.activityName + '｜' + r.activityDate + '｜' + r.score + ' 分｜照片 ' + r.photos.length + ' 张');
+      lines.push('  · ' + r.activityName + '｜' + r.activityDate + '｜' + r.score + ' 分｜' + ((r as any).hours || 0) + ' 小时｜照片 ' + r.photos.length + ' 张');
       for (let i = 0; i < r.photos.length; i++) {
         const item = await photoBytes(r, i);
         if (!item) continue;

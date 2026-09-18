@@ -89,6 +89,8 @@ export interface SecondClassRecord {
   activityName: string;
   description: string;
   activityDate: string;
+  /** 志愿/活动时长（小时）。0 表示未填。 */
+  hours: number;
   photos: PhotoEvidence[];
   score: number;
   scorePreset: string;

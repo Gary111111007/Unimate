@@ -247,7 +247,8 @@ function toggleWeek(w: number): void {
           @click="detail = x.b"
         >
           <div class="bn">{{ x.b.name }}</div>
-          <div class="bm">{{ x.b.rooms[0] }}</div>
+          <div class="bm">{{ timeOf(x.b.startPeriod) }}–{{ timeOf(x.b.endPeriod, true) }}</div>
+          <div class="bm rm">{{ x.b.rooms[0] }}</div>
         </div>
       </div>
     </div>
@@ -376,6 +377,7 @@ function toggleWeek(w: number): void {
 .cell { border-bottom: 1px dashed var(--line); }
 .block { position: absolute; border-radius: 7px; color: #fff; padding: 3px 4px; overflow: hidden; font-size: 10px; line-height: 1.25; }
 .block.now { outline: 2.5px solid #14181F; outline-offset: -2px; }
+.bm.rm { opacity: .82; }
 .bn { font-weight: 700; font-size: 11px; word-break: break-all; }
 .bm { opacity: .88; word-break: break-all; }
 .fab2 { position: fixed; right: 18px; bottom: calc(150px + var(--safe-b)); width: 42px; height: 42px; border-radius: 50%; background: #fff; color: var(--brand); box-shadow: var(--shadow); font-size: 20px; z-index: 39; }
