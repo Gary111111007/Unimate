@@ -28,6 +28,8 @@ function defaultSettings(p: SchoolProfile): Settings {
     showWeekend: true, theme: 'light', webviewKeepSession: true, autoBackup: true,
     lastActiveTimetableId: null,
     appEdits: {},
+    appOrder: [],
+    hiddenApps: [],
     // 用户自行添加的校园入口（本校档案没收录的服务）
     customApps: []
   };

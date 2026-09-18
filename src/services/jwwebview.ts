@@ -9,13 +9,18 @@ export interface WebViewOpenResult {
   reason?: string;
 }
 
+export interface CookieProbe { present: boolean; count: number }
+
 export interface JwWebViewPlugin {
   open(options: { url: string; startUrl?: string; title: string; scrapeSelector?: string; allowExternal?: boolean }): Promise<WebViewOpenResult>;
+  /** 只问"有没有、几条"，原生侧不返回 Cookie 内容 */
+  cookieProbe(options: { url: string }): Promise<CookieProbe>;
 }
 
 export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
   web: () => ({
-    open: async (): Promise<WebViewOpenResult> => ({ ok: false, reason: 'web-unsupported' })
+    open: async (): Promise<WebViewOpenResult> => ({ ok: false, reason: 'web-unsupported' }),
+    cookieProbe: async (): Promise<CookieProbe> => ({ present: false, count: 0 })
   })
 });
 

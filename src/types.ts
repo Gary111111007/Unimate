@@ -167,6 +167,10 @@ export interface Settings {
   lastActiveTimetableId: string | null;
   /** 长按北化通条目后可改的名称/网址/说明/图标，按 key 覆盖内置档案 */
   appEdits: Record<string, Partial<CampusApp>>;
+  /** 北化通条目显示顺序（key 列表）。未列出的按档案默认顺序排在后面 */
+  appOrder: string[];
+  /** 被用户删除（隐藏）的入口 key，可在设置里一键恢复全部 */
+  hiddenApps: string[];
   /** 用户自己添加的校园入口（本校未收录的服务由用户自行补全） */
   customApps: CampusApp[];
 }

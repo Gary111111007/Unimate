@@ -1,6 +1,7 @@
 package com.unimate.app;
 
 import android.content.Intent;
+import android.webkit.CookieManager;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -43,6 +44,28 @@ public class JwWebViewPlugin extends Plugin {
         startActivityForResult(call, intent, "handleOpenResult");
     }
 
+/**
+     * Cookie 诊断探针：只回答"这个域名当前有没有 Cookie、几条"，
+     * 绝不返回 Cookie 内容本身 —— PRD 5.4.8 红线（不读取 Cookie 值）。
+     * 用途：区分"登录态没落盘"与"学校服务端会话本身过期"两种情况。
+     */
+    @PluginMethod
+    public void cookieProbe(PluginCall call) {
+        String url = call.getString("url", "");
+        int count = 0;
+        try {
+            String ck = CookieManager.getInstance().getCookie(url);
+            if (ck != null && !ck.isEmpty()) {
+                for (String part : ck.split(";")) {
+                    if (!part.trim().isEmpty()) count++;
+                }
+            }
+        } catch (Exception ignored) { }
+        JSObject ret = new JSObject();
+        ret.put("present", count > 0);
+        ret.put("count", count);
+        call.resolve(ret);
+    }
     @ActivityCallback
     private void handleOpenResult(PluginCall activityCall, ActivityResult result) {
         PluginCall call = pending;

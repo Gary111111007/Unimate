@@ -162,6 +162,15 @@ public class JwWebViewActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 if (webView != null && !webView.canGoBackOrForward(0)) { /* 保持提示，便于用户看到原因 */ }
+                // 关键：不能只在 onPause 落盘。国产 ROM 直接杀进程时 onPause 根本不执行，
+                // 刚登录拿到的会话 Cookie 就随内存一起没了。页面一加载完就刷盘，
+                // 把丢失窗口从"整个使用期间"压到"秒级"。
+                flushCookies();
+                if (bar != null) {
+                    bar.postDelayed(new Runnable() {
+                        @Override public void run() { flushCookies(); }
+                    }, 1500);   // 登录后常有跳转/JS 补写 Cookie，稍后再刷一次
+                }
             }
         });
         LinearLayout.LayoutParams wvLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
@@ -182,6 +191,11 @@ public class JwWebViewActivity extends Activity {
 
         homeUrl = url;
         webView.loadUrl(url);
+    }
+
+
+    private void flushCookies() {
+        try { CookieManager.getInstance().flush(); } catch (Exception ignored) { }
     }
 
     private String currentUrl() {

@@ -80,9 +80,10 @@ export const BUCT_PROFILE: SchoolProfile = {
   // 仅收录已核实的真实地址；企业微信不在其列（它必须走独立 App，内嵌无意义）。
   // 本校没列到的服务，用户可在页内"添加入口"自行补充，存本机。
   campusApps: [
-    { key: 'health', name: '健康云', url: 'https://tygl.buct.edu.cn/', icon: '🩺', desc: '体质测试与健康数据', builtin: true },
-    { key: 'jwglxt', name: '教务系统', url: 'https://jwglxt.buct.edu.cn/', icon: '🏛', desc: '课表 · 成绩 · 选课', builtin: true },
+    // 默认顺序按使用频次排：北化在线 → 教务系统 → 健康云 → 其余。用户可长按调整。
     { key: 'course', name: '北化在线', url: 'https://course.buct.edu.cn/', icon: '📚', desc: '在线课程与作业', builtin: true },
+    { key: 'jwglxt', name: '教务系统', url: 'https://jwglxt.buct.edu.cn/', icon: '🏛', desc: '课表 · 成绩 · 选课', builtin: true },
+    { key: 'health', name: '健康云', url: 'https://tygl.buct.edu.cn/', icon: '🩺', desc: '体质测试与健康数据', builtin: true },
     { key: 'library', name: '图书馆', url: 'https://library.buct.edu.cn/', icon: '📖', desc: '馆藏检索 · 数据库导航', builtin: true },
     { key: 'zy', name: '电子资源', url: 'https://zy.buct.edu.cn/', icon: '🔑', desc: '统一身份认证 · 校外访问', builtin: true },
     { key: 'portal', name: '信息门户', url: 'https://portal.buct.edu.cn/', icon: '🧭', desc: '统一身份认证主入口', builtin: true },
