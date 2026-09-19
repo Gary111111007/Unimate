@@ -17,11 +17,13 @@
    其余外校只出现在选择列表并标"开发中"，**不得写成已支持**；助手名 Uni；包名 `com.unimate.app`。
 5. **数据全本地**，不接第三方地图 Key；水印可自主开关（材料可信度靠 sidecar sha256 存证，不靠定位服务）。
 6. **回复用中文**；**"已验证"和"未验证"必须分开说**。没有真机跑过的事不许声称通过。
+7. **UI 文案必须与实现一致**：写了自己做不到的功能（例如"深色下自动降饱和"其实没做）算事故，宁可改文案也不糊弄验收。
+8. **任何 await 原生/插件调用都必须包 `guard()` 超时**，启动路径尤其如此：宁可降级到登录页，也不许把用户永久卡在开屏。
 
 ## 二、构建与验证
 
 - 唯一正确的出包方式：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1`（6 步，含包内容反查）。手跑 gradle 会打出旧 bundle。
-- 测试：`test:login`(27) / `test:parser`(57) / `test:zip`(15) / `test:notify`(16)。脚本用 `Invoke-Npm` 检查退出码，**红一条就不许出包**。
+- 测试（共 136 条）：`test:login`(27) / `test:parser`(57) / `test:zip`(15) / `test:notify`(16) / `test:color`(15) / `test:guard`(6)。脚本用 `Invoke-Npm` 检查退出码，**红一条就不许出包**；新增测试文件必须同时登记进 `package.json` 与 `build-apk.ps1`，否则等于没跑。
 - 改了代码必须做**反向取证**：新字符串要在 APK 里查得到、被删的旧字符串要查不到。只看"BUILD SUCCESSFUL"不算数。
 - 怀疑包被别的工具改过时，比对 `SHA-256` 与 `PRD` 里记录的指纹 + 走一遍完整性校验。
 
@@ -36,6 +38,9 @@
 - `.ps1` 必须 UTF-8 **带** BOM；`.ts/.vue` 必须 UTF-8 **不带** BOM。
 - Android WebView 加载不了 `file://` 图片 → 一律转 data URL；`Plugin` 基类没有 `startActivity`，用 `getActivity().startActivity()`；`KeyStore` 是 `deleteEntry` 不是 `deleteKey`；`View.setWidth()` 是 protected。
 - `export interface` 不能写在 `defineStore` 函数体里；替换代码块时别删掉仍被引用的变量声明。
+- **课表配色不许按行号取模**（`i % 12` 会让同一门课多时段变多色），也不许纯哈希（16 门课进 12 色必撞）—— 用 `assignCourseColors(课程名集合)`，手动色 `colorSet` 优先。
+- **Vue 模板里不要嵌引号表达式**（`join(' / ')` 这种）；一律抽成辅助函数，否则不是报错就是渲染崩。
+- 校验 CSS 是否入包时要考虑 scoped：编译后是 `.nextbar[data-v-xxxx]`，直接正则匹配 `.nextbar{` 会假阴性。
 
 ## 四、待办（产品负责人点头才做）
 

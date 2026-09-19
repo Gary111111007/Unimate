@@ -7,6 +7,7 @@ import Main from './screens/Main.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import { ensurePermission, permissionState } from './services/notify.ts';
 import { JwWebView } from './services/jwwebview.ts';
+import { bootTrace } from './services/guard.ts';
 const isNative = (): boolean => { try { return !!(window as any).Capacitor && (window as any).Capacitor.isNativePlatform(); } catch { return false; } };
 
 const db = useDb();
@@ -97,7 +98,8 @@ onMounted(async () => {
       <div v-if="stuck" class="stuck">
         <div class="stt">启动没有按时完成 · 原因显示在下面</div>
         <pre v-if="db.lastError" class="ste">{{ db.lastError }}</pre>
-        <div v-else class="ste">没有捕获到 JS 错误 —— 更可能是系统或某个原生权限对话框把启动挂起了。</div>
+        <div v-else class="ste">没有捕获到 JS 错误，但下面的启动步骤会指出卡在哪一步（超过 5 秒没走完就是某个系统调用没返回）。</div>
+        <div v-if="bootTrace.length" class="sttr">启动步骤：{{ bootTrace.join('  ·  ') }}</div>
         <div class="stb">
           <button class="btn sm" @click="retryBoot()">重试一次</button>
           <button class="btn sm grey" @click="forceEnter()">跳过开屏，先进去看看</button>
@@ -145,6 +147,7 @@ onMounted(async () => {
 .stuck { position: absolute; left: 14px; right: 14px; bottom: calc(70px + var(--safe-b)); max-height: 48vh; overflow: auto; text-align: left; background: rgba(255, 255, 255, .10); border: 1px solid rgba(255, 255, 255, .22); border-radius: 14px; padding: 12px 13px; backdrop-filter: blur(6px); }
 .stt { font-size: 13.5px; font-weight: 700; }
 .ste { white-space: pre-wrap; word-break: break-all; font-size: 11px; line-height: 1.5; opacity: .92; margin: 8px 0; max-height: 19vh; overflow: auto; }
+.sttr { font-size: 11px; line-height: 1.6; opacity: .85; margin-top: 6px; word-break: break-all; }
 .stb { display: flex; gap: 8px; }
 .sth { font-size: 11px; opacity: .72; margin-top: 9px; line-height: 1.5; }
 .errpanel { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 210; background: var(--card); border: 1px solid var(--danger); border-radius: 12px; padding: 10px 12px; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); }

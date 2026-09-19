@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
-import { COURSE_COLORS, courseColorIndex } from '../catalog/periods.ts';
+import { COURSE_COLORS, assignCourseColors, courseColorIndex } from '../catalog/periods.ts';
 import { uuid, nowStamp } from '../services/id.ts';
 import type { Course, CourseMaterial } from '../types.ts';
 import { writeBinaryBase64, remove } from '../services/io.ts';
@@ -220,15 +220,31 @@ async function delMaterial(m: CourseMaterial): Promise<void> {
   try { await remove(m.path); } catch { /* 文件删不掉也不影响索引 */ }
   db.notify('已删除资料');
 }
-/** 手动选过色就用它；否则一律按课程名取色 —— 保证"同一门课满屏同一个颜色" */
-/** 当前生效的色号：手动色优先，否则按课程名哈希 */
+/**
+ * 本表配色分配：同一门课恒定同色，且同表内不同课尽量不同色。
+ * 只按课程名哈希会"生日撞车"（真机反馈：默认变成一个颜色），所以这里按**当前课表里出现过的
+ * 全部课程名**算一张分配表；它只依赖课程名集合，不依赖导入顺序，也不依赖当前周次。
+ */
+const colorAlloc = computed<Record<string, number>>(() => {
+  const ttId = db.activeTimetable?.id;
+  const names = db.courses.filter((c) => c.timetableId === ttId).map((c) => c.name);
+  return assignCourseColors(names);
+});
+const normName = (x: string | undefined) => (x || '').replace(/\s+/g, '');
+
+/** 当前生效的色号：手动选过的课优先手动色，否则查分配表，最后兜底哈希 */
 function colorIndexOf(c: { name?: string; colorIndex?: number; colorSet?: boolean }): number {
-  return c.colorSet ? (c.colorIndex || 0) : courseColorIndex(c.name || '');
+  if (c.colorSet) return (c.colorIndex || 0) % COURSE_COLORS.length;
+  const k = normName(c.name);
+  const fromTable = colorAlloc.value[k];
+  return fromTable === undefined ? courseColorIndex(k) : fromTable;
 }
 
+/** 多个教室合并显示（放这儿是为了模板里不再嵌引号） */
+function roomsText(list: string[]): string { return list.join(' / '); }
+
 function colorOf(b: Block): string {
-  const idx = b.colorSet ? (b.colorIndex || 0) : courseColorIndex(b.name);
-  return COURSE_COLORS[idx % COURSE_COLORS.length];
+  return COURSE_COLORS[colorIndexOf(b)];
 }
 function timeOf(period: number, end = false): string {
   const p = db.settings.periodTimes.find((x) => x.period === period);
@@ -282,7 +298,7 @@ function autoColor(): void {
   const c = editing.value;
   if (!c) return;
   c.colorSet = false;
-  c.colorIndex = courseColorIndex(c.name || '');
+  c.colorIndex = colorIndexOf(c);
 }
 
 /** 把这门课的颜色写给它的所有同名时段（含刚保存的这条） */
@@ -303,7 +319,7 @@ async function saveCourse(): Promise<void> {
   if (!c.name.trim()) { db.notify('请填写课程名称'); return; }
   if (!c.weeks.length) { db.notify('请选择至少一个周次'); return; }
   if (isNew.value) {
-    c.id = uuid(); c.timetableId = db.activeTimetable!.id; c.colorIndex = c.colorSet ? c.colorIndex : courseColorIndex(c.name);
+    c.id = uuid(); c.timetableId = db.activeTimetable!.id; c.colorIndex = c.colorSet ? c.colorIndex : colorIndexOf(c);
     db.courses.push(c);
   } else {
     const i = db.courses.findIndex((x) => x.id === c.id);
@@ -396,16 +412,15 @@ function toggleWeek(w: number): void {
       <button v-if="week !== db.currentWeek" class="btn sm ghost today" @click="goToday">回本周</button>
     </div>
     <div class="swipe-hint center">左右滑动可切换周次</div>
-
-    <div v-if="nextClass" class="card next">
-      <span class="dot" :style="{ background: colorOf(nextClass) }"></span>
-      <div class="grow">
-        <div class="small muted">{{ nextClass.dayLabel }} · 第 {{ nextClass.startPeriod }}-{{ nextClass.endPeriod }} 节 {{ nextClass.timeLabel }} · {{ untilText(nextClass.minutesUntil) }}</div>
-        <div class="bold">{{ nextClass.name }}</div>
-        <div class="small">{{ nextClass.rooms.join(' / ') }}<span v-if="nextClass.teachers.length"> · {{ nextClass.teachers.join('、') }}</span></div>
+      <!-- 真机反馈：这块原来是三行大卡片，把课表整个顶到屏幕外。压成一条，点整条看详情。 -->
+      <div v-if="nextClass" class="nextbar" @click="detail = nextClass">
+        <span class="ndot" :style="{ background: colorOf(nextClass) }"></span>
+        <div class="ngrow">
+          <div class="n1"><b>{{ nextClass.name }}</b><span class="nu">{{ untilText(nextClass.minutesUntil) }}</span></div>
+          <div class="n2">{{ nextClass.dayLabel }} · 第 {{ nextClass.startPeriod }}-{{ nextClass.endPeriod }} 节 {{ nextClass.timeLabel }}<span v-if="nextClass.rooms.length"> · {{ roomsText(nextClass.rooms) }}</span></div>
+        </div>
+        <span class="ncv">详情 ›</span>
       </div>
-      <button class="btn sm ghost" @click="detail = nextClass">详情</button>
-    </div>
 
     <div v-if="!db.courses.length" class="empty">
       <div class="big">🗓</div>
@@ -573,7 +588,14 @@ function toggleWeek(w: number): void {
 .tiny { font-size: 10.5px; }
 .filebtn { cursor: pointer; }
 .swipe-hint { margin: 4px 0 8px; }
-.next { display: flex; gap: 10px; align-items: center; border-left: 4px solid var(--brand); }
+.nextbar { display: flex; align-items: center; gap: 9px; background: var(--card); border-radius: 11px; padding: 7px 10px; margin: 0 0 7px; box-shadow: var(--shadow); }
+.ndot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.ngrow { flex: 1; min-width: 0; }
+.n1 { display: flex; align-items: baseline; gap: 7px; font-size: 13px; line-height: 1.3; }
+.n1 b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nu { font-size: 11px; color: var(--brand); flex: none; }
+.n2 { font-size: 11px; color: var(--muted); line-height: 1.3; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ncv { font-size: 11.5px; color: var(--muted); flex: none; }
 .dot { width: 12px; height: 12px; border-radius: 4px; flex: none; }
 .grid { display: grid; grid-template-columns: 52px repeat(7, 1fr); background: var(--card); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
 .corner { font-size: 11px; color: var(--muted); text-align: center; padding: 7px 0; border-bottom: 1px solid var(--line); background: var(--soft); }

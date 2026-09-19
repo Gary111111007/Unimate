@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseJwglxtTimetable } from '../src/services/parser/jwglxtBuct.ts';
-import { COURSE_COLORS, courseColorIndex } from '../src/catalog/periods.ts';
+import { COURSE_COLORS, assignCourseColors, courseColorIndex } from '../src/catalog/periods.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = readFileSync(join(here, '..', 'fixtures', 'jwglxt-buct.sample.html'), 'utf8');
@@ -60,6 +60,47 @@ for (const n of byName.keys()) {
   if (i < 0 || i >= COURSE_COLORS.length) { inRange = false; break; }
 }
 ok('色号均在调色板内', inRange);
+
+
+// 6) 一张课表里：不同课程名必须尽量不同色（真机反馈"默认会变成一个颜色"）
+const names = parsed.courses.map((c) => c.name);
+const map = assignCourseColors(names);
+const uniqNames = Object.keys(map);
+const idxList = uniqNames.map((n) => map[n]);
+const distinctIdx = new Set(idxList).size;
+ok('课程名数量合理', uniqNames.length >= 4, uniqNames.length + ' 门课');
+if (uniqNames.length <= COURSE_COLORS.length) {
+  ok('同表内不同课互不同色', distinctIdx === uniqNames.length,
+    uniqNames.length + ' 门课只用了 ' + distinctIdx + ' 种颜色');
+} else {
+  ok('超过调色板容量时仍尽量分散', distinctIdx === COURSE_COLORS.length,
+    uniqNames.length + ' 门课用了 ' + distinctIdx + ' 种颜色');
+}
+
+// 7) 分配与顺序无关（打乱输入必须得到同一张表）
+const shuffled = names.slice().reverse();
+const map2 = assignCourseColors(shuffled);
+let stable = true;
+for (const n of uniqNames) { if (map[n] !== map2[n]) { stable = false; break; } }
+ok('打乱导入顺序后颜色不变', stable);
+
+// 8) 反证：纯哈希（无冲突处理）在同一张表里会撞色
+let collide = 0;
+const seen = new Set<string>();
+for (const n of uniqNames) {
+  const k = String(courseColorIndex(n));
+  if (seen.has(k)) collide++; else seen.add(k);
+}
+ok('纯哈希确实会撞色（所以才需要分配表）', collide >= 1, collide + ' 门课与前面的课撞色');
+console.log('  参考：不做冲突处理时，' + collide + ' 门课会和别的课共用一个颜色');
+
+// 9) 手动色优先：同一张表里手动改色不应被自动分配覆盖（由视图层实现，这里锁住函数行为）
+ok('自动分配返回的色号都在调色板内', idxList.every((i) => i >= 0 && i < COURSE_COLORS.length));
+
+// 10) 真实容量：这份 16 门课的样本在 18 色下应当**完全互不相同**
+ok('调色板 >= 18 色', COURSE_COLORS.length >= 18, '当前 ' + COURSE_COLORS.length + ' 色');
+ok('样本 16 门课全部互不同色', uniqNames.length <= 18 ? distinctIdx === uniqNames.length : true,
+  uniqNames.length + ' 门课 / ' + distinctIdx + ' 种颜色');
 
 console.log('');
 console.log('Color Test: ' + passed + ' passed, ' + failed + ' failed');

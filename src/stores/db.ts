@@ -11,6 +11,7 @@ import { readJson, writeJson, readText, writeText, remove, probeStorage } from '
 import { randomSalt, sha256Text } from '../services/crypto.ts';
 import { buildDemoNotes, buildDemoRecords, buildDemoTimetable } from '../services/demo.ts';
 import { rescheduleAll, scheduleDemoPing, cancelAllScheduledOnBoot } from '../services/notify.ts';
+import { guard, traceReset } from '../services/guard.ts';
 
 export const SCHEMA_VERSION = 1;
 export const APP_VERSION = '1.0.0';
@@ -109,26 +110,36 @@ const screen = ref<'school' | 'login' | 'app'>('login');
 
   // ---------------- boot ----------------
   async function boot(): Promise<void> {
+    // 每一步都限时：真机（OPPO/ColorOS）出现过"开屏永远停住、没有任何 JS 错误"，
+    // 那就是某个插件的 Promise 再也不 resolve。宁可降级到登录页，也不能让用户进不去。
+    traceReset();
     try {
-      storage.value = await probeStorage();
+      storage.value = await guard('存储自检', probeStorage(), 4000, { ok: true, detail: '自检超时，按可用处理' });
       if (!storage.value.ok) fail('本机存储不可用', storage.value.detail);
     } catch { /* 自检本身失败不阻塞启动 */ }
     try {
-    const manifest = await readJson<any>('manifest.json', { schemaVersion: SCHEMA_VERSION, schools: {}, accounts: [] });
-    interests.value = await readJson<InterestEntry[]>('catalog/interests.json', []);
-      accounts.value = await readJson<Account[]>('accounts.json', []);
+      const manifest = await guard('读高校清单', readJson<any>('manifest.json', { schemaVersion: SCHEMA_VERSION, schools: {}, accounts: [] }), 4000,
+        { schemaVersion: SCHEMA_VERSION, schools: {}, accounts: [] } as any);
+      interests.value = await guard('读意向清单', readJson<InterestEntry[]>('catalog/interests.json', []), 3000, []);
+      accounts.value = await guard('读账号表', readJson<Account[]>('accounts.json', []), 3000, []);
       const lastAccount = manifest.lastAccountId;
       const acc = lastAccount ? accounts.value.find((a) => a.id === lastAccount) : null;
       if (acc) {
         session.value = { accountId: acc.id, username: acc.username, displayName: acc.displayName, isDemo: acc.isDemo };
-        await finishLogin();          // 已绑定高校则直接进主界面，否则进学校选择页
+        // 已绑定高校则直接进主界面，否则进学校选择页；超时则退回登录页
+        const done = await guard('载入账号数据', finishLogin().then(() => true).catch(() => false), 9000, false);
+        if (!done) {
+          session.value = null;
+          screen.value = 'login';
+          fail('启动', '读取账号数据超时，已退回登录页（数据仍在手机里，重新登录即可）');
+        }
       } else {
         screen.value = 'login';       // 无历史登录态：先登录，不展示选校页
       }
       // 冷启动先清空系统里遗留的排期，再按当前课表重建。
       // Capacitor 启动时会恢复上次注册的本地通知，其中已过期的会被立即补发，
       // 这正是「App 没开时不提醒、一打开所有提醒一起涌出」的成因。
-      try { await cancelAllScheduledOnBoot(); } catch { /* 预览环境忽略 */ }
+      try { await guard('清理遗留排期', cancelAllScheduledOnBoot(), 4000, undefined); } catch { /* 预览环境忽略 */ }
     } catch (e) { fail('启动', e); }
     booted.value = true;
   }

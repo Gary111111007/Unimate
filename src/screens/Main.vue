@@ -67,8 +67,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.sheetbar { display: flex; gap: 8px; margin-top: 10px; }
-.sheetbar button { flex: 1; padding: 9px; border-radius: 9px; background: var(--soft-2); color: var(--muted); font-size: 14px; font-weight: 600; }
+.sheetbar { display: flex; gap: 8px; margin-top: 7px; }
+.sheetbar button { flex: 1; padding: 6px; border-radius: 8px; background: var(--soft-2); color: var(--muted); font-size: 13px; font-weight: 600; }
 .sheetbar button.on { background: var(--brand); color: #fff; }
 /* 固定底栏：任何页面、任何滚动位置都常驻可见 */
 .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; display: flex; background: var(--card); border-top: 1px solid var(--line); padding-bottom: var(--safe-b); box-shadow: 0 -2px 10px rgba(20, 30, 60, .06); }

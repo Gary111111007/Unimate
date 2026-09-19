@@ -1,6 +1,7 @@
 // 本地通知（PRD 5.10）。所有调用都包 try/catch：桌面预览与未授权时静默降级，
 // 但会把结果返回给界面显示，避免"提醒没响也不知道为什么"。
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { guard } from './guard.ts';
 import { WIRE_DATE_RE, wireAt } from './notifyWire.ts';
 import type { Course, NoteItem, Settings, Timetable } from '../types.ts';
 
@@ -48,15 +49,16 @@ function toDate(s: string): Date { return new Date(s.replace(/-/g, '/')); }
 
 export async function ensurePermission(): Promise<boolean> {
   try {
-    const cur = await LocalNotifications.checkPermissions();
+    const cur = await guard('查通知权限', LocalNotifications.checkPermissions(), 2500, { display: 'unknown' } as any);
     if (cur.display === 'granted') return true;
-    const req = await LocalNotifications.requestPermissions();
+    // 系统权限框在部分国产 ROM 上会把回调吞掉，必须限时，否则启动永远等在这里
+    const req = await guard('申请通知权限', LocalNotifications.requestPermissions(), 12000, { display: 'unknown' } as any);
     return req.display === 'granted';
   } catch { return false; }
 }
 
 export async function permissionState(): Promise<string> {
-  try { return (await LocalNotifications.checkPermissions()).display; } catch { return 'unsupported'; }
+  try { return (await guard('查通知权限', LocalNotifications.checkPermissions(), 2500, { display: 'unsupported' } as any)).display; } catch { return 'unsupported'; }
 }
 
 async function ensureChannels(): Promise<void> {
@@ -67,19 +69,19 @@ async function ensureChannels(): Promise<void> {
   for (const ch of [
     { id: 'class-' + CHANNEL_TAG, name: '上课提醒', description: '课前提醒，横幅弹出并响铃', importance: 5, vibration: true, lightColor: '#2E5AAC', lockScreenVisibility: 1, audioAttributes: { contentType: 4, flags: 1, source: 2, usage: 5 } },
     { id: 'todo-' + CHANNEL_TAG, name: '待办提醒', description: '记事本到期提醒，横幅弹出并响铃', importance: 5, vibration: true, lightColor: '#2E5AAC', lockScreenVisibility: 1, audioAttributes: { contentType: 4, flags: 1, source: 2, usage: 5 } }
-  ]) { try { await anyLocal.createChannel(ch); } catch { /* 已存在或不支持 */ } }
+  ]) { try { await guard('建通知渠道', anyLocal.createChannel(ch), 2500, undefined); } catch { /* 已存在或不支持 */ } }
 }
 
 async function safeScheduled(): Promise<number[]> {
   try {
-    const all = await LocalNotifications.scheduled();
+    const all = await guard('读排期', LocalNotifications.scheduled(), 2500, [] as any);
     return all.map((n) => n.id);
   } catch { return []; }
 }
 
 async function cancelIds(ids: number[]): Promise<void> {
   if (!ids.length) return;
-  try { await LocalNotifications.cancel({ notifications: ids.map((id) => ({ id })) }); } catch { /* noop */ }
+  try { await guard('取消排期', LocalNotifications.cancel({ notifications: ids.map((id) => ({ id })) }), 3000, undefined); } catch { /* noop */ }
 }
 
 export interface ScheduleStats { total: number; classReminders: number; todoReminders: number; testReminders: number; nextFireAt: string }
@@ -89,7 +91,7 @@ export interface ScheduleStats { total: number; classReminders: number; todoRemi
 export async function scheduleStats(): Promise<ScheduleStats> {
   const s: ScheduleStats = { total: 0, classReminders: 0, todoReminders: 0, testReminders: 0, nextFireAt: '' };
   try {
-    const all = await LocalNotifications.scheduled();
+    const all = await guard('排期统计', LocalNotifications.scheduled(), 2500, [] as any);
     s.total = all.length;
     const times: number[] = [];
     for (const n of all) {
@@ -178,7 +180,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
       return result;
     }
     // 单次排期上限，避免 Android 一次性注册过多闹钟
-    await LocalNotifications.schedule({ notifications: list.slice(0, 64) });
+    await guard('批量排期', LocalNotifications.schedule({ notifications: list.slice(0, 64) }), 8000, undefined);
     result.scheduled = Math.min(list.length, 64);
     return result;
   } catch (e: any) {
@@ -198,13 +200,13 @@ export async function scheduleTest(minutes: number): Promise<{ ok: boolean; at: 
       if (!got) return { ok: false, at: '', error: '通知权限未授予（当前：' + perm + '）' };
     }
     await cancelIds([TEST_ID]);
-    await LocalNotifications.schedule({
+    await guard('单条排期', LocalNotifications.schedule({
       notifications: [{
         id: TEST_ID, title: 'Unimate 测试提醒',
         body: '这条是 ' + minutes + ' 分钟前设置的，收到就说明提醒链路正常',
         schedule: { at: atTime(when), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
-    });
+    }), 8000, undefined);
     return { ok: true, at: when.toTimeString().slice(0, 8), error: '' };
   } catch (e: any) {
     return { ok: false, at: '', error: (e && (e.message || String(e))) || '未知错误' };
@@ -216,12 +218,12 @@ export async function scheduleDemoPing(): Promise<boolean> {
   try {
     await ensureChannels();
     await cancelIds([DEMO_ID]);
-    await LocalNotifications.schedule({
+    await guard('单条排期', LocalNotifications.schedule({
       notifications: [{
         id: DEMO_ID, title: 'Uni 提醒', body: '演示通知：Uni 已经准备好提醒你啦',
         schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
-    });
+    }), 8000, undefined);
     return true;
   } catch { return false; }
 }

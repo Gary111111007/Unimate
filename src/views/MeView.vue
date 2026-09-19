@@ -55,6 +55,16 @@ async function askPerm(): Promise<void> {
   db.notify(g ? '通知权限已开启' : '请在系统设置中允许 Unimate 发送通知');
 }
 
+/**
+ * 设置面板的「保存设置」以前只是 await db.saveData()，既不提示也不收起面板，
+ * 用户点了像没反应（真机反馈）。这里统一：保存 + 回执 + 收起面板。
+ */
+async function saveSettings(what: string): Promise<void> {
+  try { await db.saveData(); } catch { db.notify('保存失败，请重试'); return; }
+  db.notify(what + '已保存到本机');
+  panel.value = '';
+}
+
 function setTheme(t: ThemeMode): void {
   db.settings.theme = t;
   applyTheme(t);
@@ -249,7 +259,7 @@ async function reschedule(): Promise<void> {
           <div class="small muted" style="margin-top: 8px">测试提醒会在指定时间弹一条系统横幅通知。若到点没弹：先看上面「下一条」时间是否已过，再确认系统设置里 Unimate 的通知横幅已开启。</div>
         </div>
         <button class="btn block grey" style="margin-top: 10px" @click="reschedule()">重建提醒队列</button>
-        <button class="btn block ghost" style="margin-top: 8px" @click="db.saveData()">保存设置</button>
+        <button class="btn block ghost" style="margin-top: 8px" @click="saveSettings('通知设置')">保存设置</button>
       </template>
 
       
@@ -263,9 +273,9 @@ async function reschedule(): Promise<void> {
         </div>
         <div class="small muted" style="margin-top: 4px; line-height: 1.7">
           选「跟随系统」时，手机开深色模式 App 会立刻跟着变，不用重启。<br />
-          课表色块、照片水印、分值表配色在深色下会自动换成低饱和版本，保证对比度。
+          深色下页面底色、卡片、输入框与文字会整体换一套；课表色块保持原色（白字对比度已够），不做额外降饱和。
         </div>
-        <button class="btn block grey" style="margin-top: 12px" @click="db.saveData()">保存设置</button>
+        <button class="btn block grey" style="margin-top: 12px" @click="saveSettings('外观与主题')">保存设置</button>
       </template>
       <template v-else-if="panel === 'watermark'">
         <div class="li" style="padding: 10px 0"><span class="grow small">默认给新照片加水印</span><button class="chip sm" :class="{ on: db.settings.watermarkEnabledDefault }" @click="db.settings.watermarkEnabledDefault = !db.settings.watermarkEnabledDefault">{{ db.settings.watermarkEnabledDefault ? '开' : '关' }}</button></div>
@@ -281,7 +291,7 @@ async function reschedule(): Promise<void> {
         <div class="field"><label>固定自定义文字（如姓名 / 学号后四位，会追加在活动名后）</label><input v-model="db.settings.watermarkCustomText" maxlength="20" placeholder="留空则只显示活动名称" /></div>
         <div class="field"><label>底色浓淡 {{ Math.round(db.settings.watermarkOpacity * 100) }}%</label><input v-model.number="db.settings.watermarkOpacity" type="range" min="0.15" max="0.8" step="0.05" /></div>
         <div class="small muted">不使用任何第三方地图服务与 Key，因此离线也能加水印；每条记录仍可单独关掉水印。</div>
-        <button class="btn block" style="margin-top: 10px" @click="db.saveData(); db.notify('水印设置已保存')">保存设置</button>
+        <button class="btn block" style="margin-top: 10px" @click="saveSettings('拍照水印')">保存设置</button>
       </template>
 
       <template v-else-if="panel === 'backup'">
