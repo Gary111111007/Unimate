@@ -43,7 +43,7 @@ async function useSample(): Promise<void> {
 async function run(html: string, url: string): Promise<void> {
   const parsed = parseJwglxtTimetable(html);
   if (!parsed.courses.length) {
-    errMsg.value = parsed.diagnostics[0]?.message || '没有解析到课程。请在教务系统里进入「信息查询 → 课表查询 → 个人课表查询」并点查询，出现课表表格后再点「一键保存并识别」。';
+    errMsg.value = parsed.diagnostics[0]?.message || '没有解析到课程。请在教务系统里进入「信息查询 → 课表查询 → 个人课表查询」并点查询，出现课表表格后再点右下角蓝色圆点「导入」。';
     step.value = 'error';
     return;
   }
