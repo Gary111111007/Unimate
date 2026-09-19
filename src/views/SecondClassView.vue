@@ -120,18 +120,26 @@ async function locate(): Promise<{ lat: number | null; lng: number | null; acc: 
       }
     }
   } catch { /* 预览环境没有该插件，继续往下试 */ }
-  // 室内 GPS 常常 8 秒定不出来，先高精度再退到 WiFi/基站定位，别一次失败就放弃
-  const attempts: { opt: any; from: 'gps' | 'network' }[] = [
-    { opt: { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 }, from: 'gps' },
-    { opt: { enableHighAccuracy: false, timeout: 7000, maximumAge: 300000 }, from: 'network' }
+  // 之前是"先等 GPS 9 秒、失败再等网络 7 秒"，串行最坏 16 秒，界面上就一直转圈。
+  // 改成两路**同时发起**，谁先回来用谁：室内通常网络定位 1~2 秒就能出，
+  // 室外 GPS 也照样能抢到（它更快时）。总等待压到 5 秒内。
+  const race = [
+    Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }).then((p) => ({ p, from: 'network' as const })),
+    Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }).then((p) => ({ p, from: 'gps' as const }))
   ];
   let lastErr = '定位超时或系统未返回坐标';
-  for (const a of attempts) {
+  const winner = await Promise.race([
+    (Promise as any).any ? (Promise as any).any(race.map((x) => x.catch(() => new Promise<never>(() => { })))) : race[0].catch(() => race[1]),
+    new Promise<null>((r) => setTimeout(() => r(null), 5200))
+  ]).catch(() => null);
+  {
+    const w: any = winner;
     try {
-      const p = await Geolocation.getCurrentPosition(a.opt);
+      if (!w) throw new Error(lastErr);
+      const p = w.p;
       const acc = Math.round(p.coords.accuracy || 0);
-      locState.value = { text: (a.from === 'gps' ? '卫星定位' : 'WiFi/基站定位') + ' ' + p.coords.latitude.toFixed(5) + ', ' + p.coords.longitude.toFixed(5) + (acc ? ' ±' + acc + 'm' : ''), ok: true };
-      return { lat: p.coords.latitude, lng: p.coords.longitude, acc, error: '', from: a.from };
+      locState.value = { text: (w.from === 'gps' ? '卫星定位' : 'WiFi/基站定位') + ' ' + p.coords.latitude.toFixed(5) + ', ' + p.coords.longitude.toFixed(5) + (acc ? ' ±' + acc + 'm' : ''), ok: true };
+      return { lat: p.coords.latitude, lng: p.coords.longitude, acc, error: '', from: w.from };
     } catch (e: any) { lastErr = (e && e.message) ? e.message : lastErr; }
   }
   locState.value = { text: '未取到坐标：' + lastErr, ok: false };
@@ -223,12 +231,19 @@ async function saveRecord(): Promise<void> {
   db.notify('已保存：' + blockDef(f.block).name + ' +' + f.score + ' 分' + (f.hours ? ' · ' + f.hours + ' 小时' : '') + ')');
 }
 
-async function delRecord(r: SecondClassRecord): Promise<void> {
+/** 删除要二次确认：二课记录带照片与存证，误删代价高。 */
+const pendingDel = ref<SecondClassRecord | null>(null);
+function askDelRecord(r: SecondClassRecord): void { pendingDel.value = r; }
+function cancelDel(): void { pendingDel.value = null; }
+async function doDelRecord(): Promise<void> {
+  const r = pendingDel.value;
+  if (!r) return;
   const i = db.records.findIndex((x) => x.id === r.id);
   if (i >= 0) db.records.splice(i, 1);
   await db.saveData();
   detail.value = null;
-  db.notify('记录已删除');
+  pendingDel.value = null;
+  db.notify('已删除「' + r.activityName + '」');
 }
 
 function thumb(p: PhotoEvidence): string { return thumbs.value[p.id] || ''; }
@@ -403,11 +418,30 @@ const total = computed(() => db.totalScore());
       <div class="row" style="margin-top: 12px">
         <button class="btn grow" :disabled="exporting" @click="doExportRecord(detail)">导出本条(zip)</button>
         <button class="btn grey grow" @click="copyEvidence(detail)">复制存证</button>
-        <button class="btn danger grow" @click="delRecord(detail)">删除</button>
+        <button class="btn danger grow" @click="askDelRecord(detail)">删除</button>
       </div>
       <div class="small muted" style="margin-top: 8px">点照片可放大；长按照片可单独存到手机存储：</div>
       <div class="row" style="flex-wrap: wrap; gap: 6px; margin-top: 6px">
         <button v-for="(p, i) in detail.photos" :key="p.id" class="btn sm ghost" @click="doSaveOne(detail, i)">存第 {{ i + 1 }} 张</button>
+      </div>
+    </div>
+  </div>
+  <!-- 删除二次确认 -->
+  <div v-if="pendingDel" class="mask" @click.self="cancelDel()">
+    <div class="sheet">
+      <div class="title">确认删除这条记录？</div>
+      <div class="hairline"></div>
+      <div class="small" style="line-height: 1.75">
+        <b>{{ pendingDel.activityName }}</b><br />
+        {{ blockDef(pendingDel.block).name }} · {{ pendingDel.activityDate }} · 自评 {{ pendingDel.score }} 分<span v-if="pendingDel.hours"> · 志愿时长 {{ pendingDel.hours }} 小时</span><br />
+        含 <b>{{ pendingDel.photos.length }}</b> 张已存证照片
+      </div>
+      <div class="small muted" style="margin-top: 10px; line-height: 1.7">
+        删除后这条记录与它的水印存证会从本机移除，<b>无法恢复</b>。若只是想留档，建议先点「导出本条(zip)」。
+      </div>
+      <div class="row" style="gap: 8px; margin-top: 14px">
+        <button class="btn grey grow" @click="cancelDel()">取消，留着</button>
+        <button class="btn danger grow" @click="doDelRecord()">确定删除</button>
       </div>
     </div>
   </div>

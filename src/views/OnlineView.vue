@@ -62,7 +62,7 @@ async function pickIcon(): Promise<void> {
   try {
     const ph = await Camera.getPhoto({
       quality: 70, width: 128, height: 128,
-      resultType: CameraResultType.DataUrl, source: CameraSource.Prompt, correctOrientation: true
+      resultType: CameraResultType.DataUrl, source: CameraSource.PhotosLibrary, correctOrientation: true
     });
     if (ph && ph.dataUrl) {
       const t = iconTarget(); if (!t) return;

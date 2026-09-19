@@ -10,6 +10,19 @@ const DEMO_ID = 999;
 const HORIZON_DAYS = 14;
 const CHANNEL_TAG = 'v2';
 
+/**
+ * 【关键时区修正】Capacitor 6 的 Android 端用
+ *   SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+ * 解析 schedule.at —— 那里的 'Z' 是**字面量**，不是时区标记，所以它按**本地时区**解释整个串。
+ * 而 JS 的 Date 过桥时会被序列化成 UTC ISO（…Z），于是本地时间被当成 UTC 又解一次，
+ * 结果整体偏移一个时区（东八区 = 8 小时）：提醒会在错误的时间触发，通知还会被系统标成"昨天"。
+ * 因此这里不能传 Date，必须传**用本地字段拼出来**的串，让原生按本地时区解出同一个瞬间。
+ */
+function localAt(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+    + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.000Z';
+}
 export interface RescheduleResult { scheduled: number; permission: string; error: string }
 
 function toId(key: string, base: number): number {
@@ -118,7 +131,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           list.push({
             id, title: '上课提醒',
             body: '还有 ' + settings.classReminderMinutes + ' 分钟：' + c.name + (c.room ? ' · ' + c.room : ''),
-            schedule: { at: new Date(fire), allowWhileIdle: true }, notificationChannelId: 'class-' + CHANNEL_TAG, forceAlert: true,
+            schedule: { at: localAt(new Date(fire)) as any, allowWhileIdle: true }, notificationChannelId: 'class-' + CHANNEL_TAG, forceAlert: true,
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
         }
@@ -138,7 +151,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           seen.add(String(id));
           list.push({
             id, title: '待办提醒', body: n.title + '（' + n.remindAt.slice(5, 16) + '）',
-            schedule: { at: new Date(fire), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true,
+            schedule: { at: localAt(new Date(fire)) as any, allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true,
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
         }
@@ -175,7 +188,7 @@ export async function scheduleTest(minutes: number): Promise<{ ok: boolean; at: 
       notifications: [{
         id: TEST_ID, title: 'Unimate 测试提醒',
         body: '这条是 ' + minutes + ' 分钟前设置的，收到就说明提醒链路正常',
-        schedule: { at: when, allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
+        schedule: { at: localAt(when) as any, allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     });
     return { ok: true, at: when.toTimeString().slice(0, 8), error: '' };
@@ -192,7 +205,7 @@ export async function scheduleDemoPing(): Promise<boolean> {
     await LocalNotifications.schedule({
       notifications: [{
         id: DEMO_ID, title: 'Uni 提醒', body: '演示通知：Uni 已经准备好提醒你啦',
-        schedule: { at: new Date(fire), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
+        schedule: { at: localAt(new Date(fire)) as any, allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     });
     return true;

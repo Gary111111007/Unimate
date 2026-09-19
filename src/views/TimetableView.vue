@@ -98,12 +98,63 @@ const placed = computed(() => {
   });
 });
 
-const nextClass = computed(() => {
-  const col = placed.value[dayIndexes.value.indexOf(todayIdx.value)];
-  if (!col) return null;
-  const list = col.map((x) => x.b).sort((a, b) => a.startPeriod - b.startPeriod);
-  return list.find((b) => b.startPeriod > nowPeriod.value) || null;
+/**
+ * 「下一节」必须按**当前真实时刻**往后找，而不是"今天的第一节课"。
+ * 旧写法在深夜、午休、放学后（nowPeriod 落不到任何区间）会退化成今天第一节，
+ * 于是出现"课早结束了还提示这节课"。现在从今天起最多往后扫 8 天，
+ * 按 周次 + 星期 + 开始分钟 组成一个可比较的绝对分钟数，取第一个大于"现在"的。
+ */
+interface NextInfo {
+  name: string; rooms: string[]; teachers: string[]; startPeriod: number; endPeriod: number;
+  colorIndex: number; dayLabel: string; timeLabel: string; minutesUntil: number;
+}
+const WEEK_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+const nextClass = computed<NextInfo | null>(() => {
+  const tt = db.activeTimetable;
+  if (!tt) return null;
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const times = new Map(db.settings.periodTimes.map((x) => [x.period, x] as const));
+  const total = tt.totalWeeks || 18;
+  const baseWeek = db.currentWeek;
+  const todayWd = (now.getDay() + 6) % 7;
+  let best: NextInfo | null = null;
+  let bestAbs = Number.POSITIVE_INFINITY;
+  for (let off = 0; off <= 8; off++) {
+    const w = baseWeek + Math.floor((todayWd + off) / 7);
+    if (w < 1 || w > total) continue;
+    const wd = (todayWd + off) % 7;
+    for (const c of db.courses) {
+      if (c.timetableId !== tt.id || c.day !== wd + 1) continue;
+      if (c.weeks.indexOf(w) < 0) continue;
+      const sp = times.get(c.startPeriod);
+      if (!sp) continue;
+      const [sh, sm] = sp.start.split(':').map(Number);
+      const abs = off * 1440 + sh * 60 + sm;
+      if (abs <= nowMin || abs >= bestAbs) continue;
+      const ep = times.get(c.endPeriod) || sp;
+      bestAbs = abs;
+      best = {
+        name: c.name,
+        rooms: [c.room].filter(Boolean) as string[],
+        teachers: [c.teacher].filter(Boolean) as string[],
+        startPeriod: c.startPeriod, endPeriod: c.endPeriod,
+        colorIndex: c.colorIndex || 0,
+        dayLabel: off === 0 ? '今天' : off === 1 ? '明天' : WEEK_NAMES[wd] + '（第 ' + w + ' 周）',
+        timeLabel: sp.start + '–' + ep.end,
+        minutesUntil: abs - nowMin
+      };
+    }
+  }
+  return best;
 });
+function untilText(m: number): string {
+  if (m < 60) return '还有 ' + m + ' 分钟';
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  if (h < 24) return mm ? '还有 ' + h + ' 小时 ' + mm + ' 分' : '还有 ' + h + ' 小时';
+  return '还有 ' + Math.floor(h / 24) + ' 天';
+}
 
 function colorOf(b: Block): string { return COURSE_COLORS[(b.colorIndex || 0) % COURSE_COLORS.length]; }
 function timeOf(period: number, end = false): string {
@@ -211,7 +262,7 @@ function toggleWeek(w: number): void {
     <div v-if="nextClass" class="card next">
       <span class="dot" :style="{ background: colorOf(nextClass) }"></span>
       <div class="grow">
-        <div class="small muted">下一节 · 第 {{ nextClass.startPeriod }}-{{ nextClass.endPeriod }} 节 {{ timeOf(nextClass.startPeriod) }}-{{ timeOf(nextClass.endPeriod, true) }}</div>
+        <div class="small muted">{{ nextClass.dayLabel }} · 第 {{ nextClass.startPeriod }}-{{ nextClass.endPeriod }} 节 {{ nextClass.timeLabel }} · {{ untilText(nextClass.minutesUntil) }}</div>
         <div class="bold">{{ nextClass.name }}</div>
         <div class="small">{{ nextClass.rooms.join(' / ') }}<span v-if="nextClass.teachers.length"> · {{ nextClass.teachers.join('、') }}</span></div>
       </div>
@@ -221,16 +272,16 @@ function toggleWeek(w: number): void {
     <div v-if="!db.courses.length" class="empty">
       <div class="big">🗓</div>
       <div>还没有课表</div>
-      <div class="small">点右下角「一键保存」<br />从教务系统导入个人课表</div>
+      <div class="small">点右下角「导入课表」<br />从教务系统抓取个人课表</div>
       <button class="btn sm" style="margin-top: 14px" @click="openNew">手动添加课程</button>
     </div>
 
     <transition :name="'wk-' + wkDir" mode="out-in">
-    <div v-if="placed.length" class="grid" :key="week" :style="{ gridTemplateColumns: '38px repeat(' + dayIndexes.length + ', 1fr)' }">
+    <div v-if="placed.length" class="grid" :key="week" :style="{ gridTemplateColumns: '52px repeat(' + dayIndexes.length + ', 1fr)' }">
       <div class="corner">节次</div>
       <div v-for="di in dayIndexes" :key="di" class="dayhead" :class="{ today: isTodayCol(di) }"><div class="dw">{{ DAY_FULL[di] }}</div><div class="dd">{{ mdOf(di) }}</div></div>
       <div class="timecol">
-        <div v-for="p in 12" :key="p" class="timelab" :style="{ height: ROW_H + 'px' }"><b>{{ p }}</b><span>{{ timeOf(p) }}</span></div>
+        <div v-for="p in 12" :key="p" class="timelab" :style="{ height: ROW_H + 'px' }"><b>{{ p }}</b><span>{{ timeOf(p) }}</span><span class="te">{{ timeOf(p, true) }}</span></div>
       </div>
       <div v-for="(day, i) in placed" :key="i" class="daycol" :class="{ today: isTodayCol(dayIndexes[i]) }">
         <div v-for="p in 12" :key="p" class="cell" :style="{ height: ROW_H + 'px' }"></div>
@@ -255,7 +306,7 @@ function toggleWeek(w: number): void {
     </transition>
   </div>
 
-  <button class="fab" @click="showImport = true">一键<br />保存</button>
+  <button class="fab" @click="showImport = true">导入<br />课表</button>
   <button class="fab2" @click="showMenu = true">⋯</button>
 
   <div v-if="showMenu" class="mask" @click.self="showMenu = false">
@@ -361,7 +412,7 @@ function toggleWeek(w: number): void {
 .swipe-hint { margin: 4px 0 8px; }
 .next { display: flex; gap: 10px; align-items: center; border-left: 4px solid var(--brand); }
 .dot { width: 12px; height: 12px; border-radius: 4px; flex: none; }
-.grid { display: grid; grid-template-columns: 38px repeat(7, 1fr); background: #fff; border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+.grid { display: grid; grid-template-columns: 52px repeat(7, 1fr); background: #fff; border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
 .corner { font-size: 11px; color: var(--muted); text-align: center; padding: 7px 0; border-bottom: 1px solid var(--line); background: #F7F9FC; }
 .dayhead { font-size: 11px; color: var(--muted); text-align: center; padding: 5px 0 6px; border-bottom: 1px solid var(--line); background: #F7F9FC; line-height: 1.25; }
 .dayhead .dw { font-size: 11.5px; }
@@ -370,7 +421,9 @@ function toggleWeek(w: number): void {
 .dayhead.today .dw { font-weight: 700; }
 .dayhead.today .dd { opacity: 1; font-weight: 600; }
 .timecol { border-right: 1px solid var(--line); }
-.timelab { display: flex; flex-direction: column; align-items: center; padding-top: 3px; font-size: 10px; color: var(--muted); border-bottom: 1px dashed var(--line); }
+.timelab { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 3px; font-size: 9.5px; line-height: 1.25; color: var(--muted); border-bottom: 1px dashed var(--line); }
+.timelab b { font-size: 11px; color: var(--ink); }
+.timelab .te { color: #98A2B3; }
 .timelab b { font-size: 12px; color: #3A424E; }
 .daycol { position: relative; border-right: 1px solid var(--line); }
 .daycol.today { background: #F6F9FF; }

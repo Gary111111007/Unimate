@@ -87,7 +87,8 @@ export const BUCT_PROFILE: SchoolProfile = {
     { key: 'library', name: '图书馆', url: 'https://library.buct.edu.cn/', icon: '📖', desc: '馆藏检索 · 数据库导航', builtin: true },
     { key: 'zy', name: '电子资源', url: 'https://zy.buct.edu.cn/', icon: '🔑', desc: '统一身份认证 · 校外访问', builtin: true },
     { key: 'portal', name: '信息门户', url: 'https://portal.buct.edu.cn/', icon: '🧭', desc: '统一身份认证主入口', builtin: true },
-    { key: 'home', name: '学校主页', url: 'https://www.buct.edu.cn/', icon: '🏫', desc: '通知公告 · 数字校园', builtin: true }
+    { key: 'home', name: '学校主页', url: 'https://www.buct.edu.cn/', icon: '🏫', desc: '通知公告 · 数字校园', builtin: true },
+    { key: 'tree', name: '校园网平台', url: 'https://tree.buct.edu.cn/', icon: '🌳', desc: '网络认证 · 校园网服务', builtin: true }
   ],
   academic: {
     semesterLabel: '2026-2027学年第1学期',

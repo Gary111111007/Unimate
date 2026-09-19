@@ -41,6 +41,7 @@ const rules = () => RULE_ITEMS.filter((r) => !q.value.trim() || r.text.includes(
           <span class="small">{{ r.prize }}</span><span v-for="(s, i) in r.scores" :key="i">{{ s }}</span>
         </div>
         <div class="note">{{ table()!.note }}</div>
+        <div class="scrollhint">表格较宽时可左右滑动查看全部列</div>
       </div>
 
       <div v-else>
@@ -55,13 +56,16 @@ const rules = () => RULE_ITEMS.filter((r) => !q.value.trim() || r.text.includes(
 </template>
 
 <style scoped>
-.tbl { overflow-x: auto; }
-.tr { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(56px, 1fr); gap: 4px; padding: 7px 0; border-bottom: 1px dashed var(--line); align-items: center; font-size: 13px; }
+.tbl { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.tr { display: flex; align-items: center; gap: 6px; min-width: 400px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+/* 首列固定宽度、可换行；数值列等分且不换行。之前用 grid-auto-columns 时首列的 min-width 撑不开轨道，只会溢出压到隔壁数字上 */
+.tr > span:first-child { flex: 0 0 104px; line-height: 1.3; }
+.tr > span:not(:first-child) { flex: 1 1 0; min-width: 40px; text-align: center; white-space: nowrap; }
 .tr.th { font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line); }
-.tr.th span:first-child { min-width: 92px; }
-.tr span:first-child { min-width: 92px; }
+
 .bk { font-weight: 700; color: var(--brand); }
 .tname { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+.scrollhint { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
 .note { margin-top: 8px; font-size: 11px; color: var(--muted); line-height: 1.6; }
 .rule { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 13px; line-height: 1.5; }
 .rb { flex: none; width: 22px; height: 22px; border-radius: 7px; background: var(--brand); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; }
