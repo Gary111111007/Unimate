@@ -11,6 +11,7 @@
     "test:parser": "node --experimental-strip-types tests/parser.test.ts",
     "test:zip": "node --experimental-strip-types tests/zip.test.ts",
     "test:notify": "node --experimental-strip-types tests/notify.test.ts",
+    "test:color": "node --experimental-strip-types tests/color.test.ts",
     "test:login": "node --experimental-strip-types tests/login.test.ts",
     "cap:sync": "cap sync android",
     "apk": "scripts/build-apk.ps1"

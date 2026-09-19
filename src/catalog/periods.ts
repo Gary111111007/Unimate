@@ -20,3 +20,17 @@ export const COURSE_COLORS = [
   '#2E5AAC', '#E8624C', '#3FA97B', '#8E6BC9', '#E8A33D', '#2F9DB5',
   '#C9547E', '#6B8F3F', '#5A6EE8', '#B5762F', '#3F9E8E', '#8A5AA0'
 ];
+
+/**
+ * 同一门课永远同一个颜色。
+ * 旧做法是在导入时按行号取模（i % 12），于是"高等数学"出现在第 3 行和第 40 行
+ * 就成了两种颜色 —— 真机反馈"相同的课程没有统一颜色"就是这个。
+ * 这里改成对课程名做稳定哈希：不依赖顺序，重复导入/换学期都不会变色，
+ * 用户手动选过色（colorSet）时由界面层优先用手动色。
+ */
+export function courseColorIndex(name: string): number {
+  const key = (name || '').replace(/\s+/g, '');
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return h % COURSE_COLORS.length;
+}

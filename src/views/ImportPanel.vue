@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useDb } from '../stores/db.ts';
+import { courseColorIndex } from '../catalog/periods.ts';
 import { JwWebView, isNativeWebView } from '../services/jwwebview.ts';
 import { parseJwglxtTimetable } from '../services/parser/jwglxtBuct.ts';
 import { uuid, nowStamp } from '../services/id.ts';
@@ -61,8 +62,8 @@ async function confirmImport(): Promise<void> {
   tt.semesterLabel = r.semesterLabel || tt.semesterLabel;
   tt.source = 'jwglxt';
   tt.updatedAt = nowStamp();
-  const mapped: Course[] = r.courses.map((c, i) => ({
-    ...c, id: uuid(), timetableId: tt.id, colorIndex: i % 12,
+  const mapped: Course[] = r.courses.map((c) => ({
+    ...c, id: uuid(), timetableId: tt.id, colorIndex: courseColorIndex(c.name),
     editedFields: [], source: 'jwglxt'
   }));
   if (mode.value === 'overwrite') db.courses = db.courses.filter((c) => c.timetableId !== tt.id).concat(mapped);

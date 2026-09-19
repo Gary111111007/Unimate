@@ -5,7 +5,7 @@ import type {
   Settings, Timetable
 } from '../types.ts';
 import { findSchool, profileFor, SCHOOLS } from '../catalog/universities.ts';
-import { DEFAULT_PERIOD_TIMES } from '../catalog/periods.ts';
+import { DEFAULT_PERIOD_TIMES, courseColorIndex } from '../catalog/periods.ts';
 import { uuid, nowStamp, dateStamp } from '../services/id.ts';
 import { readJson, writeJson, readText, writeText, remove, probeStorage } from '../services/io.ts';
 import { randomSalt, sha256Text } from '../services/crypto.ts';
@@ -352,7 +352,7 @@ function answerConfirm(ok: boolean): void {
       const html = await fetch('sample-timetable.html').then((r) => r.text());
       const mod = await import('../services/parser/jwglxtBuct.ts');
       const parsed = mod.parseJwglxtTimetable(html);
-      courses.value = parsed.courses.map((c, i) => ({ ...c, id: uuid(), timetableId: tt.id, colorIndex: i % 12 }));
+      courses.value = parsed.courses.map((c) => ({ ...c, id: uuid(), timetableId: tt.id, colorIndex: courseColorIndex(c.name) }));
     } catch { courses.value = []; }
     notes.value = buildDemoNotes();
     try { records.value = await buildDemoRecords(base()); } catch (e) { fail('生成示例照片', e); records.value = []; }
@@ -385,7 +385,7 @@ function answerConfirm(ok: boolean): void {
       id: uuid(), timetableId: t.id, name: '', lessonType: 'lecture', teacher: '', campus: '', room: '',
       day: 1, startPeriod: 1, endPeriod: 2, weeksRaw: '', weeks: [], credit: null, weeklyHours: null,
       totalHours: null, examMode: '', courseCode: '', classNames: '', hoursDetail: '',
-      colorIndex: courses.value.length % 12, source: 'manual', pendingFilter: false, editedFields: [], remark: '',
+      colorIndex: courseColorIndex((part && (part as Course).name) || ''), source: 'manual', pendingFilter: false, editedFields: [], remark: '',
       ...part
     } as Course;
     courses.value.push(c);

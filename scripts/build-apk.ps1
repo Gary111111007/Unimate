@@ -32,11 +32,12 @@ Write-Host "JAVA_HOME    = $env:JAVA_HOME"
 Write-Host "ANDROID_HOME = $sdk"
 
 Write-Host ""
-Write-Host "[1/6] 单元测试：登录链路 + 解析器 Golden Test + 备份容器格式 + 提醒时刻过桥契约"
+Write-Host "[1/6] 单元测试：登录链路 + 解析器 Golden Test + 备份容器格式 + 提醒时刻过桥契约 + 课表配色一致性"
 Invoke-Npm 'test:login'
 Invoke-Npm 'test:parser'
 Invoke-Npm 'test:zip'
 Invoke-Npm 'test:notify'
+Invoke-Npm 'test:color'
 
 Write-Host ""
 Write-Host "[2/6] 构建 Web 产物"

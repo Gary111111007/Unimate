@@ -39,6 +39,8 @@ export interface Course {
   classNames: string;
   hoursDetail: string;
   colorIndex: number;
+  /** true = 用户在颜色面板里手动选过色；false/未定义 = 按课程名自动取色 */
+  colorSet?: boolean;
   source: CourseSource;
   pendingFilter: boolean;
   editedFields: string[];

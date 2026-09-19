@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
-import { COURSE_COLORS } from '../catalog/periods.ts';
+import { COURSE_COLORS, courseColorIndex } from '../catalog/periods.ts';
 import { uuid, nowStamp } from '../services/id.ts';
 import type { Course, CourseMaterial } from '../types.ts';
 import { writeBinaryBase64, remove } from '../services/io.ts';
@@ -55,7 +55,7 @@ const nowPeriod = computed(() => {
 
 interface Block {
   key: string; name: string; day: number; startPeriod: number; endPeriod: number;
-  weeks: number[]; rooms: string[]; teachers: string[]; colorIndex: number;
+  weeks: number[]; rooms: string[]; teachers: string[]; colorIndex: number; colorSet: boolean;
   pendingFilter: boolean; credit: number | null; examMode: string; courseCode: string;
   lessonType: string; weeksRaw: string; first: Course;
 }
@@ -70,11 +70,12 @@ function mergeDay(list: Course[]): Block[] {
       if (c.room && b.rooms.indexOf(c.room) < 0) b.rooms.push(c.room);
       if (c.teacher && b.teachers.indexOf(c.teacher) < 0) b.teachers.push(c.teacher);
       if (c.pendingFilter) b.pendingFilter = true;
+      if (c.colorSet) { b.colorSet = true; b.colorIndex = c.colorIndex; }
     } else {
       map.set(key, {
         key, name: c.name, day: c.day, startPeriod: c.startPeriod, endPeriod: c.endPeriod,
         weeks: c.weeks, rooms: [c.room].filter(Boolean), teachers: [c.teacher].filter(Boolean),
-        colorIndex: c.colorIndex, pendingFilter: c.pendingFilter, credit: c.credit, examMode: c.examMode,
+        colorIndex: c.colorIndex, colorSet: !!c.colorSet, pendingFilter: c.pendingFilter, credit: c.credit, examMode: c.examMode,
         courseCode: c.courseCode, lessonType: c.lessonType, weeksRaw: c.weeksRaw, first: c
       });
     }
@@ -108,7 +109,7 @@ const placed = computed(() => {
  */
 interface NextInfo {
   name: string; rooms: string[]; teachers: string[]; startPeriod: number; endPeriod: number;
-  colorIndex: number; dayLabel: string; timeLabel: string; minutesUntil: number;
+  colorIndex: number; colorSet: boolean; dayLabel: string; timeLabel: string; minutesUntil: number;
 }
 const WEEK_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const nextClass = computed<NextInfo | null>(() => {
@@ -141,7 +142,7 @@ const nextClass = computed<NextInfo | null>(() => {
         rooms: [c.room].filter(Boolean) as string[],
         teachers: [c.teacher].filter(Boolean) as string[],
         startPeriod: c.startPeriod, endPeriod: c.endPeriod,
-        colorIndex: c.colorIndex || 0,
+        colorIndex: c.colorIndex || 0, colorSet: !!c.colorSet,
         dayLabel: off === 0 ? '今天' : off === 1 ? '明天' : WEEK_NAMES[wd] + '（第 ' + w + ' 周）',
         timeLabel: sp.start + '–' + ep.end,
         minutesUntil: abs - nowMin
@@ -219,7 +220,16 @@ async function delMaterial(m: CourseMaterial): Promise<void> {
   try { await remove(m.path); } catch { /* 文件删不掉也不影响索引 */ }
   db.notify('已删除资料');
 }
-function colorOf(b: Block): string { return COURSE_COLORS[(b.colorIndex || 0) % COURSE_COLORS.length]; }
+/** 手动选过色就用它；否则一律按课程名取色 —— 保证"同一门课满屏同一个颜色" */
+/** 当前生效的色号：手动色优先，否则按课程名哈希 */
+function colorIndexOf(c: { name?: string; colorIndex?: number; colorSet?: boolean }): number {
+  return c.colorSet ? (c.colorIndex || 0) : courseColorIndex(c.name || '');
+}
+
+function colorOf(b: Block): string {
+  const idx = b.colorSet ? (b.colorIndex || 0) : courseColorIndex(b.name);
+  return COURSE_COLORS[idx % COURSE_COLORS.length];
+}
 function timeOf(period: number, end = false): string {
   const p = db.settings.periodTimes.find((x) => x.period === period);
   return p ? (end ? p.end : p.start) : '';
@@ -257,16 +267,48 @@ function editBlock(b: Block): void {
   editing.value = JSON.parse(JSON.stringify(b.first));
   detail.value = null;
 }
+/**
+ * 颜色面板：手点一下 = 给这门课（含它在整张课表里的所有时段）定色。
+ * 之所以要"同名一起改"，是因为产品要求同一门课颜色必须统一，
+ * 只改一条会让"高等数学"在周二和周四长得不一样。
+ */
+function pickColor(i: number): void {
+  const c = editing.value;
+  if (!c) return;
+  c.colorIndex = i;
+  c.colorSet = true;
+}
+function autoColor(): void {
+  const c = editing.value;
+  if (!c) return;
+  c.colorSet = false;
+  c.colorIndex = courseColorIndex(c.name || '');
+}
+
+/** 把这门课的颜色写给它的所有同名时段（含刚保存的这条） */
+/** 把这门课的颜色写给它在整张课表里的所有同名时段（保存时调用） */
+function syncColor(name: string, idx: number, set: boolean): void {
+  if (!name) return;
+  const ttId = db.activeTimetable?.id;
+  for (const x of db.courses) {
+    if (x.timetableId === ttId && x.name === name && (x.colorIndex !== idx || !!x.colorSet !== set)) {
+      x.colorIndex = idx;
+      x.colorSet = set;
+    }
+  }
+}
+
 async function saveCourse(): Promise<void> {
   const c = editing.value!;
   if (!c.name.trim()) { db.notify('请填写课程名称'); return; }
   if (!c.weeks.length) { db.notify('请选择至少一个周次'); return; }
   if (isNew.value) {
-    c.id = uuid(); c.timetableId = db.activeTimetable!.id; c.colorIndex = db.courses.length % 12;
+    c.id = uuid(); c.timetableId = db.activeTimetable!.id; c.colorIndex = c.colorSet ? c.colorIndex : courseColorIndex(c.name);
     db.courses.push(c);
   } else {
     const i = db.courses.findIndex((x) => x.id === c.id);
     if (i >= 0) db.courses[i] = { ...c, editedFields: Array.from(new Set(c.editedFields.concat('manual'))) } as Course;
+  syncColor(c.name, c.colorIndex, !!c.colorSet);
   }
   await db.saveData();
   editing.value = null; detail.value = null;
@@ -506,7 +548,7 @@ function toggleWeek(w: number): void {
         <div class="chips"><button v-for="w in db.activeTimetable?.totalWeeks || 18" :key="w" class="chip sm" :class="{ on: editing.weeks.includes(w) }" @click="toggleWeek(w)">{{ w }}</button></div>
       </div>
       <div class="field"><label>颜色</label>
-        <div class="chips"><button v-for="(c, i) in COURSE_COLORS" :key="i" class="sw" :class="{ on: editing.colorIndex === i }" :style="{ background: c }" @click="editing.colorIndex = i"></button></div>
+        <div class="chips"><button v-for="(c, i) in COURSE_COLORS" :key="i" class="sw" :class="{ on: colorIndexOf(editing) === i }" :style="{ background: c }" @click="pickColor(i)"></button><button class="chip sm" :class="{ on: !editing.colorSet }" @click="autoColor">按课程名自动</button></div>
       </div>
       <div class="row">
         <button class="btn grow" @click="saveCourse">保存</button>
