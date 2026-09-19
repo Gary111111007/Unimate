@@ -207,6 +207,8 @@ export interface Settings {
   hiddenApps: string[];
   /** 用户自己添加的校园入口（本校未收录的服务由用户自行补全） */
   customApps: CampusApp[];
+  /** 是否已在启动时弹过一次"取消电池优化"系统框，避免反复打扰 */
+  powerPrompted: boolean;
 }
 
 export interface InterestEntry { schoolId: string; schoolName: string; contact: string; createdAt: string }

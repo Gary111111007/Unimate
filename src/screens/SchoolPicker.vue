@@ -111,9 +111,9 @@ async function submitInterest(): Promise<void> {
 .sub { margin-top: 8px; font-size: 14px; opacity: .92; }
 .slogan { margin-top: 3px; font-size: 12px; opacity: .7; }
 .who { margin-top: 10px; font-size: 12px; background: rgba(255, 255, 255, .16); display: inline-block; padding: 4px 10px; border-radius: 999px; }
-.head2 { padding: 14px; background: #fff; border-bottom: 1px solid var(--line); }
-.search { width: 100%; margin-top: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: #F7F9FC; outline: none; }
-.school { display: flex; align-items: center; gap: 12px; padding: 12px; background: #fff; border-radius: 12px; margin-bottom: 8px; box-shadow: var(--shadow); }
+.head2 { padding: 14px; background: var(--card); border-bottom: 1px solid var(--line); }
+.search { width: 100%; margin-top: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); outline: none; }
+.school { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--card); border-radius: 12px; margin-bottom: 8px; box-shadow: var(--shadow); }
 .school.live { border: 1.5px solid var(--brand); }
 .badge { width: 40px; height: 40px; border-radius: 11px; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; flex: none; }
 .badge.grey { background: #B9C1CC; }

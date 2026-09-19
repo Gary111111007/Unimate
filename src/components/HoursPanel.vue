@@ -134,12 +134,16 @@ async function save(): Promise<void> {
   db.notify('已记 ' + f.hours + ' 小时 · ' + f.semester);
 }
 
-const pendingDel = ref<HourEntry | null>(null);
-async function doDel(): Promise<void> {
-  const e = pendingDel.value; if (!e) return;
+
+async function askDel(e: HourEntry): Promise<void> {
+  const ok = await db.confirm({
+    title: '确认删除这条' + props.label + '记录？',
+    body: e.title + '｜' + e.semester + '｜' + e.hours + ' 小时',
+    detail: (e.photos.length ? e.photos.length + ' 张存证照片。' : '') + '删除后本机移除且不可恢复，会影响累计时长统计。',
+  });
+  if (!ok) return;
   db.removeHour(e.id);
   await db.saveData();
-  pendingDel.value = null;
   db.notify('已删除「' + e.title + '」');
 }
 
@@ -171,7 +175,7 @@ function openViewer(list: PhotoEvidence[], i: number): void {
         <span class="ssum" :class="{ zero: !g.sum }">{{ g.sum }} 小时</span>
       </div>
       <div v-if="!g.list.length" class="small muted emptysem">还没有记录</div>
-      <div v-for="e in g.list" :key="e.id" class="card item" @click="pendingDel = e">
+      <div v-for="e in g.list" :key="e.id" class="card item" @click="askDel(e)">
         <div class="grow">
           <div class="bold">{{ e.title }}</div>
           <div class="small muted">{{ e.date }}<span v-if="e.note"> · {{ e.note }}</span></div>
@@ -218,23 +222,6 @@ function openViewer(list: PhotoEvidence[], i: number): void {
       </div>
     </div>
 
-    <!-- 删除确认 -->
-    <div v-if="pendingDel" class="mask" @click.self="pendingDel = null">
-      <div class="sheet">
-        <div class="title">确认删除这条{{ label }}记录？</div>
-        <div class="hairline"></div>
-        <div class="small" style="line-height: 1.75">
-          <b>{{ pendingDel.title }}</b><br />
-          {{ pendingDel.semester }} · {{ pendingDel.date }} · <b>{{ pendingDel.hours }} 小时</b><span v-if="pendingDel.photos.length"> · {{ pendingDel.photos.length }} 张存证照片</span>
-        </div>
-        <div class="small muted" style="margin-top: 10px">删除后本机移除且不可恢复，会影响累计时长统计。</div>
-        <div class="row" style="gap: 8px; margin-top: 14px">
-          <button class="btn grey grow" @click="pendingDel = null">取消，留着</button>
-          <button class="btn danger grow" @click="doDel()">确定删除</button>
-        </div>
-      </div>
-    </div>
-
     <ImageViewer v-if="viewer" :items="viewer.items" :start="viewer.at" @close="viewer = null" />
   </div>
 </template>
@@ -253,10 +240,10 @@ function openViewer(list: PhotoEvidence[], i: number): void {
 .hrs { font-size: 20px; font-weight: 800; color: var(--brand); flex: none; }
 .hrs span { font-size: 11px; font-weight: 500; margin-left: 2px; opacity: .7; }
 .thumbs { display: flex; gap: 4px; margin-top: 6px; }
-.thumbs img { width: 34px; height: 34px; border-radius: 7px; object-fit: cover; background: #EEF1F6; }
+.thumbs img { width: 34px; height: 34px; border-radius: 7px; object-fit: cover; background: var(--soft); }
 .field { margin-bottom: 12px; }
 .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-.field input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #FBFCFE; font-size: 14px; }
+.field input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); font-size: 14px; }
 .num { flex: none; width: 96px; }
 .th2 { position: relative; }
 .th2 img { width: 58px; height: 58px; border-radius: 10px; object-fit: cover; display: block; }

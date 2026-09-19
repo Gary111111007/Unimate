@@ -234,18 +234,19 @@ async function saveRecord(): Promise<void> {
   db.notify('已保存：' + blockDef(f.block).name + ' +' + f.score + ' 分' + (f.hours ? ' · ' + f.hours + ' 小时' : '') + ')');
 }
 
-/** 删除要二次确认：二课记录带照片与存证，误删代价高。 */
-const pendingDel = ref<SecondClassRecord | null>(null);
-function askDelRecord(r: SecondClassRecord): void { pendingDel.value = r; }
-function cancelDel(): void { pendingDel.value = null; }
-async function doDelRecord(): Promise<void> {
-  const r = pendingDel.value;
-  if (!r) return;
+/** 删除走全局二次确认：二课记录带照片与存证，误删代价高。 */
+async function askDelRecord(r: SecondClassRecord): Promise<void> {
+  const ok = await db.confirm({
+    title: '确认删除这条二课记录？',
+    body: r.activityName + '｜' + blockDef(r.block).name + '｜自评 ' + r.score + ' 分',
+    detail: r.activityDate + (r.hours ? ' · 志愿时长 ' + r.hours + ' 小时' : '')
+      + ' · ' + r.photos.length + ' 张已存证照片。删除后本机移除且不可恢复；若只是想留档，建议先导出 zip。'
+  });
+  if (!ok) return;
   const i = db.records.findIndex((x) => x.id === r.id);
   if (i >= 0) db.records.splice(i, 1);
   await db.saveData();
   detail.value = null;
-  pendingDel.value = null;
   db.notify('已删除「' + r.activityName + '」');
 }
 
@@ -384,7 +385,7 @@ const total = computed(() => db.totalScore());
           </div>
         </div>
       </div>
-      <div class="card" style="box-shadow: none; background: #F7F9FC">
+      <div class="card" style="box-shadow: none; background: var(--soft)">
         <div class="row" style="justify-content: space-between"><span class="small bold">拍照水印（自主开关）</span>
           <button class="chip sm" :class="{ on: form.watermark }" @click="form.watermark = !form.watermark">{{ form.watermark ? '已开启' : '已关闭' }}</button>
         </div>
@@ -442,25 +443,6 @@ const total = computed(() => db.totalScore());
       </div>
     </div>
   </div>
-  <!-- 删除二次确认 -->
-  <div v-if="pendingDel" class="mask" @click.self="cancelDel()">
-    <div class="sheet">
-      <div class="title">确认删除这条记录？</div>
-      <div class="hairline"></div>
-      <div class="small" style="line-height: 1.75">
-        <b>{{ pendingDel.activityName }}</b><br />
-        {{ blockDef(pendingDel.block).name }} · {{ pendingDel.activityDate }} · 自评 {{ pendingDel.score }} 分<span v-if="pendingDel.hours"> · 志愿时长 {{ pendingDel.hours }} 小时</span><br />
-        含 <b>{{ pendingDel.photos.length }}</b> 张已存证照片
-      </div>
-      <div class="small muted" style="margin-top: 10px; line-height: 1.7">
-        删除后这条记录与它的水印存证会从本机移除，<b>无法恢复</b>。若只是想留档，建议先点「导出本条(zip)」。
-      </div>
-      <div class="row" style="gap: 8px; margin-top: 14px">
-        <button class="btn grey grow" @click="cancelDel()">取消，留着</button>
-        <button class="btn danger grow" @click="doDelRecord()">确定删除</button>
-      </div>
-    </div>
-  </div>
 </template>
 
 <style scoped>
@@ -489,8 +471,8 @@ const total = computed(() => db.totalScore());
 .locdot { width: 8px; height: 8px; border-radius: 50%; background: #C9CED6; flex: none; }
 .locdot.ok { background: #2FA35C; }
 .addr { width: 100%; margin-top: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; }
-.exp { background: #F7F9FC; box-shadow: none; }
-.path { word-break: break-all; color: #3A424E; }
+.exp { background: var(--soft); box-shadow: none; }
+.path { word-break: break-all; color: var(--strong); }
 .ph-missing { width: 100%; aspect-ratio: 1.4; border-radius: 10px; background: #F0F2F5; color: var(--muted); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; text-align: center; }
 .busy { position: fixed; inset: 0; background: rgba(0, 0, 0, .25); display: flex; align-items: center; justify-content: center; color: #fff; z-index: 80; }
 </style>

@@ -56,6 +56,9 @@
          非唤醒 + 非精确的批量闹钟，设备打盹期间不触发，等 App 被打开唤醒设备时一次性补发，
          表现为"后台不提醒、一打开全涌出"。用户可在通知设置里一键跳转授权。 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- 提醒类 App 的标准做法：请求加入电池优化白名单。
+         查证结论：不豁免电池优化时，国产 ROM 上 AlarmManager 排的通知会根本不显示。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
 </manifest>

@@ -69,5 +69,5 @@ const rules = () => RULE_ITEMS.filter((r) => !q.value.trim() || r.text.includes(
 .note { margin-top: 8px; font-size: 11px; color: var(--muted); line-height: 1.6; }
 .rule { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 13px; line-height: 1.5; }
 .rb { flex: none; width: 22px; height: 22px; border-radius: 7px; background: var(--brand); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; }
-.search { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #FBFCFE; margin-bottom: 6px; }
+.search { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); margin-bottom: 6px; }
 </style>

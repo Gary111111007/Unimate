@@ -28,3 +28,26 @@ export function watchSystemTheme(getMode: () => ThemeMode): () => void {
     return () => { try { (mq as any).removeListener(h); } catch { /* noop */ } };
   } catch { return () => { /* noop */ }; }
 }
+
+// ---------------- 状态栏配色随主题 ----------------
+import { StatusBar } from '@capacitor/status-bar';
+import { Preferences } from '@capacitor/preferences';
+
+let statusWatcherOn = false;
+
+/** 浅色主题配深色图标（Light 风格），深色主题配浅色图标（Dark 风格）。 */
+export function applyStatusBar(): void {
+  try {
+    const dark = isDark((document.documentElement.dataset.theme as ThemeMode) || 'light');
+    void StatusBar.setStyle({ style: (dark ? 'Dark' : 'Light') as any });
+    void StatusBar.setBackgroundColor({ color: dark ? '#0E131C' : '#F2F4F8' }).catch(() => { /* 部分 ROM 不支持 */ });
+  } catch { /* 预览环境忽略 */ }
+}
+
+/** 主题切换时同步状态栏；只在原生环境挂一次监听。 */
+export function watchThemeForStatusBar(fn: () => void): void {
+  if (statusWatcherOn) return;
+  statusWatcherOn = true;
+  const obs = new MutationObserver(() => fn());
+  try { obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] }); } catch { /* 忽略 */ }
+}

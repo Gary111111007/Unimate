@@ -208,6 +208,12 @@ async function openMaterial(m: CourseMaterial): Promise<void> {
   if (!r.ok) db.notify(r.error || '打不开该文件');
 }
 async function delMaterial(m: CourseMaterial): Promise<void> {
+  const ok = await db.confirm({
+    title: '确认删除这个资料文件？',
+    body: m.name,
+    detail: humanSize(m.size) + ' · ' + m.addedAt.slice(0, 10) + '。删除后本机文件一并移除，不可恢复。'
+  });
+  if (!ok) return;
   db.removeMaterial(m.id);
   await db.saveData();
   try { await remove(m.path); } catch { /* 文件删不掉也不影响索引 */ }
@@ -268,6 +274,15 @@ async function saveCourse(): Promise<void> {
 }
 async function delBlock(b: Block): Promise<void> {
   const ids = db.courses.filter((c) => c.timetableId === b.first.timetableId && c.name === b.name && c.day === b.day && c.startPeriod === b.startPeriod && c.endPeriod === b.endPeriod).map((c) => c.id);
+  const mats = db.materials.filter((m) => m.courseId === courseKey(b)).length;
+  const ok = await db.confirm({
+    title: '确认删除这门课？',
+    body: b.name + '｜' + DAY_FULL[b.day - 1] + ' 第 ' + b.startPeriod + '-' + b.endPeriod + ' 节',
+    detail: '涉及 ' + ids.length + ' 条同名同时段记录，周次 ' + (b.weeksRaw || b.weeks.join(','))
+      + (mats ? '。这门课还挂了 ' + mats + ' 个资料文件，删除课程不会自动删文件，可稍后在「我的 → 备份与恢复」里清理。' : '。'),
+    confirmText: '确定删除'
+  });
+  if (!ok) return;
   db.courses = db.courses.filter((c) => ids.indexOf(c.id) < 0);
   await db.saveData();
   detail.value = null;
@@ -285,13 +300,37 @@ async function createTimetable(): Promise<void> {
   showMenu.value = false;
   db.notify('已新建课表，可点右下角「导入课表」从教务系统抓取');
 }
+/**
+ * 删除一整份课表（用户明确点名："课表文件的删除没有第二次确认"）。
+ * 会连带删掉该课表下所有节次与挂在这些节次上的资料文件，所以确认框里必须报出数量。
+ */
 async function dropTimetable(id: string): Promise<void> {
-  db.timetables = db.timetables.filter((t) => t.id !== id);
+  const t = db.timetables.find((x) => x.id === id);
+  const nCourses = db.courses.filter((c) => c.timetableId === id).length;
+  const prefix = id + '|';
+  const mats = db.materials.filter((m) => (m.courseId || "").startsWith(prefix));
+  const used = Math.round(mats.reduce((a, m) => a + (m.size || 0), 0) / 1024 / 1024 * 10) / 10;
+  const last = db.timetables.length <= 1;
+  const ok = await db.confirm({
+    title: '确认删除整份课表？',
+    body: (t && t.name ? t.name : '这份课表') + ' · ' + nCourses + ' 个上课时段',
+    detail: mats.length
+      ? '同时会删掉挂在这份课表上的 ' + mats.length + ' 个资料文件（约 ' + used + ' MB），本机文件一并移除，不可恢复。'
+      : '该课表下的全部上课时段会被删除，不可恢复。'
+      + (last ? ' 这是最后一份课表，删掉后首页会变空白，可随时点「导入课表」重建。' : ''),
+    confirmText: '确定删除整份课表'
+  });
+  if (!ok) { showMenu.value = false; return; }
+  for (const m of mats) {
+    db.removeMaterial(m.id);
+    try { await remove(m.path); } catch { /* 文件删不掉不影响索引 */ }
+  }
+  db.timetables = db.timetables.filter((x) => x.id !== id);
   db.courses = db.courses.filter((c) => c.timetableId !== id);
   db.settings.lastActiveTimetableId = db.timetables[0]?.id || null;
   await db.saveData();
   showMenu.value = false;
-  db.notify('课表已删除');
+  db.notify('已删除课表（含 ' + nCourses + ' 个时段' + (mats.length ? '、' + mats.length + ' 个资料文件' : '') + '）');
 }
 function goToday(): void { week.value = db.currentWeek; }
 function toggleWeek(w: number): void {
@@ -481,32 +520,32 @@ function toggleWeek(w: number): void {
 
 <style scoped>
 .weeknav { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
-.nav { width: 34px; height: 34px; border-radius: 10px; background: #EDF0F5; color: var(--brand); font-size: 20px; line-height: 1; flex: none; }
+.nav { width: 34px; height: 34px; border-radius: 10px; background: var(--soft-2); color: var(--brand); font-size: 20px; line-height: 1; flex: none; }
 .nav:disabled { opacity: .35; }
 .cur { flex: 1; text-align: center; }
 .today { flex: none; }
 .wr { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 4px; }
 .mat { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
-.mi { flex: none; min-width: 40px; text-align: center; font-size: 10px; font-weight: 700; color: var(--brand); background: #EDF3FF; border-radius: 7px; padding: 5px 4px; }
+.mi { flex: none; min-width: 40px; text-align: center; font-size: 10px; font-weight: 700; color: var(--brand); background: var(--tint); border-radius: 7px; padding: 5px 4px; }
 .mt { word-break: break-all; line-height: 1.35; }
 .tiny { font-size: 10.5px; }
 .filebtn { cursor: pointer; }
 .swipe-hint { margin: 4px 0 8px; }
 .next { display: flex; gap: 10px; align-items: center; border-left: 4px solid var(--brand); }
 .dot { width: 12px; height: 12px; border-radius: 4px; flex: none; }
-.grid { display: grid; grid-template-columns: 52px repeat(7, 1fr); background: #fff; border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
-.corner { font-size: 11px; color: var(--muted); text-align: center; padding: 7px 0; border-bottom: 1px solid var(--line); background: #F7F9FC; }
-.dayhead { font-size: 11px; color: var(--muted); text-align: center; padding: 5px 0 6px; border-bottom: 1px solid var(--line); background: #F7F9FC; line-height: 1.25; }
+.grid { display: grid; grid-template-columns: 52px repeat(7, 1fr); background: var(--card); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+.corner { font-size: 11px; color: var(--muted); text-align: center; padding: 7px 0; border-bottom: 1px solid var(--line); background: var(--soft); }
+.dayhead { font-size: 11px; color: var(--muted); text-align: center; padding: 5px 0 6px; border-bottom: 1px solid var(--line); background: var(--soft); line-height: 1.25; }
 .dayhead .dw { font-size: 11.5px; }
 .dayhead .dd { font-size: 10px; opacity: .78; font-variant-numeric: tabular-nums; }
-.dayhead.today { color: var(--brand); background: #EDF3FF; }
+.dayhead.today { color: var(--brand); background: var(--tint); }
 .dayhead.today .dw { font-weight: 700; }
 .dayhead.today .dd { opacity: 1; font-weight: 600; }
 .timecol { border-right: 1px solid var(--line); }
 .timelab { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 3px; font-size: 9.5px; line-height: 1.25; color: var(--muted); border-bottom: 1px dashed var(--line); }
 .timelab b { font-size: 11px; color: var(--ink); }
-.timelab .te { color: #98A2B3; }
-.timelab b { font-size: 12px; color: #3A424E; }
+.timelab .te { color: var(--muted); }
+.timelab b { font-size: 12px; color: var(--strong); }
 .daycol { position: relative; border-right: 1px solid var(--line); }
 .daycol.today { background: #F6F9FF; }
 .cell { border-bottom: 1px dashed var(--line); }
@@ -515,7 +554,7 @@ function toggleWeek(w: number): void {
 .bm.rm { opacity: .82; }
 .bn { font-weight: 700; font-size: 11px; word-break: break-all; }
 .bm { opacity: .88; word-break: break-all; }
-.fab2 { position: fixed; right: 18px; bottom: calc(150px + var(--safe-b)); width: 42px; height: 42px; border-radius: 50%; background: #fff; color: var(--brand); box-shadow: var(--shadow); font-size: 20px; z-index: 39; }
+.fab2 { position: fixed; right: 18px; bottom: calc(150px + var(--safe-b)); width: 42px; height: 42px; border-radius: 50%; background: var(--card); color: var(--brand); box-shadow: var(--shadow); font-size: 20px; z-index: 39; }
 .ico2 { width: 24px; text-align: center; }
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
 .kv span { color: var(--muted); flex: none; }

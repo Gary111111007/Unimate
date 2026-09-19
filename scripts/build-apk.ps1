@@ -9,6 +9,13 @@ function Get-Sha256([string]$path) {
   finally { $fs.Dispose() }
 }
 
+
+# PowerShell 5.1 下原生命令返回非零退出码不会触发 Stop —— 测试全红也照样出包，
+# 这就是"假绿灯"。每条 npm 步骤都必须显式看 $LASTEXITCODE。
+function Invoke-Npm([string]$name) {
+  npm run $name | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "npm run $name 失败（exit=$LASTEXITCODE），已中止出包" }
+}
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
@@ -25,14 +32,15 @@ Write-Host "JAVA_HOME    = $env:JAVA_HOME"
 Write-Host "ANDROID_HOME = $sdk"
 
 Write-Host ""
-Write-Host "[1/6] 单元测试：登录链路 + 解析器 Golden Test + 备份容器格式"
-npm run test:login | Out-Host
-npm run test:parser | Out-Host
-npm run test:zip | Out-Host
+Write-Host "[1/6] 单元测试：登录链路 + 解析器 Golden Test + 备份容器格式 + 提醒时刻过桥契约"
+Invoke-Npm 'test:login'
+Invoke-Npm 'test:parser'
+Invoke-Npm 'test:zip'
+Invoke-Npm 'test:notify'
 
 Write-Host ""
 Write-Host "[2/6] 构建 Web 产物"
-npm run build | Out-Host
+Invoke-Npm 'build'
 $distJs = (Get-ChildItem "$root\dist\assets" -Filter "index-*.js" | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
 if (-not $distJs) { throw "dist 里没有 index-*.js，Web 构建失败" }
 Write-Host ("  本次 bundle : {0}" -f $distJs.Name)

@@ -167,7 +167,7 @@ async function onDragEnd(): Promise<void> {
   dragDX.value = 0; dragDY.value = 0;
   // 落在两个投放区里就只做对应操作，**不动排序**；只有落在空白/卡片上才换位置
   if (zone === 'edit') { openEdit(a); return; }
-  if (zone === 'del') { confirmDel.value = a; return; }
+  if (zone === 'del') { await askDelete(a); return; }
   if (target) {
     reorderFrom(a.key, target);
     await db.saveData();
@@ -194,10 +194,18 @@ async function move(a: CampusApp, dir: -1 | 1): Promise<void> {
 }
 
 // ---------- 删除：两步确认，防误触 ----------
-const confirmDel = ref<CampusApp | null>(null);
-function askDelete(a: CampusApp): void { confirmDel.value = a; }
-async function doDelete(): Promise<void> {
-  const a = confirmDel.value; if (!a) return;
+
+async function askDelete(a: CampusApp): Promise<void> {
+  const mine = customKeys.value.has(a.key);
+  const ok = await db.confirm({
+    title: '确认删除此板块？',
+    body: a.name + '｜' + a.url,
+    detail: mine ? '这是你自己添加的入口，删除后不可恢复。' : '内置入口删除后仍可在页面上方「恢复全部」找回。'
+  });
+  if (!ok) return;
+  await reallyDelete(a);
+}
+async function reallyDelete(a: CampusApp): Promise<void> {
   if (customKeys.value.has(a.key)) {
     db.settings.customApps = (db.settings.customApps || []).filter((x) => x.key !== a.key);
   } else {
@@ -207,7 +215,6 @@ async function doDelete(): Promise<void> {
   }
   if (db.settings.appOrder) db.settings.appOrder = db.settings.appOrder.filter((k) => k !== a.key);
   await db.saveData();
-  confirmDel.value = null;
   db.notify('已删除「' + a.name + '」');
 }
 async function restoreHidden(): Promise<void> {
@@ -245,6 +252,14 @@ async function saveEdit(): Promise<void> {
 }
 async function revertEdit(): Promise<void> {
   const e = editing.value; if (!e) return;
+  // 恢复默认会丢掉用户自己改过的名称/图标/说明，按"删除类操作一律二次确认"处理
+  const ok = await db.confirm({
+    title: '放弃你对这个入口的自定义？',
+    body: '恢复默认后，你改过的名称、图标和说明会丢失。',
+    detail: '网站地址会回到学校档案里的默认值；不会删除这个入口本身。',
+    confirmText: '放弃自定义'
+  });
+  if (!ok) return;
   if (db.settings.appEdits) delete db.settings.appEdits[e.key];
   await db.saveData();
   editing.value = null;
@@ -346,22 +361,6 @@ async function probeAll(): Promise<void> {
     <div v-if="dragging" ref="editZone" class="zone zedit" :class="{ on: overZone === 'edit' }">拖到这里：更改信息</div>
     <div v-if="dragging" ref="delZone" class="zone zdel" :class="{ on: overZone === 'del' }">拖到这里：删除此板块</div>
     <div v-if="dragging" class="dragtip">正在拖动「{{ dragging.name }}」· 松手放到目标卡片上即换位置，拖到上/下方面板可改信息或删除</div>
-    <!-- 两步确认删除 -->
-    <div v-if="confirmDel" class="mask" @click.self="confirmDel = null">
-      <div class="sheet">
-        <div class="title">确认删除？</div>
-        <div class="hairline"></div>
-        <div class="small" style="line-height: 1.7">
-          即将删除 <b>「{{ confirmDel.name }}」</b>（{{ confirmDel.url }}）。<br />
-          <span class="muted">{{ customKeys.has(confirmDel.key) ? '这是你自己添加的入口，删除后不可恢复。' : '这是内置入口，删除后仍可点「恢复全部」找回。' }}</span>
-        </div>
-        <div class="row" style="gap: 8px; margin-top: 14px">
-          <button class="btn grey grow" @click="confirmDel = null">取消，留着它</button>
-          <button class="btn danger grow" @click="doDelete">确定删除</button>
-        </div>
-      </div>
-    </div>
-
     <!-- 编辑信息 -->
     <div v-if="editing" class="mask" @click.self="editing = null">
       <div class="sheet">
@@ -415,13 +414,13 @@ async function probeAll(): Promise<void> {
 .addbox { padding: 12px; }
 .addbox .field { margin-bottom: 10px; }
 .addbox label, .sheet label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
-.addbox input, .sheet input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #FBFCFE; font-size: 14px; }
+.addbox input, .sheet input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); font-size: 14px; }
 .tip { font-size: 11.5px; color: var(--muted); margin: 2px 2px 8px; }
 .tag-edited, .tag-mine { position: absolute; top: 5px; left: 6px; font-size: 9px; border-radius: 5px; padding: 1px 4px; }
 .tag-edited { color: #7A6A1F; background: #FFF3C4; }
 .tag-mine { color: #fff; background: #8A93A3; left: auto; right: 24px; }
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.app { position: relative; background: #fff; border-radius: 14px; padding: 14px 8px 12px; text-align: center; box-shadow: var(--shadow); user-select: none; -webkit-touch-callout: none; -webkit-user-select: none; }
+.app { position: relative; background: var(--card); border-radius: 14px; padding: 14px 8px 12px; text-align: center; box-shadow: var(--shadow); user-select: none; -webkit-touch-callout: none; -webkit-user-select: none; }
 .app:active { transform: scale(.97); }
 .app.mine { border: 1px dashed #B9C9E8; }
 .ico { font-size: 26px; line-height: 1.2; }
@@ -429,17 +428,17 @@ async function probeAll(): Promise<void> {
 .ad { font-size: 10.5px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
 .ck { font-size: 9.5px; margin-top: 4px; color: #B0433B; }
 .ck.has { color: #2FA35C; }
-.del { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%; border: none; background: #F1F3F7; color: #8A93A3; font-size: 14px; line-height: 1; }
+.del { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%; border: none; background: var(--soft); color: var(--muted); font-size: 14px; line-height: 1; }
 .iconbar { display: flex; align-items: center; gap: 8px; }
-.preview { width: 46px; height: 46px; border-radius: 12px; background: #F4F7FC; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; flex: none; }
+.preview { width: 46px; height: 46px; border-radius: 12px; background: var(--soft); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; flex: none; }
 .prevemoji { font-size: 24px; }
-.icoimg { width: 30px; height: 30px; border-radius: 9px; object-fit: cover; background: #F4F7FC; }
+.icoimg { width: 30px; height: 30px; border-radius: 9px; object-fit: cover; background: var(--soft); }
 .icoimg.big { width: 42px; height: 42px; border-radius: 10px; }
 .icongrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-top: 10px; max-height: 132px; overflow: auto; }
-.ichip { font-size: 19px; padding: 5px 0; border-radius: 9px; border: 1px solid var(--line); background: #fff; }
-.ichip.on { border-color: var(--brand); background: #EDF3FF; }
+.ichip { font-size: 19px; padding: 5px 0; border-radius: 9px; border: 1px solid var(--line); background: var(--card); }
+.ichip.on { border-color: var(--brand); background: var(--tint); }
 .mask { position: fixed; inset: 0; z-index: 110; background: rgba(8,12,20,.46); display: flex; align-items: flex-end; }
-.sheet { width: 100%; max-height: 88vh; overflow: auto; background: #fff; border-radius: 18px 18px 0 0; padding: 14px 14px calc(16px + var(--safe-b)); }
+.sheet { width: 100%; max-height: 88vh; overflow: auto; background: var(--card); border-radius: 18px 18px 0 0; padding: 14px 14px calc(16px + var(--safe-b)); }
 .sheet .title { font-size: 16px; font-weight: 700; }
 .sheet .field { margin-bottom: 11px; }
 .hairline { height: 1px; background: var(--line); margin: 10px 0 12px; }

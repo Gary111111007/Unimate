@@ -51,7 +51,7 @@ function useDefaultTimes(): void {
 <style scoped>
 .field { margin-bottom: 12px; }
 .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-.field input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: #FBFCFE; }
+.field input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
 .li { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
 .grow { flex: 1; }
 .periods { max-height: 250px; overflow: auto; }

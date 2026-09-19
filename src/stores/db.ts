@@ -31,8 +31,15 @@ function defaultSettings(p: SchoolProfile): Settings {
     appOrder: [],
     hiddenApps: [],
     // 用户自行添加的校园入口（本校档案没收录的服务）
-    customApps: []
+    customApps: [],
+    // 启动时只弹一次电池优化申请
+    powerPrompted: false
   };
+}
+
+export interface ConfirmRequest {
+  title: string; body: string; detail?: string;
+  confirmText: string; cancelText: string; danger: boolean;
 }
 
 export const useDb = defineStore('db', () => {
@@ -174,6 +181,28 @@ const screen = ref<'school' | 'login' | 'app'>('login');
     notify('意向已记录在本机，可在"我的 → 关于 → 意向清单"查看');
   }
 
+// ---------------- 全局二次确认（产品硬性要求：App 内所有删除必须二次确认） ----------------
+const confirmReq = ref<(ConfirmRequest & { resolve: (ok: boolean) => void }) | null>(null);
+
+/** 弹出统一的确认框，返回用户是否确认。所有删除路径都必须走这里。 */
+function confirm(opts: Partial<ConfirmRequest> & { title: string; body: string }): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    // 前一个没回就当作取消，避免调用方永远挂起
+    const prev = confirmReq.value;
+    if (prev) { prev.resolve(false); }
+    confirmReq.value = {
+      title: opts.title, body: opts.body, detail: opts.detail || '',
+      confirmText: opts.confirmText || '确定删除', cancelText: opts.cancelText || '取消，留着',
+      danger: opts.danger !== false, resolve
+    };
+  });
+}
+function answerConfirm(ok: boolean): void {
+  const r = confirmReq.value;
+  if (!r) return;
+  confirmReq.value = null;
+  r.resolve(ok);
+}
   // ---------------- accounts ----------------
   /** 账号是全局的（先登录、后选学校），不再按学校分区 */
   async function accountsPath(): Promise<string> {
@@ -434,7 +463,7 @@ function hourTotal(kind: HourKind): number {
 
   return {
     booted, screen, profile, accounts, session, interests, timetables, courses, notes, records, hours, materials, settings,
-    activeTab, activeSheet, toast, toastSeq, busy, lastError, storage, activeTimetable, currentWeek,
+    activeTab, activeSheet, toast, toastSeq, busy, lastError, storage, activeTimetable, currentWeek, confirmReq, confirm, answerConfirm,
     boot, selectSchool, applyProfile, changeSchool, addInterest, ensureDemoAccount, register, login, logout, switchSchool,
     loadUserData, saveData, seedDemo, resetDemo, notify,
     newTimetable, addCourse, removeCourse, addNote, addRecord, addHour, removeHour, addMaterial, removeMaterial, materialsOf, hourTotal, blockScore, totalScore, coursesOn, persistManifest

@@ -196,6 +196,12 @@ async function toggleDone(n: NoteItem): Promise<void> {
   await db.saveData();
 }
 async function del(n: NoteItem): Promise<void> {
+  const ok = await db.confirm({
+    title: '确认删除这条记事？',
+    body: n.title,
+    detail: (n.remindAt ? '提醒时间 ' + n.remindAt.slice(5, 16) + '。' : '未设提醒。') + '删除后其待办提醒也会一并取消，不可恢复。'
+  });
+  if (!ok) return;
   const i = db.notes.findIndex((x) => x.id === n.id);
   if (i >= 0) db.notes.splice(i, 1);
   await db.saveData();
@@ -307,10 +313,10 @@ function toggleAlarm(v: number): void {
 
 <style scoped>
 .modes { display: flex; gap: 8px; margin-bottom: 10px; }
-.modes button { flex: 1; padding: 8px; border-radius: 9px; background: #fff; color: var(--muted); font-size: 13px; font-weight: 600; box-shadow: var(--shadow); }
+.modes button { flex: 1; padding: 8px; border-radius: 9px; background: var(--card); color: var(--muted); font-size: 13px; font-weight: 600; box-shadow: var(--shadow); }
 .modes button.on { background: var(--brand); color: #fff; }
 .mhead { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-.mnav { width: 34px; height: 34px; border-radius: 10px; background: #fff; color: var(--brand); font-size: 20px; box-shadow: var(--shadow); flex: none; }
+.mnav { width: 34px; height: 34px; border-radius: 10px; background: var(--card); color: var(--brand); font-size: 20px; box-shadow: var(--shadow); flex: none; }
 .cal.slide-l { animation: cal-slide-l .28s cubic-bezier(.22,.61,.36,1); }
 .cal.slide-r { animation: cal-slide-r .28s cubic-bezier(.22,.61,.36,1); }
 @keyframes cal-slide-l { from { opacity: .25; transform: translateX(26%); } to { opacity: 1; transform: translateX(0); } }
@@ -318,7 +324,7 @@ function toggleAlarm(v: number): void {
 .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; padding: 8px 6px; }
 .wd { text-align: center; font-size: 11px; color: var(--muted); padding-bottom: 4px; }
 .dc { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 10px; gap: 2px; }
-.dc.sel { background: #EDF3FF; outline: 1.5px solid var(--brand); }
+.dc.sel { background: var(--tint); outline: 1.5px solid var(--brand); }
 .dc.dim .num { opacity: .32; }
 .num { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; }
 .num.today { background: var(--brand); color: #fff; font-weight: 700; }
@@ -328,10 +334,10 @@ function toggleAlarm(v: number): void {
 .item { display: flex; gap: 10px; align-items: flex-start; }
 .item.done { opacity: .55; }
 .item.done .bold { text-decoration: line-through; }
-.cb { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); background: #fff; flex: none; margin-top: 2px; color: #fff; font-size: 14px; }
+.cb { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); background: var(--card); flex: none; margin-top: 2px; color: #fff; font-size: 14px; }
 .cb.on { background: var(--ok); border-color: var(--ok); }
-.search { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; margin-bottom: 10px; }
+.search { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); margin-bottom: 10px; }
 .field { margin-bottom: 12px; }
 .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-.field input, .field textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: #FBFCFE; }
+.field input, .field textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
 </style>

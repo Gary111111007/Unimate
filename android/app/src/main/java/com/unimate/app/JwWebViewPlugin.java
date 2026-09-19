@@ -1,5 +1,6 @@
 package com.unimate.app;
 
+import android.content.Context;
 import android.content.Intent;
 import android.webkit.CookieManager;
 import androidx.activity.result.ActivityResult;
@@ -109,6 +110,110 @@ public class JwWebViewPlugin extends Plugin {
             ret.put("ok", false);
             ret.put("error", "打开失败：" + e.getMessage());
         }
+        call.resolve(ret);
+    }
+
+    /**
+     * 电池优化 / 精确闹钟状态。查证过多方成功案例：不加入白名单时，国产 ROM（小米/OPPO/vivo/华为）
+     * 会冻结后台，AlarmManager 排的本地通知根本不弹。这是"到点不提醒"最常见的真因。
+     */
+    @PluginMethod
+    public void powerStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            android.os.PowerManager pm = (android.os.PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+            ret.put("ignoring", pm != null && pm.isIgnoringBatteryOptimizations(getContext().getPackageName()));
+            ret.put("exactAlarm", canExact());
+            String m = android.os.Build.MANUFACTURER == null ? "" : android.os.Build.MANUFACTURER.toLowerCase();
+            ret.put("manufacturer", android.os.Build.MANUFACTURER);
+            ret.put("model", android.os.Build.MODEL);
+            ret.put("rom", romName(m));
+            ret.put("hint", hint(m));
+            ret.put("error", "");
+        } catch (Exception e) {
+            ret.put("ignoring", false);
+            ret.put("exactAlarm", false);
+            ret.put("manufacturer", ""); ret.put("model", ""); ret.put("rom", ""); ret.put("hint", "");
+            ret.put("error", e.getMessage() == null ? "查询失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
+    private static String romName(String m) {
+        if (m.contains("xiaomi") || m.contains("redmi") || m.contains("blackshark")) return "小米 / Redmi";
+        if (m.contains("oppo") || m.contains("realme") || m.contains("oneplus") || m.contains("coloros")) return "OPPO / 一加 / realme";
+        if (m.contains("vivo") || m.contains("iqoo")) return "vivo / iQOO";
+        if (m.contains("huawei") || m.contains("honor")) return "华为 / 荣耀";
+        if (m.contains("samsung")) return "三星";
+        if (m.contains("meizu")) return "魅族";
+        return android.os.Build.MANUFACTURER;
+    }
+
+    /** 各厂商自启动 / 后台常驻入口，来源见 PRD 11.19（小米社区、OPPO 与 vivo 开放平台省电策略文档）。 */
+    private static String hint(String m) {
+        if (m.contains("xiaomi") || m.contains("redmi") || m.contains("blackshark"))
+            return "小米/Redmi：设置 → 应用设置 → 应用管理 → Unimate → 省电策略选「无限制」，并允许「自启动」";
+        if (m.contains("oppo") || m.contains("realme") || m.contains("oneplus") || m.contains("coloros"))
+            return "OPPO/一加：设置 → 应用 → 应用管理 → Unimate → 打开「允许自动启动」与「允许后台活动」；再在「手机管家 → 权限隐私」里解除省电限制";
+        if (m.contains("vivo") || m.contains("iqoo"))
+            return "vivo/iQOO：i管家 → 应用管理 → Unimate → 允许「自启动」；电池 → 后台耗电管理选「允许后台高耗电」；并在最近任务里把本应用下拉锁定";
+        if (m.contains("huawei") || m.contains("honor"))
+            return "华为/荣耀：设置 → 应用 → 启动管理 → Unimate 关闭「自动管理」并打开全部开关；电池 → 更多电池设置关闭「智能省电模式」";
+        if (m.contains("samsung"))
+            return "三星：设置 → 常规管理 → 电池 → 后台使用限制，确认 Unimate 不在「让应用休眠」列表里";
+        return "如长时间不提醒，请到系统「设置 → 电池 / 应用管理」里允许 Unimate 自启动与后台运行";
+    }
+
+    private boolean canExact() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT < 31) return true;
+            android.app.AlarmManager am = (android.app.AlarmManager) getContext().getSystemService(Context.ALARM_SERVICE);
+            return am == null || am.canScheduleExactAlarms();
+        } catch (Exception e) { return false; }
+    }
+
+    /** 申请加入电池优化白名单：先试系统直连弹窗（一键允许），被拒时退回设置列表页。 */
+    @PluginMethod
+    public void requestIgnoreBattery(PluginCall call) {
+        JSObject ret = new JSObject();
+        String pkg = getContext().getPackageName();
+        try {
+            android.content.Intent it = new android.content.Intent(
+                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    android.net.Uri.parse("package:" + pkg));
+            it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getActivity().startActivity(it);
+            ret.put("ok", true); ret.put("mode", "dialog"); ret.put("error", "");
+        } catch (Exception e) {
+            try {
+                android.content.Intent it2 = new android.content.Intent(
+                        android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                it2.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                getActivity().startActivity(it2);
+                ret.put("ok", true); ret.put("mode", "list"); ret.put("error", "");
+            } catch (Exception e2) {
+                ret.put("ok", false); ret.put("mode", "");
+                ret.put("error", "系统未提供该入口，请到 设置 → 电池 → 应用启动管理 里手动允许 Unimate 后台运行");
+            }
+        }
+        call.resolve(ret);
+    }
+
+    /** 跳系统"闹钟和提醒"授权页（Android 12+ 精确闹钟可能被拒）。 */
+    @PluginMethod
+    public void openExactAlarmSettings(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                android.content.Intent it = new android.content.Intent(
+                        android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                        android.net.Uri.parse("package:" + getContext().getPackageName()));
+                it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                getActivity().startActivity(it);
+                ret.put("ok", true);
+            } else { ret.put("ok", true); }
+            ret.put("error", "");
+        } catch (Exception e) { ret.put("ok", false); ret.put("error", e.getMessage()); }
         call.resolve(ret);
     }
     @ActivityCallback

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
-import { readBinaryBase64, remove, writeBinaryBase64 } from '../services/io.ts';
-import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting } from '../services/notify.ts';
+import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck } from '../services/notify.ts';
+import { JwWebView } from '../services/jwwebview.ts';
 import { nowStamp } from '../services/id.ts';
 import { applyTheme, type ThemeMode } from '../services/theme.ts';
 import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts';
@@ -25,7 +25,7 @@ const sub = computed(() => SECOND_CLASS_BLOCKS.map((b) => b.name + ' ' + db.bloc
 
 async function open(name: typeof panel.value): Promise<void> {
   panel.value = name;
-  if (name === 'notify') { perm.value = await permissionState(); stats.value = await scheduleStats(); sched.value = stats.value.total; exact.value = await exactAlarmState(); }
+  if (name === 'notify') { await refreshNotifyState(); }
 }
 
 async function test(minutes: number): Promise<void> {
@@ -36,6 +36,13 @@ async function test(minutes: number): Promise<void> {
 }
 
 async function clearAll(): Promise<void> {
+  const ok = await db.confirm({
+    title: '确认清空全部排期提醒？',
+    body: '会取消系统里所有已排期的上课与待办提醒。',
+    detail: '清空后点「重建提醒队列」即可按当前课表重新排期，不会丢数据。',
+    confirmText: '确定清空'
+  });
+  if (!ok) return;
   await cancelAll();
   stats.value = await scheduleStats(); sched.value = stats.value.total;
   schedMsg.value = '已清空';
@@ -57,6 +64,45 @@ async function askExact(): Promise<void> {
   exact.value = await requestExactAlarmSetting();
   db.notify(exact.value === 'granted' ? '精确闹钟已授权，提醒会按时到点触发' : '返回后请重新打开通知设置查看状态');
 }
+
+/** 电池优化状态：来自原生 PowerManager + 机型指引（PRD 11.19） */
+const power = ref({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: '' });
+const powerLabel = computed(() => (!power.value.ok ? '无法检测' : power.value.ignoring ? '已豁免' : '未豁免'));
+const powerClass = computed(() => (!power.value.ok ? '' : power.value.ignoring ? 'live' : 'danger'));
+const wire = ref({ ok: true, sample: '', hint: '' });
+
+async function refreshPower(): Promise<void> {
+  try {
+    const r: any = await JwWebView.powerStatus();
+    power.value = { ok: true, ignoring: !!r.ignoring, exactAlarm: !!r.exactAlarm, rom: r.rom || '', hint: r.hint || '', error: r.error || '' };
+  } catch {
+    power.value = { ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: 'native-unavailable' };
+  }
+}
+
+async function askBattery(): Promise<void> {
+  if (!power.ok) { await refreshPower(); return; }
+  const r: any = await JwWebView.requestIgnoreBattery();
+  if (!r || !r.ok) { db.notify((r && r.error) || '未能打开系统设置，请手动到 设置 → 电池 里查找'); return; }
+  db.notify(r.mode === 'dialog' ? '请在系统弹窗里选「允许」，然后回到本页查看状态' : '请在应用列表里找到 Unimate → 选「不优化 / 无限制」');
+}
+
+/** 从系统设置页返回时自动刷新四项状态，避免用户看不到变化。 */
+
+async function refreshNotifyState(): Promise<void> {
+  perm.value = await permissionState();
+  exact.value = await exactAlarmState();
+  await refreshPower();
+  wire.value = wireSelfCheck();
+  stats.value = await scheduleStats();
+  sched.value = stats.value.total;
+}
+
+function onVisible(): void {
+  if (!document.hidden && panel.value === 'notify') void refreshNotifyState();
+}
+onMounted(() => document.addEventListener('visibilitychange', onVisible));
+onUnmounted(() => document.removeEventListener('visibilitychange', onVisible));
 async function doExport(): Promise<void> {
   const r = await exportBackup(db.profile!.schoolId, db.profile!.name, db.session!.username,
     'schools/' + db.profile!.schoolId + '/users/' + db.session!.accountId, db.accounts, db.session!.accountId);
@@ -79,18 +125,40 @@ async function pickBackup(e: Event): Promise<void> {
 async function doRestore(): Promise<void> {
   if (!restoreB64.value) { db.notify('请先选择备份文件'); return; }
   const b = 'schools/' + db.profile!.schoolId + '/users/' + db.session!.accountId;
-  if (restoreMode.value === 'overwrite') {
-    const safe = 'exports/safety-' + Date.now() + '.json';
-    await writeBinaryBase64(safe, base64ToBytes(restoreB64.value));
+  const merge = restoreMode.value === 'merge';
+  const ok = await db.confirm({
+    title: merge ? '确认按 id 合并这份备份？' : '确认用这份备份覆盖当前数据？',
+    body: restoreInfo.value || '已选择备份文件',
+    detail: merge
+      ? '合并只按 id 保留较新的一条，现有数据不会被清空。'
+      : '覆盖前会先把当前数据导出成一份留底 zip（在「导出备份」下方可见路径），万一恢复错了还能倒回来。',
+    confirmText: merge ? '确定合并' : '确定覆盖并恢复',
+    danger: !merge
+  });
+  if (!ok) return;
+  let kept = '';
+  if (!merge) {
+    // 真正的"留底"必须是**恢复前**的当前数据。旧实现把待导入的 zip 又存了一遍，
+    // 那不叫留底 —— 恢复错了照样回不去，属于文案与实现不符，这里改正。
+    try {
+      const r = await exportBackup(db.profile!.schoolId, db.profile!.name, db.session!.username, b, db.accounts, db.session!.accountId);
+      kept = '；已留底：' + r.fileName;
+    } catch { /* 留底失败不阻断恢复，但要告知 */ }
   }
-  await restoreBackup(base64ToBytes(restoreB64.value), b, restoreMode.value === 'merge');
+  await restoreBackup(base64ToBytes(restoreB64.value), b, merge);
   await db.loadUserData();
-  restoreB64.value = '';
-  restoreInfo.value = '';
-  db.notify('恢复完成');
+  restoreB64.value = ''; restoreInfo.value = '';
+  db.notify('恢复完成' + (merge ? '（合并）' : kept));
 }
 
 async function resetDemo(): Promise<void> {
+  const ok = await db.confirm({
+    title: '确认重置演示数据？',
+    body: '演示账号下的课表、记事、二课与时长台账会恢复到初始示例。',
+    detail: '只影响演示账号，普通账号数据不受影响。',
+    confirmText: '确定重置'
+  });
+  if (!ok) return;
   await db.resetDemo();
   db.notify('演示数据已重置');
 }
@@ -153,17 +221,25 @@ async function reschedule(): Promise<void> {
         <div class="field"><label>提前几分钟提醒上课</label>
           <div class="chips"><button v-for="m in [5, 10, 15, 20, 30]" :key="m" class="chip sm" :class="{ on: db.settings.classReminderMinutes === m }" @click="db.settings.classReminderMinutes = m; reschedule()">{{ m }} 分钟</button></div>
         </div>
-        <div class="card" style="box-shadow: none; background: #F7F9FC">
+        <div class="card" style="box-shadow: none; background: var(--soft)">
           <div class="row"><span class="grow small">系统通知权限</span><span class="pill" :class="perm === 'granted' ? 'live' : 'danger'">{{ perm === 'granted' ? '已允许' : (perm === 'unsupported' ? '当前环境不支持' : '未允许') }}</span></div>
           <button v-if="perm !== 'granted'" class="btn block sm" style="margin-top: 8px" @click="askPerm">去开启</button>
           <div class="row" style="justify-content: space-between; margin-top: 10px"><span class="grow small">精确闹钟授权</span><span class="pill" :class="exact === 'granted' ? 'live' : 'danger'">{{ exact === 'granted' ? '已授权' : (exact === 'unsupported' ? '系统无需此授权' : '未授权') }}</span></div>
           <button v-if="exact !== 'granted' && exact !== 'unsupported'" class="btn block sm grey" style="margin-top: 8px" @click="askExact">去授权精确闹钟</button>
           <div v-if="exact !== 'granted' && exact !== 'unsupported'" class="small muted" style="margin-top: 6px">未授权时系统会把提醒并入省电批处理：后台基本不响，等你打开 App 才一次性补发。这就是"不打开不提醒、一打开全涌出"的成因。</div>
-          <div class="small muted" style="margin-top: 8px">部分国产 ROM 会冻结后台导致提醒延迟。小米/澎湃：设置 → 应用设置 → 应用管理 → Unimate → 省电策略选「无限制」，并在最近任务里下拉卡片锁定后台，同处打开「自启动」。</div>
+          <div class="row" style="justify-content: space-between; margin-top: 10px"><span class="grow small">电池优化豁免</span><span class="pill" :class="powerClass">{{ powerLabel }}</span></div>
+          <button v-if="!power.ignoring" class="btn block sm grey" style="margin-top: 8px" @click="askBattery">{{ power.ok ? '申请不优化（推荐）' : '重新检测' }}</button>
+          <div v-if="power.ignoring" class="small muted" style="margin-top: 6px">已加入白名单：系统在后台不会冻结本应用的闹钟，提醒才能准点到。</div>
+          <div v-else class="small muted" style="margin-top: 6px">未豁免时，国产 ROM 会在息屏后冻结后台闹钟 —— 这正是"不打开 App 就不提醒、一打开全涌出"的主因。</div>
+          <div v-if="power.rom" class="small muted" style="margin-top: 8px">你的机型：{{ power.rom }}。{{ power.hint }}</div>
+          <div v-else class="small muted" style="margin-top: 8px">部分国产 ROM 还需手动允许自启动：小米/澎湃在 设置 → 应用设置 → 应用管理 → Unimate → 省电策略选「无限制」+ 打开「自启动」，并在最近任务里下拉卡片锁定后台。</div>
         </div>
-        <div class="card" style="box-shadow: none; background: #F7F9FC; margin-top: 10px">
+        <div class="card" style="box-shadow: none; background: var(--soft); margin-top: 10px">
           <div class="row" style="justify-content: space-between"><span class="small">系统已排期提醒</span><b class="small">{{ sched }} 条</b></div>
           <div class="small muted" style="margin-top: 4px">上课 {{ stats.classReminders }} · 待办 {{ stats.todoReminders }} · 测试 {{ stats.testReminders }}<template v-if="stats.nextFireAt">；下一条 {{ stats.nextFireAt }}</template></div>
+          <div class="row" style="justify-content: space-between; margin-top: 4px"><span class="small">提醒时刻自检</span><span class="pill" :class="wire.ok ? 'live' : 'danger'">{{ wire.ok ? '正常' : '异常' }}</span></div>
+          <div v-if="!wire.ok" class="small muted" style="margin-top: 4px">{{ wire.hint }}（样本 {{ wire.sample }}）</div>
+
           <div class="row" style="justify-content: space-between; margin-top: 4px"><span class="small">最近一次重建结果</span><span class="small">{{ schedMsg || '—' }}</span></div>
           <div class="row" style="gap: 8px; margin-top: 10px">
             <button class="btn sm grow" @click="test(1)">测试提醒（1 分钟）</button>
@@ -213,9 +289,9 @@ async function reschedule(): Promise<void> {
         <div v-if="lastBackup" class="small muted" style="margin: 8px 0; word-break: break-all">已导出：{{ lastBackup }}</div>
         <div class="hairline"></div>
         <div class="field"><label>选择备份文件恢复</label><input type="file" accept=".zip" @change="pickBackup" /></div>
-        <div v-if="restoreInfo" class="card small" style="background: #F7F9FC; box-shadow: none">{{ restoreInfo }}</div>
+        <div v-if="restoreInfo" class="card small" style="background: var(--soft); box-shadow: none">{{ restoreInfo }}</div>
         <div class="chips" style="margin: 10px 0">
-          <button class="chip sm" :class="{ on: restoreMode === 'overwrite' }" @click="restoreMode = 'overwrite'">覆盖（先自动留底）</button>
+          <button class="chip sm" :class="{ on: restoreMode === 'overwrite' }" @click="restoreMode = 'overwrite'">覆盖（自动留底当前数据）</button>
           <button class="chip sm" :class="{ on: restoreMode === 'merge' }" @click="restoreMode = 'merge'">合并（按 id 保留较新）</button>
         </div>
         <button class="btn block" :disabled="!restoreB64" @click="doRestore">开始恢复</button>

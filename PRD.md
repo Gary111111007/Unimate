@@ -1,6 +1,6 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v2.6 ｜ 日期 2026-09-18 ｜ 状态：已实现并出包，待真机验收
+> 版本 v2.9 ｜ 日期 2026-09-19 ｜ 状态：已实现并出包，待真机验收（通知链路与插件源码逐跳核实过）
 > 范围：第一版 = 完全本地运行的 Android App + 可安装 APK（不依赖自建服务器）
 > 来源：由《要求.docx》已确认内容整理，并补充基于真实教务课表页面样本（个人课表查询.html）推导出的解析规范与可检查的验收标准。
 > 标注【待确认 Qx】的条目需产品负责人拍板后才进入开发（见第 12 节）。
@@ -905,6 +905,10 @@
 | AC-37 | 卸载重装 | 重装后提示"检测到备份文件"，可从 AC-31 的 zip 恢复（若已保存到公共目录） |
 | AC-38 | 安全自查 | 源码与 APK 资产中无 API Key、密码、token 硬编码；`npm audit --omit=dev` 无 high 及以上漏洞（或已记录说明） |
 | AC-39 | 全流程回归 | 在真机上按 AC-01 → AC-36 顺序跑一遍，全部通过，且无崩溃日志（adb logcat 无 FATAL） |
+| AC-40 | **（长期规则）任意删除操作**：课表删课/删资料、记事删除、二课记录删除、志愿或劳育时长删除、北化通入口删除、清空排期、重置演示数据 | **一律先弹二次确认**，确认框写明"删的是什么、影响多少条、能不能恢复"；点「取消」不得有任何数据变化 |
+| AC-41 | 三档外观（跟随系统 / 常浅 / 常深）下逐个 Tab 走一遍 | 无"白字白底"或残留纯白卡片；状态栏前景色随主题一起翻 |
+| AC-42 | 通知可靠性三件套：系统通知权限、精确闹钟授权、**电池优化豁免** | 设置→通知 面板能显示三项真实状态；未豁免时给"申请不优化"按钮与**本机型号对应的**自启动路径；从系统设置返回后状态自动刷新；「提醒时刻自检」显示"正常" |
+| AC-43 | 在 AC-42 全绿的前提下点「测试提醒（1 分钟）」，随后**立刻回桌面并息屏** | 到点后 1 分钟内弹出横幅通知；通知上的时间不是"昨天"；重新打开 App 不会一次性补发一批旧提醒 |
 
 ### 10.7 学校选择与品牌延展（F15、F16）
 
@@ -1191,6 +1195,114 @@
 
 **未验证项**：卡顿是否真的改善（需对比体验）、浮动圆点在全面屏手势区会不会误触、拖动重做后的手感、照片缩小归零与平移夹取。
 
+### 11.19 第十轮真机反馈修订（v2.7，2026-09-19，9 项）
+
+> 提交 `9b2df85`。此处登记条目与当时的处理；其中第 1 项的结论在 v2.9 被**推翻并回滚**，见 11.21-C。
+
+| # | 现象 | 当时判断 | 现状 |
+| --- | --- | --- | --- |
+| 1 | 通知到点不弹 / 通知时间显示"昨天" | 以为原生把 ISO 串里的 Z 当字面量、按本地时区解析，改为"本地字段拼串" | **该判断错误，v2.9 已回滚**（真因见 11.21-C） |
+| 2 | 「下一节课」跨天后空白 | 只扫描今天的课程 | 改为按真实时刻向后跨天扫描 |
+| 3 | 课表只显示开始时间 | 要求补结束时间 | 节次列与课程详情均显示起止 |
+| 4 | 「导入课表」按钮太隐蔽（图一） | 入口藏在角落 | 提为显性主按钮 + 指引文案 |
+| 5 | 分值表列重叠错乱 | `grid-auto-columns` 用 `minmax(56px,1fr)`，被首列 `min-width:92px` 撑不开轨道，只溢出 | 改 flex + 固定首列 104px + `min-width:400px` 横向滚动 |
+| 6 | 二课记录删除无确认 | —— | 接入二次确认（后并入 11.21-A 全局机制） |
+| 7 | 定位慢 / 经纬度拿不到 | GPS 串行 9s 后才试网络 | 两路并发 `Promise.race`，5.2s 上限，显示来源 |
+| 8 | 系统英文弹窗出戏 | Capacitor 默认权限文案 | 覆写为中文 |
+| 9 | 北化通缺校园网平台入口 | —— | 补「北化在线」相关站点树 |
+
+### 11.20 v2.8（2026-09-19）：第二课堂三 sheet / 暗色模式 / 课程资料
+
+> 提交 `bb3fd68`，对应 geng.docx 17 条中的第 3、6、9 条。
+
+**第 3 条 —— 第二课堂拆三个 sheet**：`🏅 二课填报 / 🤝 志愿时长 / 🧹 劳育时长`。
+新组件 `src/components/HoursPanel.vue`，模型 `HourEntry{ kind:'volunteer'|'labor', semester, hours, photos[], … }`，按 `SEMESTERS`（8 个学期）分组，**空学期也显示 0**，便于对着纸表逐项填。
+产品负责人明确：**劳育"小时"与手册里"劳·劳动与社会实践"的"分数"是两回事，两个都要** —— 小时在本面板累计，分数仍在五板块分值表按手册规则算，二者互不换算。
+
+**第 6 条 —— 暗色模式**：`跟随系统 / 常浅 / 常深` 三档，实时切换不重启。
+根因之一：`plugins.ts` 里 `StatusBar.setStyle({ style: 'Light' })` 写死 → 改为 `applyStatusBar()` + `src/services/theme.ts` 里用 MutationObserver 监听 `data-theme` 联动。
+
+**第 9 条 —— 课程资料**：`CourseMaterial{ courseId, name, path, mime, size, addedAt }`，每节课可挂 PPT/Word/PDF/图片，单文件上限 25 MB，全部存本机私有目录，用 `JwWebView.openFile()`（FileProvider + `FLAG_GRANT_READ_URI_PERMISSION`）交系统应用打开；归属键 `timetableId|课程名`。
+选文件用 `<input type=file multiple>` —— 已核对 `BridgeWebChromeClient.java:305` 确实实现了 `onShowFileChooser`，不是猜的。
+
+### 11.21 第十一轮修订（v2.9，2026-09-19）：全局二次确认 + 暗色清扫 + 通知真因
+
+#### A. 全局删除二次确认（产品负责人立的**长期规则**）
+
+> 原话：「我希望你记住，**所有的 app 里的删除都需要二次确认**。」今后新增任何删除路径都必须遵守。
+
+实现：`src/stores/db.ts` 新增 `ConfirmRequest` / `confirmReq` / `confirm(opts): Promise<boolean>` / `answerConfirm(ok)`，配 `src/components/ConfirmDialog.vue`（居中弹窗，挂在 `App.vue`），默认按钮「确定删除 / 取消，留着」，`danger` 默认 true。
+
+| 删除路径 | 接入函数 | 确认框里带出的后果 |
+| --- | --- | --- |
+| 课表删课 | `delBlock` | 受影响节次数 + 已挂资料数 |
+| 课表删资料 | `delMaterial` | 文件名与大小 |
+| 记事本删记事 | `del` | 标题与提醒时间 |
+| 我的-清空排期 | `clearAll` | 说明可用「重建提醒队列」恢复 |
+| 我的-重置演示数据 | `resetDemo` | —— |
+| 北化通删入口 | `askDelete → reallyDelete` | 提示可在设置里恢复全部 |
+| 时长记录删除 | `askDel` | 学期与小时数 |
+| 二课记录删除 | `askDelRecord` | 板块名 |
+| 删除整份课表文件 | `dropTimetable` | 课表名 + 时段条数 + 连带删掉的资料文件数与占用 MB |
+| 入口"恢复默认" | `revertEdit` | 说明会丢失自定义名称/图标/说明 |
+| 备份恢复（覆盖/合并） | `doRestore` | 覆盖标红为危险操作；**覆盖前真的先把当前数据导成留底 zip**（旧实现把待导入的包又存了一遍，名不副实，已改正） |
+
+顺手把 `OnlineView / HoursPanel / SecondClassView` 里三套**自制 mask 确认层**删掉，统一走 `db.confirm`。
+唯一例外：表单草稿里**未保存**照片的删除按钮（`form.photos.splice`）不弹确认 —— 那是撤销动作，不是删数据。
+
+#### B. 暗色模式四张预览的系统性返工
+
+`styles.css` 增加语义变量 `--soft / --soft-2 / --field / --tint / --strong`（浅、深两套值），
+把 13 个组件里 **44 处硬编码浅色**（`#fff`、`rgba(255,255,255,…}`、`#f5f6f8` 等）换成变量。
+教训：**暗色不是补一套 CSS 就完事，得把写死的白底/黑字一并语义化**，否则切深色只是让"白字白底"换个地方出现。
+另查出**两类漏网**：`styles.css` 自己的骨架类 `.head`（每页顶栏）与 `.list`（设置/列表容器）仍写死 `#fff`，且**不在深色覆盖块的选择器清单里** ——
+所以组件层再干净，页面顶部仍会横着一条纯白。已改为 `var(--card)`，并在原位留了注释说明"每页骨架必须走变量"。
+教训：**靠 `:root[data-theme='dark'] .xxx` 一条一条打补丁覆盖，漏一个类就是漏一整块白；骨架类从一开始就该直接用语义变量。**
+
+#### C. 通知"到点不弹"的真因 —— 逐跳取证，推翻 11.19 第 1 项
+
+上一版把 `schedule.at` 改成本地拼串是**反的**。本轮把整条链路一跳一跳读源码：
+
+1. `native-bridge.js:843` → `win.androidBridge.postMessage(JSON.stringify(data))`：options 过桥靠 `JSON.stringify`；
+2. `Date.prototype.toJSON()` → `toISOString()`：所以到原生手里必然是**带 Z 的 UTC 串**，形状 `yyyy-MM-ddTHH:mm:ss.sssZ`；
+3. 插件 6.1.3 `LocalNotificationSchedule.buildAtElement()`（本地 node_modules 实测第 51-58 行）：`new SimpleDateFormat(JS_DATE_FORMAT)` 之后**紧跟 `sdf.setTimeZone(TimeZone.getTimeZone("UTC"))`**，再 `parse`；
+4. 结论：两端口径本来就一致，**直接传 `Date` 才是对的**；传"本地字段 + 假 Z"会让原生按 UTC 解，东八区**整体晚 8 小时**才触发 —— 完全对上"到点了没弹、隔很久一起弹"。
+
+处理：`notify.ts` 四处排期改回传 `Date`（包一层 `atTime()` 并把证据链写进注释，防止再次"顺手优化"）；
+新增 `src/services/notifyWire.ts`（过桥契约独立成零依赖模块）+ `tests/notify.test.ts` **16 条断言**：
+① 形状必须能被原生 `SimpleDateFormat` 解析；② 按 UTC 解回必须是同一瞬间；③ **反证**：本地拼串在非零偏移环境必然算出别的瞬间，且偏移量恰等于时区偏移。
+已做**变异测试**：把 `wireAt` 故意换成旧写法，测试立刻 6 条红、exit=1，不是假绿灯。该测试已并入 `build-apk.ps1` 第 1 步。
+另在 设置→通知 面板加「提醒时刻自检」行（`wireSelfCheck()`）：将来 Capacitor 升级若悄悄改掉这一步，界面直接显示"异常"，不用等提醒不响才发现。
+
+**另外两个会造成"一起涌出 / 补发"的真机制**（都与时区无关）：
+
+- **开机恢复广播**：插件 `LocalNotificationRestoreReceiver` 把所有**已过期**排期改写成"15 秒后立即发送"再整体重排 —— 所以重启后旧提醒会一次弹出来。已由 `cancelAllScheduledOnBoot()` 在冷启动先清空、再 `rescheduleAll` 只重建未来时刻。
+- **Doze 限流**：官方文档明确 —— `allowWhileIdle: true` 的通知在 Doze 下**每个 App 每 9 分钟只能触发一次**。多条提醒若都落在打盹窗口就会被推迟。所以链路必须同时具备：精确闹钟授权 + 电池优化豁免 + 厂商自启动白名单。
+  （排期走 `setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP)`；插件里若 `allowWhileIdle` 为 false 会退化到 `setExact(AlarmManager.RTC)`，**RTC 不唤醒设备**，息屏时干脆不响 —— 因此四条排期全部保留 `allowWhileIdle: true`。）
+
+#### D. 电池优化豁免（此前 PRD 完全没覆盖）
+
+清单加 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`；`JwWebViewPlugin` 加三个方法：
+`powerStatus()`（`ignoring` / `exactAlarm` / `rom` / `hint`）、`requestIgnoreBattery()`（先试 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 一键弹窗，异常再退回 `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` 列表页）、`openExactAlarmSettings()`。
+`hint` 按 `Build.MANUFACTURER` 分小米/Redmi、OPPO/一加/realme、vivo/iQOO、华为/荣耀、三星、其他**六套具体点击路径**，界面显示"你的机型：xxx"，解决"国产 ROM 在哪里"找不到入口的问题。
+`App.vue` 在拿到通知权限后**一次性**申请豁免（`settings.powerPrompted` 记档，不重复打扰）；`MeView` 通知面板加状态行 + 按钮，并用 `visibilitychange` 在用户从系统设置返回时自动刷新 权限/精确闹钟/电池优化/已排期数 四项。
+
+> 取证来源：本地 node_modules 的插件与 Capacitor 桥源码（主要依据）；上游 capacitor-plugins #766、#225 及 ionic 论坛关于"app 关闭后不响 / 只在充电时响"的讨论；Android 官方《Optimize for Doze and App Standby》。
+
+**顺带修掉的一处工程隐患**：`build-apk.ps1` 里 `npm run test:xxx | Out-Host` 在 PowerShell 5.1 下**非零退出码不会中断脚本**（`$ErrorActionPreference = "Stop"` 只管 cmdlet），测试全红也照样出包 —— 属于"假绿灯"的最上游版本。已加 `Invoke-Npm` 统一检查 `$LASTEXITCODE`，并用**故障注入**验证：把 `wireAt` 换回旧的错误写法后，脚本在第 1 步就中止（exit=1），不再产出 APK。
+
+#### E. 顺带清掉的一处自伤
+
+`App.vue` 模板里残留 PowerShell 单引号 here-string 写进去的**字面量** `` `n`n ``（会被当成文本渲染到页面上）。全库扫描确认仅此一处，已修。"`.ps1` 里嵌引号/反引号"这个坑此前已记过三次，本轮又踩到一次并清掉：**写 `.ps1` 时永远不要用反引号转义**。
+
+**产物**：`index-CSEefwbH.js` 253.66 kB；APK 6.55 MB（含暗色骨架 .head/.list 走 var(--card) 的修复）；
+SHA-256 `42BE828D6415B6004666A3164DB64661CEC82ABA12F4FA51940E6EE0300D7F1B`；六项完整性校验 + apksigner 全过。
+APK 解剖取证：dex 内命中 `android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`、`isIgnoringBatteryOptimizations` 与六套厂商文案；JS bundle 内命中「电池优化豁免」「申请不优化」「提醒时刻自检」「powerPrompted」，
+**且旧写法的 `.000Z` / `localAt` 已完全消失**（反证通过）。
+
+**未验证项（必须真机）**：① 修完时区并豁免电池优化后，测试提醒能否**准点**弹；② 各厂商跳转页能否正常打开；③ 暗色模式还有没有漏网白块；④ 8 处删除确认文案是否够清楚。
+
+---
 ### 11.4 已安装的 Codex Skill（需求第 8 项，已完成)
 
 | Skill | 位置 | 用途 | 状态 |
@@ -1347,6 +1459,9 @@
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| v2.9 | 2026-09-19 | 第十一轮修订（详见 11.21）：**立规并落地"App 内所有删除一律二次确认"**（`db.confirm` + `ConfirmDialog`，11 条删除/破坏性路径全覆盖，清掉 3 套自制确认层）；暗色模式按 4 张预览返工，新增 5 个语义变量并清扫 **44 处硬编码浅色**，同时修 `StatusBar.setStyle('Light')` 写死导致的深色状态栏白底；**推翻并回滚 v2.7 的"通知时区修正"** —— 逐跳读源码证明插件 6.1.3 已 `setTimeZone(UTC)`，旧改法使每条提醒**晚 8 小时**触发（这才是"到点不弹"的真因），改为传 `Date` + 新增 16 条断言的过桥契约测试（含变异测试防假绿灯）与设置页「提醒时刻自检」；**新增电池优化豁免能力**（`powerStatus / requestIgnoreBattery`、按厂商给六套自启动路径、启动时一次性申请、从系统设置返回自动刷新）；清理 `App.vue` 里 here-string 残留的字面量 `` n`n `` |
+| v2.8 | 2026-09-19 | geng.docx 17 条之 3/6/9：第二课堂拆**二课填报 / 志愿时长 / 劳育时长**三 sheet（`HoursPanel` + 8 学期分组，明确"劳育小时数"与手册"劳·分数"两回事、两个都要）；**暗色模式**三档实时切换；**课程资料**（每节课挂 PPT/Word/PDF/图片，≤25 MB 存本机，FileProvider 交系统应用打开） |
+| v2.7 | 2026-09-19 | 第十轮真机反馈 9 项（详见 11.19）：下一节跨天扫描、节次显示结束时间、导入课表按钮提为显性主按钮、分值表 flex 修重叠、二课删除确认、定位改并行竞速、覆写英文权限文案、北化通补校园网平台树。**其中"通知时区修正"一项判断错误，已在 v2.9 回滚** |
 | v2.6 | 2026-09-18 | 第九轮真机反馈（详见 11.18）：**按产品负责人要求整体移除凭据保管库/自动填充**（11.16 标记为已撤销，红线恢复）；修**照片放大拖动后缩小残留偏移**并加平移夹取；**重做拖动手感**（取消实时换位、松手落位、进入拖动重定基线、落到改信息/删除区不动排序）；**参考 Chrome 重写内嵌浏览器顶栏**（单行 + 3dp 进度细线 + TextView 替代 Button + WebView 生命周期与缓存策略调优），抓取入口改为**可拖动、松手吸附边缘的浮动圆点** |
 | v2.5 | 2026-09-18 | 第八轮真机反馈 + **自动填充落地**（详见 11.16 / 11.17）：Keystore AES-GCM 本地凭据保管、门户/教务页一键填充（只写不读）；修记事本**逾期精度与"提前  分"空白**；「保存课表」改主按钮并按域名显示；门户 DNS 失败**自动重试 + 明确成因文案**；修 **iQOO 相册卡死**（未限尺寸导致 5MB base64 过桥）+ 45 秒看门狗；二课新增**志愿时长**字段与统计并计入导出；北化通改**长按拖动排序**+两个投放区。另修 3 处自伤（Java 引号、deleteKey、悬空 sheet 引用） |
 | v2.4 | 2026-09-18 | 北化通长按改为**三段式操作面板**（更换位置 / 更改信息 / 删除此板块，删除需**两步确认**且内置项可「恢复全部」）；默认顺序改为**北化在线→教务系统→健康云**→其余；新增 `cookieProbe` 原生探针（只报条数不报内容）与「查登录态」。**重要更正**：真机反馈 portal 杀进程后掉登录态，推翻上一轮"Cookie 已持久化所以无需存密码"的论据 —— 承认 AC-24 此前被高估，已补 `onPageFinished` 即时 flush + `MainActivity.onPause` 应用级 flush，并给出区分成因的判据；后端方向定为**换机同步**，11.15 给出加密迁移包（PBKDF2+AES-GCM，单文件分享，不自建服务器）设计 |

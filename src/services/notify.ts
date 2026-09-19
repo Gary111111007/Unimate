@@ -1,6 +1,7 @@
 // 本地通知（PRD 5.10）。所有调用都包 try/catch：桌面预览与未授权时静默降级，
 // 但会把结果返回给界面显示，避免"提醒没响也不知道为什么"。
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { WIRE_DATE_RE, wireAt } from './notifyWire.ts';
 import type { Course, NoteItem, Settings, Timetable } from '../types.ts';
 
 const CLASS_ID_BASE = 100000;
@@ -11,18 +12,31 @@ const HORIZON_DAYS = 14;
 const CHANNEL_TAG = 'v2';
 
 /**
- * 【关键时区修正】Capacitor 6 的 Android 端用
- *   SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
- * 解析 schedule.at —— 那里的 'Z' 是**字面量**，不是时区标记，所以它按**本地时区**解释整个串。
- * 而 JS 的 Date 过桥时会被序列化成 UTC ISO（…Z），于是本地时间被当成 UTC 又解一次，
- * 结果整体偏移一个时区（东八区 = 8 小时）：提醒会在错误的时间触发，通知还会被系统标成"昨天"。
- * 因此这里不能传 Date，必须传**用本地字段拼出来**的串，让原生按本地时区解出同一个瞬间。
+ * 【时区：已按源码逐跳核实，勿再改回"本地拼串"】
+ * 链路：JS 的 Date 过桥 -> native-bridge.js:843 JSON.stringify(data)
+ *       -> Date.prototype.toJSON() = toISOString() = 带 Z 的 **UTC** 串；
+ *   原生侧 LocalNotificationSchedule.buildAtElement()（插件 6.1.3）用
+ *       SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'") 且 **setTimeZone(UTC)** 解析，
+ *   两端口径一致，所以直接传 Date 就是正确的绝对时刻。
+ *   历史教训：v2.7 曾以为原生把 'Z' 当字面量按本地时区解，改成"本地字段拼串 + 假 Z"，
+ *   结果每条提醒被整体推到 **+8 小时** 才触发 —— 表现就是"到点了不弹，隔很久一起弹"。
+ *   真正会造成错时/补弹的是"开机恢复广播"（见文件末尾 cancelAllScheduledOnBoot）。
  */
-function localAt(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
-    + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.000Z';
+function atTime(d: Date): Date { return d; }
+
+/**
+ * 启动自检：确认 Date 过桥后仍是原生能按 UTC 解的形状。
+ * Capacitor 大版本升级最容易悄悄改掉这一步，届时提醒会整体偏移而不是报错，
+ * 所以把结论显示到设置界面上，出问题一眼能看到。
+ */
+export function wireSelfCheck(): { ok: boolean; sample: string; hint: string } {
+  const d = new Date(Date.now() + 60000);
+  let s = '';
+  try { s = wireAt(d); } catch { return { ok: false, sample: '', hint: '过桥序列化失败' }; }
+  const ok = WIRE_DATE_RE.test(s) && Math.abs(new Date(s).getTime() - d.getTime()) < 1000;
+  return { ok, sample: s, hint: ok ? '' : '时刻桥格式已变，提醒可能整体偏移，请检查 Capacitor 版本' };
 }
+
 export interface RescheduleResult { scheduled: number; permission: string; error: string }
 
 function toId(key: string, base: number): number {
@@ -131,7 +145,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           list.push({
             id, title: '上课提醒',
             body: '还有 ' + settings.classReminderMinutes + ' 分钟：' + c.name + (c.room ? ' · ' + c.room : ''),
-            schedule: { at: localAt(new Date(fire)) as any, allowWhileIdle: true }, notificationChannelId: 'class-' + CHANNEL_TAG, forceAlert: true,
+            schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, notificationChannelId: 'class-' + CHANNEL_TAG, forceAlert: true,
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
         }
@@ -151,7 +165,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           seen.add(String(id));
           list.push({
             id, title: '待办提醒', body: n.title + '（' + n.remindAt.slice(5, 16) + '）',
-            schedule: { at: localAt(new Date(fire)) as any, allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true,
+            schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true,
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
         }
@@ -188,7 +202,7 @@ export async function scheduleTest(minutes: number): Promise<{ ok: boolean; at: 
       notifications: [{
         id: TEST_ID, title: 'Unimate 测试提醒',
         body: '这条是 ' + minutes + ' 分钟前设置的，收到就说明提醒链路正常',
-        schedule: { at: localAt(when) as any, allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
+        schedule: { at: atTime(when), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     });
     return { ok: true, at: when.toTimeString().slice(0, 8), error: '' };
@@ -205,7 +219,7 @@ export async function scheduleDemoPing(): Promise<boolean> {
     await LocalNotifications.schedule({
       notifications: [{
         id: DEMO_ID, title: 'Uni 提醒', body: '演示通知：Uni 已经准备好提醒你啦',
-        schedule: { at: localAt(new Date(fire)) as any, allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
+        schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     });
     return true;

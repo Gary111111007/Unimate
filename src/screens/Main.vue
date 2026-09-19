@@ -68,10 +68,10 @@ onMounted(() => {
 
 <style scoped>
 .sheetbar { display: flex; gap: 8px; margin-top: 10px; }
-.sheetbar button { flex: 1; padding: 9px; border-radius: 9px; background: #EDF0F5; color: var(--muted); font-size: 14px; font-weight: 600; }
+.sheetbar button { flex: 1; padding: 9px; border-radius: 9px; background: var(--soft-2); color: var(--muted); font-size: 14px; font-weight: 600; }
 .sheetbar button.on { background: var(--brand); color: #fff; }
 /* 固定底栏：任何页面、任何滚动位置都常驻可见 */
-.tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; display: flex; background: #fff; border-top: 1px solid var(--line); padding-bottom: var(--safe-b); box-shadow: 0 -2px 10px rgba(20, 30, 60, .06); }
+.tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; display: flex; background: var(--card); border-top: 1px solid var(--line); padding-bottom: var(--safe-b); box-shadow: 0 -2px 10px rgba(20, 30, 60, .06); }
 .tab { flex: 1; padding: 7px 0 8px; font-size: 11px; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .tab.on { color: var(--brand); font-weight: 700; }
 .ic { font-size: 20px; line-height: 1.1; }

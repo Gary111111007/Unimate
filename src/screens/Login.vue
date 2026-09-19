@@ -60,16 +60,16 @@ async function useDemo(): Promise<void> {
 </template>
 
 <style scoped>
-.top { padding: calc(12px + var(--safe-t)) 14px 12px; background: #fff; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+.top { padding: calc(12px + var(--safe-t)) 14px 12px; background: var(--card); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
 .schoolname { font-weight: 600; }
 .body { flex: 1; padding: 26px 16px; }
 .logo { width: 60px; height: 60px; margin: 0 auto 10px; border-radius: 18px; background: linear-gradient(135deg, #2E5AAC, #4E7BD6); color: #fff; font-size: 34px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
 .title { text-align: center; font-size: 20px; font-weight: 700; }
 .form { margin-top: 22px; }
 .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-.tabs button { flex: 1; padding: 9px; border-radius: 10px; background: #EDF0F5; color: var(--muted); font-weight: 600; }
+.tabs button { flex: 1; padding: 9px; border-radius: 10px; background: var(--soft-2); color: var(--muted); font-weight: 600; }
 .tabs button.on { background: var(--brand); color: #fff; }
-.diag { margin-top: 12px; font-size: 11px; color: var(--muted); background: #F7F9FC; border-radius: 8px; padding: 7px 9px; word-break: break-all; }
+.diag { margin-top: 12px; font-size: 11px; color: var(--muted); background: var(--soft); border-radius: 8px; padding: 7px 9px; word-break: break-all; }
 .diag.bad { background: #FDECEA; color: #7A1F1A; }
 .errbox { margin-top: 12px; background: #FDECEA; color: #7A1F1A; border-radius: 10px; padding: 10px; font-size: 11px; white-space: pre-wrap; word-break: break-all; max-height: 130px; overflow: auto; }
 .note { margin-top: 14px; line-height: 1.6; }
