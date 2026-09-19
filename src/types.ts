@@ -99,6 +99,38 @@ export interface SecondClassRecord {
   deletedAt: string | null;
 }
 
+/** 时长类别：志愿服务 / 劳动教育。与第二课堂的"分"是两套东西，各自独立记录小时。 */
+export type HourKind = 'volunteer' | 'labor';
+
+/** 本科四年 8 个学期，作为时长台账的小标题。 */
+export const SEMESTERS = ['大一上','大一下','大二上','大二下','大三上','大三下','大四上','大四下'] as const;
+export type Semester = typeof SEMESTERS[number];
+
+/** 课程资料：挂在某一节课上，文件副本存本机私有目录。 */
+export interface CourseMaterial {
+  id: string;
+  courseId: string;
+  name: string;
+  path: string;
+  mime: string;
+  size: number;
+  addedAt: string;
+}
+
+export interface HourEntry {
+  id: string;
+  kind: HourKind;
+  semester: Semester;
+  title: string;
+  hours: number;
+  date: string;
+  note: string;
+  photos: PhotoEvidence[];
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
 export interface Account {
   id: string;
   username: string;

@@ -66,6 +66,51 @@ public class JwWebViewPlugin extends Plugin {
         ret.put("count", count);
         call.resolve(ret);
     }
+
+    /**
+     * 用系统里合适的 App 打开课程资料（PPT / Word / PDF / 图片等）。
+     * 文件在本机应用私有目录，经 FileProvider 换成 content:// 再交给外部应用，
+     * 因此不需要存储权限，也不会暴露原始路径。
+     */
+    @PluginMethod
+    public void openFile(PluginCall call) {
+        String rel = call.getString("path", "");
+        String name = call.getString("name", "");
+        JSObject ret = new JSObject();
+        if (rel.isEmpty()) { ret.put("ok", false); ret.put("error", "缺少文件路径"); call.resolve(ret); return; }
+        try {
+            java.io.File f = new java.io.File(getContext().getFilesDir(), rel);
+            if (!f.exists()) {
+                ret.put("ok", false);
+                ret.put("error", "文件不在本机（可能被清理或属于另一个账号）");
+                call.resolve(ret);
+                return;
+            }
+            String mime = call.getString("mime", "");
+            if (mime == null || mime.isEmpty()) {
+                String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1) : "";
+                String guessed = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.toLowerCase());
+                mime = guessed == null ? "*/*" : guessed;
+            }
+            android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                    getContext(), getContext().getPackageName() + ".fileprovider", f);
+            android.content.Intent it = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+            it.setDataAndType(uri, mime);
+            it.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getActivity().startActivity(it);
+            ret.put("ok", true);
+            ret.put("error", "");
+            ret.put("mime", mime);
+        } catch (android.content.ActivityNotFoundException e) {
+            ret.put("ok", false);
+            ret.put("error", "这台手机上没有能打开 " + (name.isEmpty() ? "该文件" : name) + " 的应用");
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("error", "打开失败：" + e.getMessage());
+        }
+        call.resolve(ret);
+    }
     @ActivityCallback
     private void handleOpenResult(PluginCall activityCall, ActivityResult result) {
         PluginCall call = pending;

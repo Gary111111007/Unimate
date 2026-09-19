@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import RuleTables from './RuleTables.vue';
+import HoursPanel from '../components/HoursPanel.vue';
 import { exportRecordZip, exportAllZip, savePhotoToDevice, shareFile } from '../services/export.ts';
 import ImageViewer from '../components/ImageViewer.vue';
 import { Camera, CameraSource } from '@capacitor/camera';
@@ -15,6 +16,8 @@ import type { BlockKey, PhotoEvidence, SecondClassRecord } from '../types.ts';
 
 const db = useDb();
 const active = ref<BlockKey | 'all'>('all');
+/** 三个 sheet：二课填报记「分」，志愿与劳育各记「小时」，口径互相独立。 */
+const sheet = ref<'erke' | 'vol' | 'labor'>('erke');
 const showForm = ref(false);
 const detail = ref<SecondClassRecord | null>(null);
 const busy = ref('');
@@ -274,6 +277,17 @@ const total = computed(() => db.totalScore());
 
 <template>
   <div class="scroll">
+
+    <div class="modes3">
+      <button :class="{ on: sheet === 'erke' }" @click="sheet = 'erke'">🏅 二课填报</button>
+      <button :class="{ on: sheet === 'vol' }" @click="sheet = 'vol'">🤝 志愿时长</button>
+      <button :class="{ on: sheet === 'labor' }" @click="sheet = 'labor'">🧹 劳育时长</button>
+    </div>
+
+    <HoursPanel v-if="sheet === 'vol'" kind="volunteer" label="志愿时长" />
+    <HoursPanel v-if="sheet === 'labor'" kind="labor" label="劳育时长" />
+
+    <template v-if="sheet === 'erke'">
     <div class="card sum">
       <div><div class="big-num">{{ total }}</div><div class="small muted">合计自评 / {{ TOTAL_FULL_SCORE }}</div></div>
       <div class="grow bars">
@@ -325,12 +339,14 @@ const total = computed(() => db.totalScore());
     </div>
 
     <div class="disclaim small muted">分数为你自行填报与自评，上限依据《北京化工大学本科生学生手册》第二课堂五部分评定分值，不代表学校官方认定结果。</div>
+    </template>
   </div>
 
   <RuleTables v-if="showRules" @close="showRules = false" />
   <ImageViewer v-if="viewer" :items="viewer.items" :start="viewer.index" @close="viewer = null" />
 
-  <button class="fab" @click="openForm">填报<br />活动</button>
+  <button v-if="sheet === 'erke'" class="fab" @click="openForm">填报<br />活动</button>
+
   <div v-if="busy" class="busy">{{ busy }}</div>
 
   <div v-if="showForm" class="mask" @click.self="showForm = false">
@@ -448,7 +464,9 @@ const total = computed(() => db.totalScore());
 </template>
 
 <style scoped>
-.sum { display: flex; gap: 14px; align-items: center; }
+.modes3 { display: flex; gap: 6px; margin-bottom: 12px; }
+.modes3 button { flex: 1; padding: 9px 4px; border-radius: 11px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 12.5px; }
+.modes3 button.on { background: var(--brand); color: #fff; border-color: var(--brand); font-weight: 700; }
 .big-num { font-size: 30px; font-weight: 800; color: var(--brand); line-height: 1.1; }
 .bars { display: flex; flex-direction: column; gap: 5px; }
 .brow { display: flex; align-items: center; gap: 8px; }

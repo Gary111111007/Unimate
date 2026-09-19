@@ -3,7 +3,9 @@ import { computed, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { COURSE_COLORS } from '../catalog/periods.ts';
 import { uuid, nowStamp } from '../services/id.ts';
-import type { Course } from '../types.ts';
+import type { Course, CourseMaterial } from '../types.ts';
+import { writeBinaryBase64, remove } from '../services/io.ts';
+import { JwWebView } from '../services/jwwebview.ts';
 import ImportPanel from './ImportPanel.vue';
 import SettingsPanel from '../components/SettingsPanel.vue';
 
@@ -156,6 +158,61 @@ function untilText(m: number): string {
   return '还有 ' + Math.floor(h / 24) + ' 天';
 }
 
+// ---------------- 课程资料（PRD 5.4.11） ----------------
+// 说明：Android WebView 里 <input type=file> 由 Capacitor 原生接管，可以选到
+// 系统里的文档；文件副本写进应用私有目录，打开时经 FileProvider 交给系统应用。
+// 因此本 App 能"存下来、找得回、点开就用别的 App 看"，但**不做 Office 预览**。
+const matBusy = ref('');
+function courseKey(b: Block): string { return (b.first?.timetableId || '') + '|' + (b.name || ''); }
+const detailMats = computed<CourseMaterial[]>(() => detail.value ? db.materials.filter((m) => m.courseId === courseKey(detail.value!)) : []);
+function humanSize(n: number): string {
+  if (!n) return '—';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+function extOf(name: string): string {
+  const i = name.lastIndexOf('.');
+  return i > 0 ? name.slice(i + 1).toLowerCase() : 'bin';
+}
+async function onPickMaterial(e: Event): Promise<void> {
+  const b = detail.value; if (!b) return;
+  const inp = e.target as HTMLInputElement;
+  const files = inp.files ? Array.from(inp.files) : [];
+  if (!files.length) return;
+  matBusy.value = '保存中…';
+  try {
+    for (const f of files) {
+      if (f.size > 25 * 1024 * 1024) { db.notify('跳过 ' + f.name + '：超过 25MB'); continue; }
+      const b64 = await new Promise<string>((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(String(r.result || '').split(',')[1] || '');
+        r.onerror = () => rej(new Error('读取失败'));
+        r.readAsDataURL(f);
+      });
+      if (!b64) { db.notify('跳过 ' + f.name + '：读不到内容'); continue; }
+      const id = uuid();
+      const rel = 'schools/' + db.profile!.schoolId + '/users/' + db.session!.accountId
+        + '/materials/' + new Date().getFullYear() + '/' + id + '.' + extOf(f.name);
+      await writeBinaryBase64(rel, b64);
+      db.addMaterial({ courseId: courseKey(b), name: f.name, path: rel, mime: f.type || '', size: f.size });
+    }
+    await db.saveData();
+    db.notify('资料已保存到本机');
+  } catch (err: any) {
+    db.notify('保存资料失败：' + ((err && err.message) || err));
+  } finally { matBusy.value = ''; inp.value = ''; }
+}
+async function openMaterial(m: CourseMaterial): Promise<void> {
+  const r = await JwWebView.openFile({ path: m.path, name: m.name, mime: m.mime });
+  if (!r.ok) db.notify(r.error || '打不开该文件');
+}
+async function delMaterial(m: CourseMaterial): Promise<void> {
+  db.removeMaterial(m.id);
+  await db.saveData();
+  try { await remove(m.path); } catch { /* 文件删不掉也不影响索引 */ }
+  db.notify('已删除资料');
+}
 function colorOf(b: Block): string { return COURSE_COLORS[(b.colorIndex || 0) % COURSE_COLORS.length]; }
 function timeOf(period: number, end = false): string {
   const p = db.settings.periodTimes.find((x) => x.period === period);
@@ -363,6 +420,26 @@ function toggleWeek(w: number): void {
       <div class="kv"><span>课序号</span><b>{{ detail.courseCode || '—' }}</b></div>
       <div v-if="detail.rooms.length > 1" class="small muted" style="margin-top: 6px">该时段有 {{ detail.rooms.length }} 个可选上课地点，已合并显示。</div>
       <div v-if="detail.pendingFilter" class="pill warn" style="margin-top: 6px">教务系统标记为"待筛选"，请确认是否修读</div>
+      <div class="hairline" style="margin: 14px 0 10px"></div>
+      <div class="row" style="justify-content: space-between; align-items: baseline">
+        <span class="small bold">课程资料</span>
+        <label class="btn sm ghost filebtn">＋ 添加文件
+          <input type="file" multiple accept="*/*" style="display:none" @change="onPickMaterial" />
+        </label>
+      </div>
+      <div v-if="matBusy" class="small muted">{{ matBusy }}</div>
+      <div v-if="!detailMats.length" class="small muted" style="margin-top: 4px">
+        还没有资料。可添加课件 PPT / Word / PDF / 图片等，文件保存在本机，点开由系统应用（WPS、PDF 阅读器等）打开。
+      </div>
+      <div v-for="m in detailMats" :key="m.id" class="mat">
+        <span class="mi">{{ extOf(m.name).toUpperCase().slice(0, 4) }}</span>
+        <div class="grow" @click="openMaterial(m)">
+          <div class="small bold mt">{{ m.name }}</div>
+          <div class="tiny muted">{{ humanSize(m.size) }} · {{ m.addedAt.slice(0, 10) }}</div>
+        </div>
+        <button class="btn sm ghost" @click="openMaterial(m)">打开</button>
+        <button class="btn sm danger" @click="delMaterial(m)">删</button>
+      </div>
       <div class="row" style="margin-top: 16px">
         <button class="btn grow" @click="editBlock(detail)">编辑</button>
         <button class="btn grey grow" @click="db.activeSheet = 'sheet2'; detail = null">记待办</button>
@@ -409,6 +486,11 @@ function toggleWeek(w: number): void {
 .cur { flex: 1; text-align: center; }
 .today { flex: none; }
 .wr { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+.mat { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+.mi { flex: none; min-width: 40px; text-align: center; font-size: 10px; font-weight: 700; color: var(--brand); background: #EDF3FF; border-radius: 7px; padding: 5px 4px; }
+.mt { word-break: break-all; line-height: 1.35; }
+.tiny { font-size: 10.5px; }
+.filebtn { cursor: pointer; }
 .swipe-hint { margin: 4px 0 8px; }
 .next { display: flex; gap: 10px; align-items: center; border-left: 4px solid var(--brand); }
 .dot { width: 12px; height: 12px; border-radius: 4px; flex: none; }

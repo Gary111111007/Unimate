@@ -5,10 +5,12 @@
   --card: #FFFFFF;
   --text: #14181F;
   --muted: #6B7480;
+  --ink: #14181F;
   --line: #E3E7EE;
   --danger: #D9463F;
   --ok: #2F9E5F;
   --warn: #C97A12;
+  --ink: #14181F;
   --r: 14px;
   --shadow: 0 2px 10px rgba(20, 30, 60, .06);
   --safe-b: env(safe-area-inset-bottom, 0px);
@@ -87,3 +89,63 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .progress { height: 6px; border-radius: 3px; background: #EDF0F5; overflow: hidden; }
 .progress > i { display: block; height: 100%; background: var(--brand); }
 .swipe-hint { font-size: 12px; color: var(--muted); }
+
+/* ===================== 暗色模式（PRD 5.12） ===================== */
+/* 主题由 <html data-theme> 控制：light / dark。跟随系统时在 JS 里换算成二值。 */
+:root { color-scheme: light; }
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0E131C;
+  --card: #171F2B;
+  --text: #E8ECF3;
+  --ink: #E8ECF3;
+  --muted: #97A3B4;
+  --line: #263141;
+  --brand: #6E9BE0;
+  --danger: #F0776E;
+  --ok: #4FC083;
+  --warn: #E0A03A;
+  --shadow: 0 2px 12px rgba(0, 0, 0, .45);
+}
+:root[data-theme='dark'] body { background: var(--bg); color: var(--text); }
+
+/* 组件里散落的浅色硬编码值，在暗色下统一压暗。用属性选择器兜住常见类名，
+   避免逐个改 20 多个 .vue 的 scoped 样式（scoped 优先级也会挡住外部覆盖）。 */
+:root[data-theme='dark'] .card,
+:root[data-theme='dark'] .sheet,
+:root[data-theme='dark'] .modal,
+:root[data-theme='dark'] .panel,
+:root[data-theme='dark'] .errpanel { background: var(--card); color: var(--text); }
+:root[data-theme='dark'] input,
+:root[data-theme='dark'] textarea,
+:root[data-theme='dark'] select {
+  background: #101722 !important; color: var(--text) !important; border-color: var(--line) !important;
+}
+:root[data-theme='dark'] input::placeholder,
+:root[data-theme='dark'] textarea::placeholder { color: #63708A; }
+:root[data-theme='dark'] .chip,
+:root[data-theme='dark'] .pill,
+:root[data-theme='dark'] .grey,
+:root[data-theme='dark'] .ghost { background: #1D2735; color: var(--text); border-color: var(--line); }
+:root[data-theme='dark'] .chip.on,
+:root[data-theme='dark'] .pill.brand { background: #23406E; color: #DCE8FB; border-color: #35597F; }
+:root[data-theme='dark'] .btn.grey { background: #223044; color: var(--text); }
+:root[data-theme='dark'] .btn.ghost { background: transparent; color: var(--brand); border-color: #2C4260; }
+:root[data-theme='dark'] .muted { color: var(--muted); }
+:root[data-theme='dark'] .hairline,
+:root[data-theme='dark'] hr { background: var(--line); }
+:root[data-theme='dark'] .tabbar { background: #121926; border-top-color: var(--line); }
+:root[data-theme='dark'] .mask { background: rgba(0, 0, 0, .62); }
+:root[data-theme='dark'] .grid,
+:root[data-theme='dark'] .dayhead,
+:root[data-theme='dark'] .timelab { background: var(--card); }
+:root[data-theme='dark'] .dayhead,
+:root[data-theme='dark'] .corner { border-bottom-color: var(--line); }
+:root[data-theme='dark'] .daycol { border-right-color: var(--line); }
+:root[data-theme='dark'] .cell { border-bottom-color: #1E2836; }
+:root[data-theme='dark'] .dayhead.today,
+:root[data-theme='dark'] .daycol.today { background: #17233A; }
+:root[data-theme='dark'] .dc.sel { background: #1B2C48; }
+:root[data-theme='dark'] .hints,
+:root[data-theme='dark'] .note,
+:root[data-theme='dark'] .disclaim { background: #1E1B12; color: var(--muted); }

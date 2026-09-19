@@ -6,10 +6,11 @@ import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
 import { readBinaryBase64, remove, writeBinaryBase64 } from '../services/io.ts';
 import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
+import { applyTheme, type ThemeMode } from '../services/theme.ts';
 import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts';
 
 const db = useDb();
-const panel = ref<'' | 'notify' | 'watermark' | 'backup' | 'about' | 'interests'>('');
+const panel = ref<'' | 'notify' | 'theme' | 'watermark' | 'backup' | 'about' | 'interests'>('');
 const perm = ref('unknown');
 const lastBackup = ref('');
 const restoreB64 = ref('');
@@ -45,6 +46,11 @@ async function askPerm(): Promise<void> {
   const g = await ensurePermission();
   perm.value = await permissionState();
   db.notify(g ? '通知权限已开启' : '请在系统设置中允许 Unimate 发送通知');
+}
+
+function setTheme(t: ThemeMode): void {
+  db.settings.theme = t;
+  applyTheme(t);
 }
 
 async function askExact(): Promise<void> {
@@ -118,7 +124,8 @@ async function reschedule(): Promise<void> {
 
     <div class="list" style="margin-top: 10px">
       <div class="li" @click="open('notify')"><span class="ico">🔔</span><div class="grow"><div class="bold">通知设置</div><div class="small muted">上课提醒 / 待办提醒 / 权限状态</div></div><span>›</span></div>
-      <div class="li" @click="open('watermark')"><span class="ico">💧</span><div class="grow"><div class="bold">拍照水印</div><div class="small muted">自主开关水印内容与样式</div></div><span>›</span></div>
+      <div class="li" @click="open('theme')"><span class="ico">🌗</span><div class="grow"><div class="bold">外观与主题</div><div class="small muted">跟随系统深色 / 常浅 / 常深</div></div><span class="chev">›</span></div>
+<div class="li" @click="open('watermark')"><span class="ico">💧</span><div class="grow"><div class="bold">拍照水印</div><div class="small muted">自主开关水印内容与样式</div></div><span>›</span></div>
       <div class="li" @click="open('backup')"><span class="ico">💾</span><div class="grow"><div class="bold">备份与恢复</div><div class="small muted">导出 / 导入 .unimate.zip</div></div><span>›</span></div>
       <div class="li" @click="open('interests')"><span class="ico">🏫</span><div class="grow"><div class="bold">意向清单</div><div class="small muted">已提交意向的高校（本机 {{ db.interests.length }} 条）</div></div><span>›</span></div>
       <div class="li" @click="open('about')"><span class="ico">ℹ️</span><div class="grow"><div class="bold">关于 Unimate</div><div class="small muted">版本、定位与隐私说明</div></div><span>›</span></div>
@@ -170,6 +177,20 @@ async function reschedule(): Promise<void> {
       </template>
 
       
+      <template v-else-if="panel === 'theme'">
+        <div class="field"><label>外观</label>
+          <div class="chips">
+            <button class="chip" :class="{ on: db.settings.theme === 'system' }" @click="setTheme('system')">跟随系统</button>
+            <button class="chip" :class="{ on: db.settings.theme === 'light' }" @click="setTheme('light')">始终浅色</button>
+            <button class="chip" :class="{ on: db.settings.theme === 'dark' }" @click="setTheme('dark')">始终深色</button>
+          </div>
+        </div>
+        <div class="small muted" style="margin-top: 4px; line-height: 1.7">
+          选「跟随系统」时，手机开深色模式 App 会立刻跟着变，不用重启。<br />
+          课表色块、照片水印、分值表配色在深色下会自动换成低饱和版本，保证对比度。
+        </div>
+        <button class="btn block grey" style="margin-top: 12px" @click="db.saveData()">保存设置</button>
+      </template>
       <template v-else-if="panel === 'watermark'">
         <div class="li" style="padding: 10px 0"><span class="grow small">默认给新照片加水印</span><button class="chip sm" :class="{ on: db.settings.watermarkEnabledDefault }" @click="db.settings.watermarkEnabledDefault = !db.settings.watermarkEnabledDefault">{{ db.settings.watermarkEnabledDefault ? '开' : '关' }}</button></div>
         <div class="field"><label>水印包含哪些行（自主组合）</label>

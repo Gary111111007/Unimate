@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import type {
-  Account, Course, InterestEntry, NoteItem, SchoolProfile, SecondClassRecord,
+  Account, Course, CourseMaterial, HourEntry, HourKind, InterestEntry, NoteItem, SchoolProfile, SecondClassRecord,
   Settings, Timetable
 } from '../types.ts';
 import { findSchool, profileFor, SCHOOLS } from '../catalog/universities.ts';
@@ -25,7 +25,7 @@ function defaultSettings(p: SchoolProfile): Settings {
     periodTimes: p.academic.periodTimes.map((x) => ({ ...x })),
     semesterStartMonday: p.academic.semesterStartMonday,
     totalWeeks: p.academic.totalWeeks,
-    showWeekend: true, theme: 'light', webviewKeepSession: true, autoBackup: true,
+    showWeekend: true, theme: 'system', webviewKeepSession: true, autoBackup: true,
     lastActiveTimetableId: null,
     appEdits: {},
     appOrder: [],
@@ -50,6 +50,8 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   const courses = ref<Course[]>([]);
   const notes = ref<NoteItem[]>([]);
   const records = ref<SecondClassRecord[]>([]);
+  const hours = ref<HourEntry[]>([]);
+  const materials = ref<CourseMaterial[]>([]);
   const settings = ref<Settings>(defaultSettings(profileFor('buct')!));
 
   const activeTab = ref(0);
@@ -261,7 +263,7 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   function logout(): void {
     session.value = null;
     profile.value = null;
-    timetables.value = []; courses.value = []; notes.value = []; records.value = [];
+    timetables.value = []; courses.value = []; notes.value = []; records.value = []; hours.value = [];
     screen.value = 'login';
     activeTab.value = 0;
     void persistManifest();
@@ -270,7 +272,7 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   /** 切换学校：保留登录状态，回到学校选择页 */
   async function changeSchool(): Promise<void> {
     profile.value = null;
-    timetables.value = []; courses.value = []; notes.value = []; records.value = [];
+    timetables.value = []; courses.value = []; notes.value = []; records.value = []; hours.value = [];
     screen.value = 'school';
     activeTab.value = 0;
     try { await persistManifest(); } catch (e) { fail('切换学校', e); }
@@ -291,6 +293,8 @@ const screen = ref<'school' | 'login' | 'app'>('login');
     courses.value = await readJson<Course[]>(b + '/timetable/courses.json', []);
     notes.value = await readJson<NoteItem[]>(b + '/notes/notes.json', []);
     records.value = await readJson<SecondClassRecord[]>(b + '/secondclass/records.json', []);
+    hours.value = await readJson<HourEntry[]>(b + '/hours/entries.json', []);
+    materials.value = await readJson<CourseMaterial[]>(b + '/materials/index.json', []);
     if (!settings.value.lastActiveTimetableId && timetables.value.length) {
       settings.value.lastActiveTimetableId = timetables.value[0].id;
     }
@@ -304,6 +308,8 @@ const screen = ref<'school' | 'login' | 'app'>('login');
     await writeJson(b + '/timetable/courses.json', courses.value);
     await writeJson(b + '/notes/notes.json', notes.value);
     await writeJson(b + '/secondclass/records.json', records.value);
+    await writeJson(b + '/hours/entries.json', hours.value);
+    await writeJson(b + '/materials/index.json', materials.value);
     await writeJson(b + '/settings.json', settings.value);
     try { await rescheduleAll(courses.value, timetables.value, notes.value, settings.value); } catch (e) { fail('重建提醒', e); }
   }
@@ -327,7 +333,7 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   }
 
   async function resetDemo(): Promise<void> {
-    timetables.value = []; courses.value = []; notes.value = []; records.value = [];
+    timetables.value = []; courses.value = []; notes.value = []; records.value = []; hours.value = [];
     await seedDemo();
   }
 
@@ -372,6 +378,39 @@ const screen = ref<'school' | 'login' | 'app'>('login');
     return n;
   }
 
+  /** 志愿 / 劳育时长台账条目 */
+  function addHour(part: Partial<HourEntry>): HourEntry {
+    const e: HourEntry = {
+      id: uuid(), kind: 'volunteer', semester: '大一上', title: '', hours: 0, date: dateStamp(),
+      note: '', photos: [], createdAt: nowStamp(), updatedAt: nowStamp(), deletedAt: null, ...part
+    } as HourEntry;
+    hours.value.unshift(e);
+    return e;
+  }
+  function removeHour(id: string): void {
+    const i = hours.value.findIndex((x) => x.id === id);
+    if (i >= 0) hours.value.splice(i, 1);
+  }
+
+/** 某类别的累计小时（软删除不计）。 */
+function hourTotal(kind: HourKind): number {
+  return Math.round(hours.value.filter((x) => x.kind === kind && !x.deletedAt).reduce((a, x) => a + (x.hours || 0), 0) * 10) / 10;
+}
+  function addMaterial(part: Partial<CourseMaterial>): CourseMaterial {
+    const m: CourseMaterial = {
+      id: uuid(), courseId: '', name: '未命名', path: '', mime: '', size: 0, addedAt: nowStamp(), ...part
+    } as CourseMaterial;
+    materials.value.unshift(m);
+    return m;
+  }
+  function removeMaterial(id: string): void {
+    const i = materials.value.findIndex((x) => x.id === id);
+    if (i >= 0) materials.value.splice(i, 1);
+  }
+  function materialsOf(courseId: string): CourseMaterial[] {
+    return materials.value.filter((m) => m.courseId === courseId);
+  }
+
   function addRecord(part: Partial<SecondClassRecord>): SecondClassRecord {
     const r: SecondClassRecord = {
       id: uuid(), block: 'de', stage: 'basic', activityName: '', description: '', activityDate: dateStamp(),
@@ -394,10 +433,10 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   }
 
   return {
-    booted, screen, profile, accounts, session, interests, timetables, courses, notes, records, settings,
+    booted, screen, profile, accounts, session, interests, timetables, courses, notes, records, hours, materials, settings,
     activeTab, activeSheet, toast, toastSeq, busy, lastError, storage, activeTimetable, currentWeek,
     boot, selectSchool, applyProfile, changeSchool, addInterest, ensureDemoAccount, register, login, logout, switchSchool,
     loadUserData, saveData, seedDemo, resetDemo, notify,
-    newTimetable, addCourse, removeCourse, addNote, addRecord, blockScore, totalScore, coursesOn, persistManifest
+    newTimetable, addCourse, removeCourse, addNote, addRecord, addHour, removeHour, addMaterial, removeMaterial, materialsOf, hourTotal, blockScore, totalScore, coursesOn, persistManifest
   };
 });

@@ -15,12 +15,15 @@ export interface JwWebViewPlugin {
   open(options: { url: string; startUrl?: string; title: string; scrapeSelector?: string; allowExternal?: boolean }): Promise<WebViewOpenResult>;
   /** 只问"有没有、几条"，原生侧不返回 Cookie 内容 */
   cookieProbe(options: { url: string }): Promise<CookieProbe>;
+  /** 用系统应用打开本机私有目录里的文件 */
+  openFile(options: { path: string; name?: string; mime?: string }): Promise<{ ok: boolean; error: string; mime?: string }>;
 }
 
 export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
   web: () => ({
     open: async (): Promise<WebViewOpenResult> => ({ ok: false, reason: 'web-unsupported' }),
-    cookieProbe: async (): Promise<CookieProbe> => ({ present: false, count: 0 })
+    cookieProbe: async (): Promise<CookieProbe> => ({ present: false, count: 0 }),
+    openFile: async (): Promise<{ ok: boolean; error: string }> => ({ ok: false, error: '桌面预览环境无法调用系统应用' })
   })
 });
 

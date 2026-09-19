@@ -10,6 +10,7 @@ import { createPinia } from 'pinia';
 import App from './App.vue';
 import './styles.css';
 import { registerPlugins } from './plugins.ts';
+import { applyTheme, watchSystemTheme } from './services/theme.ts';
 import { useDb } from './stores/db.ts';
 
 const pinia = createPinia();
@@ -40,6 +41,8 @@ try {
   });
 } catch { /* 预览环境忽略 */ }
 
+applyTheme(useDb().settings.theme || 'system');
+watchSystemTheme(() => useDb().settings.theme || 'system');
 app.mount('#app');
 registerPlugins();
 
