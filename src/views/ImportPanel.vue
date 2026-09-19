@@ -88,7 +88,7 @@ const warns = () => (result.value?.diagnostics || []).filter((d) => d.kind !== '
           <div class="small muted">App 内直接打开 jwglxt.buct.edu.cn，自行输入学号、密码与验证码，然后进入「信息查询 → 课表查询 → 个人课表查询」，选好学期点查询。</div>
         </div>
         <div class="li col" style="align-items: flex-start">
-          <div class="bold">2. 点工具条上的「一键保存并识别」</div>
+          <div class="bold">2. 点右下角蓝色圆点「导入」</div>
           <div class="small muted">Unimate 只读取页面上的课表表格内容，不读取、不保存你的账号密码，也不会代填表单。</div>
         </div>
         <button class="btn block" style="margin-top: 14px" @click="openJwglxt">🏛 打开教务系统</button>

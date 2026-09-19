@@ -226,7 +226,7 @@ async function createTimetable(): Promise<void> {
   db.newTimetable(db.profile?.academic.semesterLabel || '新课表 ' + (db.timetables.length + 1));
   await db.saveData();
   showMenu.value = false;
-  db.notify('已新建课表，可用「一键保存」从教务系统导入');
+  db.notify('已新建课表，可点右下角「导入课表」从教务系统抓取');
 }
 async function dropTimetable(id: string): Promise<void> {
   db.timetables = db.timetables.filter((t) => t.id !== id);
