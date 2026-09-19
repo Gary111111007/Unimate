@@ -23,7 +23,7 @@
 ## 二、构建与验证
 
 - 唯一正确的出包方式：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1`（6 步，含包内容反查）。手跑 gradle 会打出旧 bundle。
-- 测试（共 136 条）：`test:login`(27) / `test:parser`(57) / `test:zip`(15) / `test:notify`(16) / `test:color`(15) / `test:guard`(6)。脚本用 `Invoke-Npm` 检查退出码，**红一条就不许出包**；新增测试文件必须同时登记进 `package.json` 与 `build-apk.ps1`，否则等于没跑。
+- 测试（共 154 条）：`test:login`(27) / `test:parser`(57) / `test:zip`(15) / `test:notify`(16) / `test:color`(15) / `test:guard`(6) / `test:order`(3) / `test:boot`(13)。脚本用 `Invoke-Npm` 检查退出码，**红一条就不许出包**；新增测试文件必须同时登记进 `package.json` 与 `build-apk.ps1`，否则等于没跑。
 - 改了代码必须做**反向取证**：新字符串要在 APK 里查得到、被删的旧字符串要查不到。只看"BUILD SUCCESSFUL"不算数。
 - 怀疑包被别的工具改过时，比对 `SHA-256` 与 `PRD` 里记录的指纹 + 走一遍完整性校验。
 
@@ -38,6 +38,7 @@
 - `.ps1` 必须 UTF-8 **带** BOM；`.ts/.vue` 必须 UTF-8 **不带** BOM。
 - Android WebView 加载不了 `file://` 图片 → 一律转 data URL；`Plugin` 基类没有 `startActivity`，用 `getActivity().startActivity()`；`KeyStore` 是 `deleteEntry` 不是 `deleteKey`；`View.setWidth()` 是 protected。
 - `export interface` 不能写在 `defineStore` 函数体里；替换代码块时别删掉仍被引用的变量声明。
+- **【最严重的一例】按行号 splice 删代码时把 `splashDone.value = true;` 一起删了**，导致开屏永远关不掉，用户连续三轮"进不去"，而我前两轮都在给这个自伤做诊断（Doze/电池优化/插件超时全不是原因）。**规矩：任何按行号的删除/替换，改完必须 `git diff` 逐行看"被删掉的行"`，确认每一行都还在该在的地方或已被有意替代；关键控制流（开屏出口、状态复位）必须有不变量测试兜着（见 `tests/boot.test.ts`）。
 - **课表配色不许按行号取模**（`i % 12` 会让同一门课多时段变多色），也不许纯哈希（16 门课进 12 色必撞）—— 用 `assignCourseColors(课程名集合)`，手动色 `colorSet` 优先。
 - **Vue 模板里不要嵌引号表达式**（`join(' / ')` 这种）；一律抽成辅助函数，否则不是报错就是渲染崩。
 - 校验 CSS 是否入包时要考虑 scoped：编译后是 `.nextbar[data-v-xxxx]`，直接正则匹配 `.nextbar{` 会假阴性。
@@ -46,4 +47,5 @@
 
 - 换机同步（PRD 11.15，加密 `.umig` 单文件走系统分享，不自建服务器）——只有设计，没写代码。
 - 天气板块（Open-Meteo，免 Key，默认关闭的可选开关）——会打破"App 不联网"表述，需确认。
+- **第二课堂/暗色等页面级功能必须真机点一遍**：构建全绿 + 单测全绿也可能整页崩（v2.8 的 watch TDZ 就是例子）。
 - 提醒兜底心跳：若三件套齐了仍偶发漏响，再做"每 15 分钟一次的原生心跳 + 到期扫描"，别提前上。

@@ -14,7 +14,9 @@ const db = useDb();
 const showErr = ref(false);
 const splashDone = ref(false);
 const quick = ref(false);
-watch(() => db.lastError, (v) => { if (v) showErr.value = true; });
+// 产品负责人要求关掉：错误详情面板不再自动弹出挡在界面上。
+// 出错时仍有一条 toast 提示，点那条 toast 才展开详情 —— 诊断能力保留，但不打扰。
+watch(() => db.lastError, () => { });
 
 // 开屏停留时长分两档：首次使用完整展示品牌（答辩/演示需要），
 // 已记住登录态的老用户只是"确认 App 还活着"，不该再被动画挡 1.2 秒。
@@ -53,6 +55,22 @@ function forceEnter(): void {
   splashDone.value = true;
   showErr.value = true;
 }
+
+/** 后台补齐提醒所需的系统条件；不 await 回开屏流程，卡住也不挡界面。 */
+async function postBootPermissions(): Promise<void> {
+  try {
+    const state = await permissionState();
+    const granted = state === 'granted' || state === 'unsupported' ? true : await ensurePermission();
+    // 电池优化：国产 ROM 不豁免就会冻结后台闹钟。整个生命周期只提一次，且只在主界面提。
+    if (granted && isNative() && !db.settings.powerPrompted && db.screen === 'app') {
+      db.settings.powerPrompted = true;
+      await db.saveData();
+      await new Promise((r) => setTimeout(r, 1500));
+      const st: any = await JwWebView.powerStatus();
+      if (st && st.ok !== false && !st.ignoring) await JwWebView.requestIgnoreBattery();
+    }
+  } catch { }
+}
 onMounted(async () => {
   const t0 = Date.now();
   // 先跑完启动流程，才知道有没有记住的登录态，据此决定开屏还要停留多久。
@@ -66,24 +84,15 @@ onMounted(async () => {
   quick.value = !!db.session;
   const left = (quick.value ? SPLASH_RETURN : SPLASH_FIRST) - (Date.now() - t0);
   if (left > 0) await new Promise((r) => setTimeout(r, left));
-  // 需求：一启动就申请通知权限，否则提醒功能永远不生效
-  try {
-    const state = await permissionState();
-    const granted = state === 'granted' || state === 'unsupported' ? true : await ensurePermission();
-    // 通知权限拿到之后，再要求"忽略电池优化"：国产 ROM 不豁免就冻结后台闹钟，
-    // 提醒会拖到下次打开 App 才一起补发。整个生命周期只弹一次，不重复打扰。
-    // 注意：只在已经进入主界面（db.screen === "app"）时才跳系统设置，
-    // 避免在开屏/登录阶段抢前台，把"能不能进 App"押在这个对话框上。
-    if (granted && isNative() && !db.settings.powerPrompted && db.screen === 'app') {
-      db.settings.powerPrompted = true;
-      await db.saveData();
-      const st: any = await JwWebView.powerStatus();
-      if (st && st.ok !== false && !st.ignoring) {
-        await new Promise((r) => setTimeout(r, 1400));
-        await JwWebView.requestIgnoreBattery();
-      }
-    }
-  } catch { /* 预览环境忽略 */ }
+  // 下面这行是开屏的唯一正常出口。v2.9 我用行号 splice 改权限块时把它一起删了，
+  // 结果 splashDone 永远是 false：开屏关不掉、5 秒后必然弹"启动失败"，只能靠"跳过开屏"进去。
+  // 教训：按行号删代码必须逐行确认边界，改完要 diff 看被删掉了什么。
+  splashDone.value = true;
+  // 需求：一启动就申请通知权限，否则提醒永远不生效。
+  // 但这一步不能挡在进入界面之前 —— 以前它 await 在开屏流程里，
+  // 系统权限框或设置页一旦吞掉回调，用户就永远停在开屏（真机踩过两次）。
+  // 现在界面先出来，权限与电池优化在后台自己跑，卡住也不影响使用。
+  void postBootPermissions();
 });
 </script>
 
@@ -95,7 +104,7 @@ onMounted(async () => {
       <div class="tag">高校校园学习生活一站式智能助手</div>
       <div class="bar"><i></i></div>
       <div class="foot">首个落地高校 · 北京化工大学</div>
-      <div v-if="stuck" class="stuck">
+      <div v-if="stuck && (!splashDone || !db.booted)" class="stuck">
         <div class="stt">启动没有按时完成 · 原因显示在下面</div>
         <pre v-if="db.lastError" class="ste">{{ db.lastError }}</pre>
         <div v-else class="ste">没有捕获到 JS 错误，但下面的启动步骤会指出卡在哪一步（超过 5 秒没走完就是某个系统调用没返回）。</div>

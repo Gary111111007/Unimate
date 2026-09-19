@@ -47,11 +47,14 @@ async function loadThumbs(): Promise<void> {
 }
 onMounted(loadThumbs);
 watch(() => db.hours, loadThumbs, { deep: true });
-watch(() => form.value.semester, (v) => { if (v) lastSemester.value = v; });
 // ---------------- 新建 ----------------
 const showForm = ref(false);
 const busy = ref('');
 const form = ref({ semester: '大一上' as Semester, title: '', hours: 0, date: dateStamp(), note: '', photos: [] as { ev: PhotoEvidence; uri: string }[] });
+// 必须放在 form 声明之后：watch 创建时会立刻执行一次 getter 收集依赖，
+// 写在 const form 之前会抛 ReferenceError: Cannot access ... before initialization，
+// 直接把整个第二课堂页面的 setup 崩掉（真机就是这个报错，v2.8 遗留）。
+watch(() => form.value.semester, (v) => { if (v) lastSemester.value = v; });
 function openForm(): void {
   form.value = { semester: lastSemester.value, title: '', hours: 0, date: dateStamp(), note: '', photos: [] };
   showForm.value = true;
