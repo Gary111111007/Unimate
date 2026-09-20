@@ -23,6 +23,8 @@ public class JwWebViewPlugin extends Plugin {
     public static final String EXTRA_TITLE = "unimate:title";
     public static final String EXTRA_SELECTOR = "unimate:selector";
     public static final String EXTRA_ALLOW_EXTERNAL = "unimate:allowExternal";
+    /** timetable = 抓课表；exam = 抓考试（按钮常驻，叫「识别考试」） */
+    public static final String EXTRA_MODE = "unimate:mode";
     public static final String RES_HTML = "html";
     public static final String RES_URL = "url";
     public static final String RES_REASON = "reason";
@@ -41,6 +43,7 @@ public class JwWebViewPlugin extends Plugin {
         intent.putExtra(EXTRA_URL, url);
         intent.putExtra(EXTRA_TITLE, call.getString("title", "Unimate"));
         intent.putExtra(EXTRA_SELECTOR, call.getString("scrapeSelector", ""));
+        intent.putExtra(EXTRA_MODE, call.getString("mode", "timetable"));
         intent.putExtra(EXTRA_ALLOW_EXTERNAL, Boolean.TRUE.equals(call.getBoolean("allowExternal", false)));
         startActivityForResult(call, intent, "handleOpenResult");
     }

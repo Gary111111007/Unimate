@@ -1,0 +1,16 @@
+Unimate — 高校校园学习生活一站式智能助手
+首个落地高校：北京化工大学
+包名（applicationId）：com.unimate.app
+
+本app为果崇舜，刘佳乐，赵梓缘三人共同开发，未经允许，不得擅自使用。
+Copyright (c) 果崇舜 刘佳乐 赵梓缘
+
+【这份声明的存在意义】
+Web 前端产物（assets/public/**，由 Capacitor 同步生成）可能被替换、压缩或重新打包，
+本文件位于 assets/ 根目录而不是 assets/public/ 下，独立于前端产物 ——
+即使有人把 JS/CSS 全部换掉，署名仍随 APK 留在包里。
+APK 内另有两层同名署名：
+  1) 每个 JS chunk 与 index.html 首尾的 /*! ... */ 注释（由 vite.config.ts 的 rollup banner/footer 注入）；
+  2) Android 字符串资源 app_authors / app_copyright（见 res/values/strings.xml）。
+
+本项目为学生自制演示作品，与学校官方无关；第二课堂分数为自评记录，非学校认定结果。

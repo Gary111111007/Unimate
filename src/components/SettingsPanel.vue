@@ -1,14 +1,23 @@
 <script setup lang="ts">
-// 课表设置（PRD 5.10 / 附录 C）。按需求第 9 条，入口放在"课表"页里。
-import { ref } from 'vue';
+// 课表信息（PRD 5.10 / 附录 C）。按需求第 9 条，入口放在"课表"页里。
+// v2.15：入口改名为「更改课表信息」，并补上课表名称 —— 以前只能改学期与节次时间，
+// 课表叫什么（"大二上""2026-2027-1"）只能在导入时被动取教务系统的标题。
+import { computed, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 
 const db = useDb();
 const saved = ref(false);
 
+/** 课表名称直接改名（存进当前使用中的那份课表，不再影响其它课表） */
+const ttName = computed({
+  get: () => db.activeTimetable?.name || '',
+  set: (v: string) => { const t = db.activeTimetable; if (t) t.name = v; }
+});
+
 async function save(): Promise<void> {
   const tt = db.activeTimetable;
   if (tt) {
+    tt.name = (tt.name || '').trim() || '我的课表';
     tt.semesterStartMonday = db.settings.semesterStartMonday;
     tt.totalWeeks = db.settings.totalWeeks;
     tt.periodCount = db.settings.periodTimes.length;
@@ -27,6 +36,7 @@ function useDefaultTimes(): void {
 
 <template>
   <div>
+    <div class="field"><label>课表名称</label><input v-model="ttName" maxlength="20" placeholder="如：大二上 / 2026-2027学年第1学期" /></div>
     <div class="field"><label>学期第一周周一</label><input v-model="db.settings.semesterStartMonday" type="date" /></div>
     <div class="field"><label>学期总周数</label><input v-model.number="db.settings.totalWeeks" type="number" min="1" max="30" /></div>
     <div class="li" style="padding: 10px 0">

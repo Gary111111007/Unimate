@@ -52,6 +52,12 @@ public class JwWebViewActivity extends Activity {
     private TextView errText;
 
     private String selector = "";
+    /**
+     * 抓取模式：
+     *  "timetable"（默认）= 课表，圆钮只在教务域名下出现；
+     *  "exam" = 考试，按钮**常驻**并显示「识别考试」（产品负责人："这个界面你得一直保有一个按键，叫做识别考试"）。
+     */
+    private String mode = "timetable";
     private boolean allowExternal;
     private String homeUrl = "";
     private boolean retriedOnce;
@@ -69,7 +75,12 @@ public class JwWebViewActivity extends Activity {
         String url = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_URL), "about:blank");
         String title = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_TITLE), "Unimate");
         selector = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_SELECTOR), "");
+        mode = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_MODE), "timetable");
         allowExternal = args.getBooleanExtra(JwWebViewPlugin.EXTRA_ALLOW_EXTERNAL, false);
+        if (isExamMode() && (selector == null || selector.isEmpty())) {
+            // 考试页是 jqGrid：优先取整个表格容器，取不到再退到行容器/整页
+            selector = "#gbox_tabGrid,#tabGrid,table.ui-jqgrid-btable,body";
+        }
 
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
@@ -207,7 +218,12 @@ public class JwWebViewActivity extends Activity {
         fabLp.rightMargin = (int) (10 * dp);
         fab.setLayoutParams(fabLp);
         fab.setListener(() -> runScrape());
-        fab.setVisibility(View.GONE);
+        if (isExamMode()) {
+            fab.setLabel("识别考试");
+            fab.setVisibility(View.VISIBLE);   // 考试模式常驻
+        } else {
+            fab.setVisibility(View.GONE);
+        }
         content.addView(fab);
 
         root.addView(barWrap);
@@ -316,12 +332,15 @@ public class JwWebViewActivity extends Activity {
     private void decorate(String url) {
         String h = hostOf(url);
         boolean timetable = h.contains("jwglxt");
-        if (fab != null) fab.setVisibility(timetable ? View.VISIBLE : View.GONE);
+        // 考试模式：按钮常驻（学生要先自己点"查询"，那一刻页面还没到考试页，按钮就必须在场）
+        if (fab != null) fab.setVisibility(isExamMode() ? View.VISIBLE : (timetable ? View.VISIBLE : View.GONE));
         if (titleView != null && url != null && !url.isEmpty() && !url.equals("about:blank")) {
             String t = webView == null ? null : webView.getTitle();
             if (t != null && !t.trim().isEmpty()) titleView.setText(t.trim());
         }
     }
+
+    private boolean isExamMode() { return "exam".equalsIgnoreCase(mode); }
 
     private TextView nav(String glyph) {
         TextView t = new TextView(this);
@@ -417,7 +436,16 @@ public class JwWebViewActivity extends Activity {
     /** 抓取：只读取指定表格的 outerHTML，不读表单值、不读 Cookie。 */
     private void scrape() {
         String css = selector == null || selector.isEmpty() ? "#kbgrid_table_0" : selector;
-        String js = "(function(){try{var el=document.querySelector(" + JSONObject.quote(css) + ");"
+        // selector 支持逗号分隔的候选列表（考试页的表格 id 可能因版本而异，逐个试）
+        StringBuilder arr = new StringBuilder("[");
+        for (String s : css.split(",")) {
+            String one = s.trim();
+            if (one.isEmpty()) continue;
+            arr.append(JSONObject.quote(one)).append(",");
+        }
+        arr.append("]");
+        String js = "(function(){try{var sels=" + arr + ";var el=null;"
+            + "for(var i=0;i<sels.length;i++){try{el=document.querySelector(sels[i]);}catch(e){}if(el){break;}}"
             + "if(!el){return JSON.stringify({error:'no-table',url:location.href});}"
             + "return JSON.stringify({html:el.outerHTML,url:location.href,title:document.title});}"
             + "catch(e){return JSON.stringify({error:'scrape-failed:'+e.message,url:location.href});}})()";

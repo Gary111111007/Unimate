@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { courseColorIndex } from '../catalog/periods.ts';
 import { JwWebView, isNativeWebView } from '../services/jwwebview.ts';
@@ -14,6 +14,16 @@ const step = ref<'intro' | 'working' | 'preview' | 'error'>('intro');
 const result = ref<ParseResult | null>(null);
 const errMsg = ref('');
 const mode = ref<'overwrite' | 'merge'>('merge');
+
+/** 导入目标 = 当前使用中的那份课表（没有就新建一份） */
+const targetName = computed(() => (db.activeTimetable ? db.activeTimetable.name : '新建一份课表'));
+const existingCount = computed(() => {
+  const id = db.activeTimetable && db.activeTimetable.id;
+  return id ? db.courses.filter((c) => c.timetableId === id).length : 0;
+});
+function overwriteLabel(): string {
+  return existingCount.value ? '覆盖本课表（替换 ' + existingCount.value + ' 条）' : '覆盖本课表';
+}
 
 async function openJwglxt(): Promise<void> {
   const p = db.profile!;
@@ -59,6 +69,21 @@ async function run(html: string, url: string): Promise<void> {
 async function confirmImport(): Promise<void> {
   const r = result.value!;
   const tt = db.activeTimetable || db.newTimetable(r.semesterLabel || '我的课表');
+  /*
+   * 产品要求（v2.15）：导入**不许直接覆盖**已有课表。
+   * 已有课时，选"覆盖"必须再过一次二次确认，并写清：覆盖哪份课表、现有多少条、会变成多少条、什么会被重置。
+   * 合并路径不动任何现有记录，所以不需要额外确认。
+   */
+  if (mode.value === 'overwrite' && existingCount.value > 0) {
+    const ok = await db.confirm({
+      title: '确认覆盖「' + tt.name + '」？',
+      body: '这份课表现有 ' + existingCount.value + ' 条上课安排，将被本次抓取到的 ' + r.courses.length + ' 条替换。',
+      detail: '覆盖后，你手动改过的教室、颜色、周次会被重置回教务系统的原始值（课程资料按课程名保留，不受影响）。'
+        + '只想补上新抓到的安排请点「取消」，然后改选"合并"。',
+      confirmText: '确定覆盖'
+    });
+    if (!ok) return;
+  }
   tt.semesterLabel = r.semesterLabel || tt.semesterLabel;
   tt.source = 'jwglxt';
   tt.updatedAt = nowStamp();
@@ -112,14 +137,15 @@ const warns = () => (result.value?.diagnostics || []).filter((d) => d.kind !== '
         <div class="kv"><span>学期</span><b>{{ result.semesterLabel || '—' }}</b></div>
         <div class="kv"><span>学生</span><b>{{ result.studentName || '—' }} · {{ result.studentId || '—' }}</b></div>
         <div class="kv"><span>识别结果</span><b>{{ result.distinctCourseNames }} 门课程（{{ result.blockCount }} 个标题）/ {{ result.courses.length }} 条上课安排</b></div>
+        <div class="kv"><span>导入到</span><b>{{ targetName }}<template v-if="existingCount">（现有 {{ existingCount }} 条）</template></b></div>
         <div class="kv"><span>需处理</span><b>{{ warns().length }} 项</b></div>
         <div v-if="warns().length" class="warns">
           <div v-for="(d, i) in warns()" :key="i" class="warn">{{ d.message }}</div>
         </div>
-        <div class="field" style="margin-top: 14px"><label>重复导入策略</label>
+        <div class="field" style="margin-top: 14px"><label>重复导入策略（默认合并，不会动已有数据）</label>
           <div class="chips">
             <button class="chip" :class="{ on: mode === 'merge' }" @click="mode = 'merge'">合并（保留手动修正）</button>
-            <button class="chip" :class="{ on: mode === 'overwrite' }" @click="mode = 'overwrite'">覆盖本课表</button>
+            <button class="chip" :class="{ on: mode === 'overwrite' }" @click="mode = 'overwrite'">{{ overwriteLabel() }}</button>
           </div>
         </div>
         <div class="row">

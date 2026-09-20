@@ -25,6 +25,8 @@ const busy = ref('');
 const thumbs = ref<Record<string, string>>({});
 const showRules = ref(false);
 const exporting = ref(false);
+/** 板块简介默认只露两行，点「展开完整简介」看全文（旧写法是硬截断，用户根本读不到后半句） */
+const introOpen = ref(false);
 const lastExport = ref<{ fileName: string; path: string; photos: number } | null>(null);
 
 async function doExportRecord(r: SecondClassRecord): Promise<void> {
@@ -403,7 +405,8 @@ const total = computed(() => db.totalScore());
             <div class="small muted">{{ curTotal.def.fullName }}评定 · {{ curTotal.count }} 条记录</div>
           </div>
         </div>
-        <div v-if="curTotal.intro" class="small muted intro">{{ curTotal.intro.text }}</div>
+        <div v-if="curTotal.intro" class="small muted intro" :class="{ open: introOpen }">{{ curTotal.intro.text }}</div>
+        <button v-if="curTotal.intro" class="btn sm ghost introbtn" @click="introOpen = !introOpen">{{ introOpen ? '收起简介' : '展开完整简介' }}</button>
         <div v-if="curTotal.totalOver" class="small warn">合计已超过本章满分，按满分计算。</div>
       </div>
 
@@ -417,12 +420,12 @@ const total = computed(() => db.totalScore());
         </div>
         <div v-for="row in sec.clauses" :key="row.c.id" class="clause">
           <div class="crow" @click="toggleClause(row.c.id)">
-            <div class="grow">
+            <div class="grow cmain">
               <div class="ctop"><b>{{ clauseNo(row.c) }}</b><span class="ctitle">{{ row.c.title }}</span></div>
-              <div class="small muted">{{ row.c.unit }}<span v-if="row.c.cap"> · 上限 {{ row.c.cap }} 分</span></div>
+              <div class="small muted cunit">{{ row.c.unit }}<span v-if="row.c.cap"> · 上限 {{ row.c.cap }} 分</span></div>
             </div>
             <div class="csum" :class="{ over: row.over }">{{ row.sum }}<span v-if="row.c.cap" class="small muted"> / {{ row.c.cap }}</span></div>
-            <button class="btn sm" @click.stop="openClause(row.c)">记一条</button>
+            <button class="btn sm cbtn" @click.stop="openClause(row.c)">记一条</button>
             <span class="chev">{{ openClauseIds.includes(row.c.id) ? '▾' : '▸' }}</span>
           </div>
           <div v-if="openClauseIds.includes(row.c.id)" class="cbody">
@@ -581,20 +584,34 @@ const total = computed(() => db.totalScore());
 </template>
 
 <style scoped>
+/* 悬浮「填报活动」按钮固定在右下角（.fab：bottom 74px + 高 56px），
+   滚动区底部必须留出比它更高的余量：否则滚到底时，最后几条条款的「记一条」
+   永远被它压住、点不到（真机截图里"第三十七条"就是这么被挡的）。 */
+.scroll { padding-bottom: calc(152px + var(--safe-b)); }
 /* 手册条款树 */
 .blkhead { margin-bottom: 10px; }
 .blkhead .intro { margin-top: 8px; line-height: 1.65; max-height: 3.3em; overflow: hidden; }
+/* 简介原先硬截断到 3.3em 且没有任何展开入口，真机截图里就是"以美育人、以美化人、以美"戛然而止。
+   要么给完整内容，要么给能点开的入口 —— 这里给两行 + 「展开完整简介」。 */
+.blkhead .intro.open { max-height: none; }
+.introbtn { margin-top: 6px; }
 .warn { color: var(--warn); margin-top: 6px; }
 .sec { margin: 14px 0 6px; }
 .sechead { display: flex; align-items: center; gap: 8px; padding: 6px 2px; border-bottom: 1px solid var(--line); }
 .legacy { padding: 7px 9px; margin: 6px 0; background: var(--tint); border-radius: 9px; line-height: 1.55; }
 .clause { border-bottom: 1px dashed var(--line); }
 .crow { display: flex; align-items: center; gap: 8px; padding: 9px 2px; }
+/* 条款行必须能"挤"：中文在 flex 里的最小宽度只有一个字，
+   不给 .grow 显式 min-width:0，长标题就会把右边的分数与按钮压到竖排换行（真机截图里的"记一/条"）。 */
+.cmain { min-width: 0; }
 .ctop { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .ctop b { font-size: 12px; color: var(--brand); flex: none; }
-.ctitle { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctitle { font-size: 13.5px; font-weight: 600; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cunit { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 分数与「记一条」都不参与压缩，否则会被压窄成两行 */
 .csum { font-size: 15px; font-weight: 700; flex: none; min-width: 42px; text-align: right; }
 .csum.over { color: var(--warn); }
+.cbtn { flex: none; white-space: nowrap; }
 .chev { font-size: 11px; color: var(--muted); flex: none; width: 12px; text-align: center; }
 .cbody { padding: 0 2px 10px; }
 .ctext { font-size: 12px; line-height: 1.7; color: var(--muted); background: var(--soft); border-radius: 9px; padding: 8px 10px; margin-bottom: 7px; }

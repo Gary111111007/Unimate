@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { COURSE_COLORS, assignCourseColors, courseColorIndex } from '../catalog/periods.ts';
 import { uuid, nowStamp } from '../services/id.ts';
 import type { Course, CourseMaterial } from '../types.ts';
 import { writeBinaryBase64, remove } from '../services/io.ts';
 import { JwWebView } from '../services/jwwebview.ts';
+import { anchorFromLegacy, anchorFromPos, clampToBox, posFromAnchor, toolBox } from '../services/toolbox.ts';
+import { textZoomFactor } from '../services/display.ts';
 import ImportPanel from './ImportPanel.vue';
 import SettingsPanel from '../components/SettingsPanel.vue';
 
@@ -100,6 +102,50 @@ const placed = computed(() => {
     return withLane.map((x) => ({ ...x, lanes }));
   });
 });
+
+/**
+ * 当前使用中的课表里到底有没有课。
+ * 旧写法用全局的 db.courses.length 判断空态：多课表场景下，切到一份新导入/新建的
+ * 空课表时既看不到「还没有课表」的引导（全局有课），又看到一片空网格，用户不知道下一步做什么。
+ */
+const ttHasCourses = computed(() => {
+  const id = db.activeTimetable?.id;
+  return !!id && db.courses.some((c) => c.timetableId === id);
+});
+
+/**
+ * 课表网格的反向文字补偿系数。
+ * 网格几何（节次列 52px、12 行 × 58px、7 天分栏）是按像素定死的，而"字号"只放大文字：
+ * 于是字号一调大，课程名就被挤成一列一个字、时间竖排（真机截图反馈："左边弄得太大、课表里的课太小"）。
+ * 这里的做法是让**课表网格内部的文字保持固定大小**（用 calc(字号 / 补偿系数) 抵消 textZoom），
+ * 网格外观在任何字号下都与"标准"完全一致；其余界面照常跟随字号放大。
+ * 桌面预览走的是整页 CSS zoom（几何也在缩放），此时系数为 1，不做补偿。
+ */
+const gridTz = computed(() => {
+  const k = textZoomFactor.value;
+  return k > 0.5 && k <= 2 ? k : 1;
+});
+
+/**
+ * 点系统通知进来时定位到对应课程（PRD 5.10「点击行为：打开首页 Sheet1 并高亮该课程块」）。
+ * 排期时把课次 id 与周次塞进通知的 extra，这里收到就切到那一周并直接弹出该课详情。
+ */
+function applyFocus(): void {
+  const f = db.focus;
+  if (!f || f.kind !== 'course') return;
+  const c = db.courses.find((x) => x.id === f.id);
+  db.focus = null;                     // 只消费一次，避免来回切页反复弹层
+  if (!c) return;
+  const total = db.activeTimetable?.totalWeeks || 18;
+  const w = f.week && c.weeks.indexOf(f.week) >= 0 ? f.week : (c.weeks[0] || db.currentWeek);
+  week.value = Math.min(Math.max(w, 1), total);
+  const flat: { b: Block }[] = [];
+  for (const day of placed.value) for (const x of day) flat.push(x);
+  const hit = flat.find((x) => x.b.first.id === c.id)
+    || flat.find((x) => x.b.name === c.name && x.b.day === c.day && x.b.startPeriod === c.startPeriod);
+  if (hit) detail.value = hit.b;
+}
+watch(() => db.focus, applyFocus, { immediate: true });
 
 /**
  * 「下一节」必须按**当前真实时刻**往后找，而不是"今天的第一节课"。
@@ -391,58 +437,120 @@ async function dropTimetable(id: string): Promise<void> {
   db.notify('已删除课表（含 ' + nCourses + ' 个时段' + (mats.length ? '、' + mats.length + ' 个资料文件' : '') + '）');
 }
 /**
- * 课表工具箱：把「导入课表」和原来那个 ⋯ 合成一个悬浮按钮（需求 2），
- * 并且可以在课表界面四处拖动，位置存进 settings.toolFab。
- * 点一下 = 开菜单；拖动超过 8px = 移动，两者互不干扰。
+ * 课表工具箱：把「导入课表」和原来那个 ⋯ 合成一个悬浮按钮（需求 2）。
+ *
+ * 【可拖动，但只能在"允许区域"内（v2.15 第二次修订）】
+ * 产品负责人要求：必须能拖（不然周日晚上有课的人，右下角那块正好被按钮压住），
+ * 但必须"框定一个范围，让它不能超出这个范围"。所以：
+ *   1) 允许区域 = 可视区去掉底部导航栏（底栏高度**实时量**，不写死），左右各留 8px；
+ *   2) 拖动过程中实时夹取，松手再夹一次，永远出不去；
+ *   3) 存下来的是**相对锚点** fx / fy（0~1 的比例），不是像素坐标 ——
+ *      字号变大、底栏长高、横竖屏切换后按新尺寸换算位置，不可能像旧版那样
+ *      "拖到右下角、改大字号就找不到"（旧版存像素，换尺寸后那个坐标落到了屏幕外/底栏底下）；
+ *   4) 每次按下之前、窗口尺寸变化、页面重新可见时都重新换算一次，老数据也会被夹回范围内。
  */
 const TOOL_SIZE = 52;
-const toolXY = ref({ x: 0, y: 0 });
+const TOOL_PAD = 8;
+const toolPos = ref({ x: 0, y: 0 });
 const toolDragging = ref(false);
-function toolDefault(): { x: number; y: number } {
-  return { x: window.innerWidth - TOOL_SIZE - 14, y: window.innerHeight - 236 };
-}
-function clampTool(pt: { x: number; y: number }): { x: number; y: number } {
-  const pad = 8;
-  const maxX = Math.max(pad, window.innerWidth - TOOL_SIZE - pad);
-  const maxY = Math.max(pad, window.innerHeight - TOOL_SIZE - pad);
-  return { x: Math.min(Math.max(pt.x, pad), maxX), y: Math.min(Math.max(pt.y, pad), maxY) };
-}
+/** 位置用"相对锚点"（0~1 的比例）持久化，避免存像素坐标导致的换尺寸即丢失 */
+const toolAnchor = ref({ fx: 1, fy: 1 });
 const toolStyle = computed(() => ({
-  transform: 'translate3d(' + toolXY.value.x + 'px, ' + toolXY.value.y + 'px, 0)'
+  transform: 'translate3d(' + toolPos.value.x + 'px, ' + toolPos.value.y + 'px, 0)'
 }));
 let toolDrag: { id: number; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null = null;
+
+/**
+ * 当前页面缩放系数。
+ * 设备上用原生 textZoom 时布局不缩放（=1）；桌面预览、或原生不可用时走 CSS zoom 兜底。
+ * **必须换算**：`window.innerWidth` / `getBoundingClientRect()` 给的是"缩放之后"的视觉像素，
+ * 而 `translate3d(x, y)` 用的是"被缩放前"的布局像素 —— 两者差一个 zoom。
+ * 不换算就是旧版那个事故：大字号下算出来的坐标再被放大一次，按钮直接出了屏幕。
+ */
+function zoomFactor(): number {
+  try {
+    const z = parseFloat(getComputedStyle(document.documentElement).zoom);
+    return Number.isFinite(z) && z > 0 ? z : 1;
+  } catch { return 1; }
+}
+
+/** 工具箱允许出现的矩形区域（单位：布局像素，与 translate3d 同一坐标系） */
+function toolBounds() {
+  const bar = document.querySelector('.tabbar') as HTMLElement | null;
+  const barH = bar && bar.getBoundingClientRect ? bar.getBoundingClientRect().height : 0;
+  return toolBox({
+    viewW: window.innerWidth, viewH: window.innerHeight, zoom: zoomFactor(),
+    barH, size: TOOL_SIZE, pad: TOOL_PAD
+  });
+}
+
+/** 相对锚点 → 当前尺寸下的像素位置 */
+function placeTool(): void {
+  toolPos.value = posFromAnchor(toolAnchor.value, toolBounds());
+}
+
+/** 当前像素位置 → 相对锚点（松手时回写） */
+function anchorToolFromPos(): void {
+  toolAnchor.value = anchorFromPos(toolPos.value, toolBounds());
+}
+
+/** 读回上次的位置：新格式是锚点；老备份里是像素，先夹进范围再换算 */
+function loadToolPos(): void {
+  const s = db.settings.toolFab as { fx?: number; fy?: number; x?: number; y?: number } | null | undefined;
+  if (s && typeof s.fx === 'number' && typeof s.fy === 'number') {
+    toolAnchor.value = { fx: Math.min(1, Math.max(0, s.fx)), fy: Math.min(1, Math.max(0, s.fy)) };
+  } else if (s && typeof s.x === 'number' && typeof s.y === 'number') {
+    toolAnchor.value = anchorFromLegacy(s.x, s.y, toolBounds());
+  }
+  placeTool();   // 没存过就是默认右下角
+}
+
 function toolDown(e: PointerEvent): void {
+  placeTool();                     // 先按当前尺寸摆回允许区域内（字号可能刚变过）
   const el = e.currentTarget as HTMLElement;
-  toolDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: toolXY.value.x, oy: toolXY.value.y, moved: false };
+  toolDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: toolPos.value.x, oy: toolPos.value.y, moved: false };
   try { el.setPointerCapture(e.pointerId); } catch { /* 个别 ROM 不支持，忽略 */ }
 }
 function toolMove(e: PointerEvent): void {
   const d = toolDrag;
   if (!d || d.id !== e.pointerId) return;
-  const dx = e.clientX - d.sx;
-  const dy = e.clientY - d.sy;
+  const z = zoomFactor();
+  const dx = (e.clientX - d.sx) / z;   // 指针坐标是视觉像素，换算成布局像素
+  const dy = (e.clientY - d.sy) / z;
   if (!d.moved && Math.abs(dx) + Math.abs(dy) > 8) { d.moved = true; toolDragging.value = true; }
-  if (d.moved) toolXY.value = clampTool({ x: d.ox + dx, y: d.oy + dy });
+  if (!d.moved) return;
+  // 拖动过程中实时夹取：拖多远都出不去允许区域
+  toolPos.value = clampToBox(d.ox + dx, d.oy + dy, toolBounds());
 }
 function toolUp(): void {
   const d = toolDrag;
   toolDrag = null;
   toolDragging.value = false;
   if (!d) return;
-  if (d.moved) {
-    db.settings.toolFab = { x: toolXY.value.x, y: toolXY.value.y };
-    void db.saveData();
-    return;
-  }
-  showMenu.value = !showMenu.value;
+  if (!d.moved) { showMenu.value = !showMenu.value; return; }   // 点一下 = 开菜单
+  anchorToolFromPos();                                         // 拖动超过 8px = 移动
+  db.settings.toolFab = { fx: toolAnchor.value.fx, fy: toolAnchor.value.fy };
+  void db.saveData();
 }
+
+/** 视口尺寸变化 / 页面重新可见时重新贴合（横竖屏、分屏、系统字体变化都走这里） */
+function onToolViewport(): void { placeTool(); }
 onMounted(() => {
-  const saved = db.settings.toolFab;
-  toolXY.value = clampTool(saved && typeof saved.x === 'number' ? saved : toolDefault());
+  loadToolPos();
+  window.addEventListener('resize', onToolViewport);
+  document.addEventListener('visibilitychange', onToolViewport);
+});
+onUnmounted(() => {
+  window.removeEventListener('resize', onToolViewport);
+  document.removeEventListener('visibilitychange', onToolViewport);
 });
 
-
 function goToday(): void { week.value = db.currentWeek; }
+/** 打开导入面板（工具箱第一项 / 空态主按钮都走这里） */
+function openImport(): void {
+  showImport.value = true;
+  showMenu.value = false;
+}
 function toggleWeek(w: number): void {
   const c = editing.value!;
   const i = c.weeks.indexOf(w);
@@ -454,7 +562,8 @@ function toggleWeek(w: number): void {
 
 <template>
   <div class="scroll" @touchstart="onTouchStart" @touchend="onTouchEnd">
-    <div class="card weeknav">
+    <!-- 还没有课表时不显示周次条：否则空账号会看到"第 1 周 · 共 0 周"这种自相矛盾的抬头 -->
+    <div v-if="db.activeTimetable" class="card weeknav">
       <button class="nav" @click="shift(-1)" :disabled="week <= 1">‹</button>
       <div class="cur" @click="showWeekPicker = true">
         <div class="bold">第 {{ week }} 周 <span class="wr">{{ weekRange }}</span></div>
@@ -463,7 +572,7 @@ function toggleWeek(w: number): void {
       <button class="nav" @click="shift(1)" :disabled="week >= (db.activeTimetable?.totalWeeks || 18)">›</button>
       <button v-if="week !== db.currentWeek" class="btn sm ghost today" @click="goToday">回本周</button>
     </div>
-    <div class="swipe-hint center">左右滑动可切换周次</div>
+    <div v-if="db.activeTimetable" class="swipe-hint center">左右滑动可切换周次</div>
       <!-- 真机反馈：这块原来是三行大卡片，把课表整个顶到屏幕外。压成一条，点整条看详情。 -->
       <div v-if="nextClass" class="nextbar" @click="detail = nextClass">
         <span class="ndot" :style="{ background: colorOf(nextClass) }"></span>
@@ -474,15 +583,19 @@ function toggleWeek(w: number): void {
         <span class="ncv">详情 ›</span>
       </div>
 
-    <div v-if="!db.courses.length" class="empty">
+    <!-- 新账号 / 新建课表后就是这一屏：导入入口必须摆在明面上，不能只藏在悬浮工具箱里。
+         同一份课表一旦有课，这个入口就收进「工具箱」（需求原话的"已导入则放进工具箱"）。 -->
+    <div v-if="!ttHasCourses" class="empty">
       <div class="big">🗓</div>
-      <div>还没有课表</div>
-      <div class="small">点右下角的「工具箱」<br />从教务系统抓取个人课表</div>
-      <button class="btn sm" style="margin-top: 14px" @click="openNew">手动添加课程</button>
+      <div>这份课表还是空的</div>
+      <div class="small">新账号或新建课表后，先从这里把课表导进来</div>
+      <button class="btn block" style="margin-top: 16px" @click="openImport()">📥 导入课表（从教务系统抓取）</button>
+      <button class="btn block ghost" style="margin-top: 10px" @click="openNew">＋ 手动添加一节课</button>
+      <div class="small muted" style="margin-top: 12px">导入完成后，这个入口会收进右下角的「工具箱」</div>
     </div>
 
     <transition :name="'wk-' + wkDir" mode="out-in">
-    <div v-if="placed.length" class="grid" :key="week" :style="{ gridTemplateColumns: '52px repeat(' + dayIndexes.length + ', 1fr)' }">
+    <div v-if="ttHasCourses" class="grid" :key="week" :style="{ gridTemplateColumns: '52px repeat(' + dayIndexes.length + ', 1fr)', '--tz': gridTz }">
       <div class="corner">节次</div>
       <div v-for="di in dayIndexes" :key="di" class="dayhead" :class="{ today: isTodayCol(di) }"><div class="dw">{{ DAY_FULL[di] }}</div><div class="dd">{{ mdOf(di) }}</div></div>
       <div class="timecol">
@@ -491,7 +604,7 @@ function toggleWeek(w: number): void {
       <div v-for="(day, i) in placed" :key="i" class="daycol" :class="{ today: isTodayCol(dayIndexes[i]) }">
         <div v-for="p in 12" :key="p" class="cell" :style="{ height: ROW_H + 'px' }"></div>
         <div
-          v-for="x in day" :key="x.b.key" class="block"
+          v-for="x in day" :key="x.b.key" class="cblock"
           :style="{
             top: (x.b.startPeriod - 1) * ROW_H + 2 + 'px',
             height: (x.b.endPeriod - x.b.startPeriod + 1) * ROW_H - 4 + 'px',
@@ -511,12 +624,12 @@ function toggleWeek(w: number): void {
     </transition>
   </div>
 
-      <!-- 需求：导入课表与 ⋯ 收进同一个工具箱，且工具箱可以在课表界面四处拖动 -->
+      <!-- 可拖动，但只能在脚本算出的"允许区域"内（详见脚本里 v2.15 的说明） -->
       <button
         class="toolbox"
         :class="{ dragging: toolDragging }"
         :style="toolStyle"
-        aria-label="课表工具箱"
+        aria-label="课表工具箱（可拖动，不会拖出屏幕）"
         @pointerdown="toolDown"
         @pointermove="toolMove"
         @pointerup="toolUp"
@@ -527,11 +640,25 @@ function toggleWeek(w: number): void {
     <div class="sheet">
         <div class="title">课表工具箱</div>
       <div class="hairline"></div>
-        <div class="li" @click="showImport = true; showMenu = false"><span class="ico2">📥</span><span class="grow">导入课表（从教务系统抓取）</span><span>›</span></div>
-      <div class="li" @click="showImport = true; showMenu = false"><span class="ico2">🏛</span><span class="grow">教务系统（jwglxt.buct.edu.cn）</span><span>›</span></div>
-      <div class="li" @click="openNew"><span class="ico2">＋</span><span class="grow">手动添加课程</span><span>›</span></div>
-      <div class="li" @click="showSettings = true; showMenu = false"><span class="ico2">⚙</span><span class="grow">课表设置（学期起始周 / 节次时间）</span><span>›</span></div>
-      <div class="li" @click="createTimetable"><span class="ico2">🗂</span><span class="grow">新建课表</span><span>›</span></div>
+        <!-- 工具箱 = 动作菜单，顺序按产品负责人指定（v2.15）：
+             导入课表 → 更改课表信息 → 手动添加课程 → 新建课表 → 切换课表。
+             原先那条「打开教务系统」已按要求删掉（导入流程里本来就会打开教务系统）。 -->
+        <div class="li" @click="openImport()">
+          <span class="ico2">📥</span>
+          <span class="grow"><b>导入课表</b><br /><span class="small muted">从教务系统抓取个人课表；这份课表已有课时会先问「合并还是覆盖」</span></span>
+          <span>›</span>
+        </div>
+        <div class="li" @click="showSettings = true; showMenu = false">
+          <span class="ico2">✏️</span>
+          <span class="grow"><b>更改课表信息</b><br /><span class="small muted">课表名称 / 学期第一周周一 / 总周数 / 节次时间</span></span>
+          <span>›</span>
+        </div>
+        <div class="li" @click="openNew"><span class="ico2">＋</span><span class="grow">手动添加课程</span><span>›</span></div>
+        <div class="li" @click="createTimetable">
+          <span class="ico2">🗂</span>
+          <span class="grow"><b>新建课表</b><br /><span class="small muted">再导入一份别的学期，两份互不覆盖</span></span>
+          <span>›</span>
+        </div>
       <div class="hairline"></div>
       <div class="small muted" style="margin-bottom: 6px">切换课表</div>
       <div v-for="t in db.timetables" :key="t.id" class="li" @click="pickTimetable(t.id)">
@@ -545,7 +672,7 @@ function toggleWeek(w: number): void {
 
   <div v-if="showSettings" class="mask" @click.self="showSettings = false">
     <div class="sheet">
-      <div class="row"><div class="title grow">课表设置</div><button class="btn sm ghost" @click="showSettings = false">关闭</button></div>
+      <div class="row"><div class="title grow">更改课表信息</div><button class="btn sm ghost" @click="showSettings = false">关闭</button></div>
       <div class="hairline"></div>
       <SettingsPanel />
     </div>
@@ -638,6 +765,9 @@ function toggleWeek(w: number): void {
 </template>
 
 <style scoped>
+/* 工具箱固定在右下角（bottom 88px + 高 52px），滚动区底部要留够余量，
+   否则滚到底时课表最后一行永远压在按钮底下点不到。 */
+.scroll { padding-bottom: calc(152px + var(--safe-b)); }
 .weeknav { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
 .nav { width: 34px; height: 34px; border-radius: 10px; background: var(--soft-2); color: var(--brand); font-size: 20px; line-height: 1; flex: none; }
 .nav:disabled { opacity: .35; }
@@ -659,29 +789,47 @@ function toggleWeek(w: number): void {
 .n2 { font-size: 11px; color: var(--muted); line-height: 1.3; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ncv { font-size: 11.5px; color: var(--muted); flex: none; }
 .dot { width: 12px; height: 12px; border-radius: 4px; flex: none; }
-.grid { display: grid; grid-template-columns: 52px repeat(7, 1fr); background: var(--card); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
-.corner { font-size: 11px; color: var(--muted); text-align: center; padding: 7px 0; border-bottom: 1px solid var(--line); background: var(--soft); }
-.dayhead { font-size: 11px; color: var(--muted); text-align: center; padding: 5px 0 6px; border-bottom: 1px solid var(--line); background: var(--soft); line-height: 1.25; }
-.dayhead .dw { font-size: 11.5px; }
-.dayhead .dd { font-size: 10px; opacity: .78; font-variant-numeric: tabular-nums; }
+/* --tz：文字缩放补偿系数，默认 1（标准字号 / 桌面预览）。真机上是原生 textZoom 的倍数，
+   由模板根据 display 服务里的 textZoomFactor 内联覆盖；这里给个默认值，避免变量未定义时整条 calc 失效。 */
+.grid { --tz: 1; display: grid; grid-template-columns: 52px repeat(7, 1fr); background: var(--card); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+/* 网格内的字号统一写成 calc(px / var(--tz))：
+   --tz 是原生 textZoom 的倍数（桌面预览的整页 zoom 路径下为 1）。
+   这样网格在任何字号档位下外观都与"标准"一致 —— 文字不会把格子挤爆，节次列也不会显得特别大。 */
+.corner { font-size: calc(11px / var(--tz, 1)); color: var(--muted); text-align: center; padding: 7px 0; border-bottom: 1px solid var(--line); background: var(--soft); }
+.dayhead { font-size: calc(11px / var(--tz, 1)); color: var(--muted); text-align: center; padding: 5px 0 6px; border-bottom: 1px solid var(--line); background: var(--soft); line-height: 1.25; }
+.dayhead .dw { font-size: calc(11.5px / var(--tz, 1)); }
+.dayhead .dd { font-size: calc(10px / var(--tz, 1)); opacity: .78; font-variant-numeric: tabular-nums; }
 .dayhead.today { color: var(--brand); background: var(--tint); }
 .dayhead.today .dw { font-weight: 700; }
 .dayhead.today .dd { opacity: 1; font-weight: 600; }
 .timecol { border-right: 1px solid var(--line); }
-.timelab { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 3px; font-size: 9.5px; line-height: 1.25; color: var(--muted); border-bottom: 1px dashed var(--line); }
-.timelab b { font-size: 11px; color: var(--ink); }
+.timelab { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 3px; font-size: calc(9.5px / var(--tz, 1)); line-height: 1.25; color: var(--muted); border-bottom: 1px dashed var(--line); }
+.timelab b { font-size: calc(11px / var(--tz, 1)); color: var(--ink); }
 .timelab .te { color: var(--muted); }
-.timelab b { font-size: 12px; color: var(--strong); }
+.timelab b { font-size: calc(12px / var(--tz, 1)); color: var(--strong); }
 .daycol { position: relative; border-right: 1px solid var(--line); }
 .daycol.today { background: #F6F9FF; }
 .cell { border-bottom: 1px dashed var(--line); }
-.block { position: absolute; border-radius: 7px; color: #fff; padding: 3px 4px; overflow: hidden; font-size: 10px; line-height: 1.25; }
-.block.now { outline: 2.5px solid #14181F; outline-offset: -2px; }
+/* 课程色块。
+   类名必须避开 .block：全局 .btn.block 是"整行按钮"的宽度工具类，
+   而 scoped 样式对所有带该 class 的子元素都生效 —— 两者同名过会把
+   本组件里所有「整行按钮」变成绝对定位的 10px 色块（真机截图上就是错位和叠字）。 */
+.cblock { position: absolute; border-radius: 7px; color: #fff; padding: 3px 4px; overflow: hidden; font-size: calc(10px / var(--tz, 1)); line-height: 1.25; }
+.cblock.now { outline: 2.5px solid #14181F; outline-offset: -2px; }
 .bm.rm { opacity: .82; }
-.bn { font-weight: 700; font-size: 11px; word-break: break-all; }
+.bn { font-weight: 700; font-size: calc(11px / var(--tz, 1)); word-break: break-all; }
 .bm { opacity: .88; word-break: break-all; }
-.toolbox { position: fixed; left: 0; top: 0; width: 52px; height: 52px; border-radius: 17px; border: none; background: var(--brand); color: #fff; box-shadow: 0 6px 16px rgba(20, 32, 60, .30); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; z-index: 45; touch-action: none; user-select: none; -webkit-user-select: none; will-change: transform; }
-.toolbox.dragging { opacity: .82; transform-origin: center; box-shadow: 0 10px 22px rgba(20, 32, 60, .38); }
+/* 工具箱：可拖动，位置由 JS 按"允许区域"算出来（left/top + transform）。
+   - z-index 抬到 56（高于底栏 50）：万一极大字号把底栏顶得很高，按钮也仍在最上层可见可点。
+   - touch-action: none 是拖动的前提，否则浏览器会把手势当成滚动手势。 */
+.toolbox {
+  position: fixed; left: 0; top: 0;
+  width: 52px; height: 52px; border-radius: 17px; border: none;
+  background: var(--brand); color: #fff; box-shadow: 0 6px 16px rgba(20, 32, 60, .30);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  z-index: 56; touch-action: none; user-select: none; -webkit-user-select: none; will-change: transform;
+}
+.toolbox.dragging { opacity: .82; box-shadow: 0 10px 22px rgba(20, 32, 60, .38); }
 .tico { font-size: 19px; line-height: 1; }
 .tlabel { font-size: 9.5px; line-height: 1; opacity: .9; }
 .ico2 { width: 24px; text-align: center; }

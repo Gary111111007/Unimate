@@ -154,7 +154,12 @@ export interface SecondClassBlockDef { key: BlockKey; name: string; fullName: st
 /** 校园服务入口（"北化通"这类一站式聚合页的一项）。 */
 export interface CampusApp { key: string; name: string; url: string; icon: string; desc: string; builtin?: boolean;
   /** 用户上传的自定义图标（data URL）。为空时用 icon 里的 emoji。 */
-  iconData?: string; }
+  iconData?: string;
+  /**
+   * 特殊动作（北化：考试查询）。填写后点这个入口不再只是"打开网页"，
+   * 而是走对应的原生 WebView 模式（考试模式会常驻一个「识别考试」按钮）。
+   */
+  action?: 'exam'; }
 
 export interface SchoolProfile {
   schoolId: string;
@@ -214,7 +219,13 @@ export interface Settings {
   /** 用户自己添加的校园入口（本校未收录的服务由用户自行补全） */
   customApps: CampusApp[];
   /** 课表工具箱悬浮按钮的位置（可拖动，null = 用默认右下角） */
-  toolFab?: { x: number; y: number } | null;
+  /**
+   * 课表工具箱的位置（右上角那颗 🧰 可拖动，但只能在屏幕内的允许区域里）。
+   * v2.15 起存**相对锚点** fx / fy ∈ [0,1]（相对"允许区域"的比例），不再存绝对像素：
+   * 字号变化、底栏长高、横竖屏切换后按新尺寸换算，按钮不可能跑到屏幕外。
+   * 老备份里可能是 { x, y } 像素值，读取时会先夹进允许区域再换算成锚点。
+   */
+  toolFab?: { fx?: number; fy?: number; x?: number; y?: number } | null;
   /** 是否已在启动时弹过一次"取消电池优化"系统框，避免反复打扰 */
   powerPrompted: boolean;
 }

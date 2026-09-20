@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  通知栏小图标（PRD 5.10 / v2.14）。
+  此前 capacitor.config.ts 与 notify.ts 都写了 smallIcon: "ic_stat_icon"，
+  但工程里从来没有这个资源 —— 插件解析不到就回退成 android.R.drawable.ic_dialog_info，
+  于是所有提醒在通知栏里都是一个"系统信息"灰图标，看不出是哪个 App 发的。
+
+  必须是纯白剪影 + 透明底：Android 会把通知小图标当作 alpha 蒙版处理，
+  带颜色或带背景的图在部分机型上会显示成一块实心方块。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,22c1.1,0 2,-0.9 2,-2h-4c0,1.1 0.89,2 2,2zM18,16v-5c0,-3.07 -1.64,-5.64 -4.5,-6.32L13.5,4c0,-0.83 -0.67,-1.5 -1.5,-1.5s-1.5,0.67 -1.5,1.5v0.68C7.63,5.36 6,7.92 6,11v5l-2,2v1h16v-1l-2,-2z" />
+</vector>

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { uuid, nowStamp } from '../services/id.ts';
+import { dedupeGesture } from '../services/gesture.ts';
 import type { NoteItem } from '../types.ts';
 
 const db = useDb();
@@ -14,7 +15,23 @@ const q = ref('');
 const editing = ref<NoteItem | null>(null);
 const isNew = ref(false);
 
-const ALARMS = [{ v: 0, t: '发生时' }, { v: 5, t: '提前5分钟' }, { v: 15, t: '提前15分钟' }, { v: 60, t: '提前1小时' }];
+/** 提前量候选。1440/30 是考试查询写入记事本时用的两档（提前一天 + 半小时），也允许手动选。 */
+const ALARMS = [
+  { v: 0, t: '发生时' }, { v: 5, t: '提前5分钟' }, { v: 15, t: '提前15分钟' },
+  { v: 30, t: '提前30分钟' }, { v: 60, t: '提前1小时' }, { v: 1440, t: '提前1天' }
+];
+
+/** 提前量的可读写法：1440 → 1天、60 → 1小时、90 → 1小时30分钟 */
+function alarmLabel(v: number): string {
+  const d = Math.floor(v / 1440);
+  const h = Math.floor((v % 1440) / 60);
+  const m = v % 60;
+  const parts: string[] = [];
+  if (d) parts.push(d + '天');
+  if (h) parts.push(h + '小时');
+  if (m) parts.push(m + '分钟');
+  return parts.join('') || '0分钟';
+}
 const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
 
 function pad(n: number): string { return String(n).padStart(2, '0'); }
@@ -77,6 +94,15 @@ function shiftMonth(d: number, animate = true): void {
   if (animate) calAnim.value = d > 0 ? 'slide-l' : 'slide-r';
   y.value = yy; m.value = mm;
 }
+
+/**
+ * 手势切月（去重）。
+ * 日历卡片和页面容器都绑了 touchend，同一次滑动会让两边各调一次 shiftMonth ——
+ * 真机上就表现为"滑一下跳两个月"。第一个收到手势的处理器生效，冒泡上来的那次丢掉。
+ * 按钮（‹ ›）不走这里，所以快速连点仍然一次一格。
+ */
+const shiftMonthByGesture = dedupeGesture((d: number) => shiftMonth(d));
+
 function endCal(): void { calAnim.value = ''; }
 function onCalTouchStart(e: TouchEvent): void {
   touchX = e.changedTouches[0].clientX; touchY = e.changedTouches[0].clientY;
@@ -86,7 +112,7 @@ function onCalTouchEnd(e: TouchEvent): void {
   const dy = e.changedTouches[0].clientY - touchY;
   // 横向位移足够大且明显大于纵向才判定为切月手势，避免和上下滚动打架
   if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
-  shiftMonth(dx < 0 ? 1 : -1);
+  shiftMonthByGesture(dx < 0 ? 1 : -1);
 }
 function goToday(): void {
   const d = new Date();
@@ -97,7 +123,7 @@ function onTouchStart(e: TouchEvent): void { sx = e.touches[0].clientX; sy = e.t
 function onTouchEnd(e: TouchEvent): void {
   const dx = e.changedTouches[0].clientX - sx;
   const dy = e.changedTouches[0].clientY - sy;
-  if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.4) shiftMonth(dx < 0 ? 1 : -1);
+  if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.4) shiftMonthByGesture(dx < 0 ? 1 : -1);
 }
 
 const listShown = computed(() => {
@@ -153,13 +179,14 @@ function dueText(n: NoteItem): string {
   return '还有 ' + span(Math.ceil(diff / 60000)) + ' 到期';
 }
 
-/** 提前量文案：alarms 只含 0 表示"发生时"，不能渲染成空白的"提前 分" */
+/** 提前量文案：alarms 只含 0 表示"发生时"，不能渲染成空白的"提前 分"；
+    1440 这种大数要写成"1天"，不能糊成"提前 1440 分"（考试提醒就是提前一天）。 */
 function alarmText(n: NoteItem): string {
   const a = (n.alarms || []).slice().sort((x, y) => x - y);
   const pos = a.filter((x) => x > 0);
   if (!a.length) return '';
   if (!pos.length) return ' · 发生时提醒';
-  return ' · 提前 ' + pos.join('/') + ' 分';
+  return ' · 提前 ' + pos.map(alarmLabel).join('/');
 }
 function toInput(s: string): string { return s ? s.slice(0, 16).replace(' ', 'T') : ''; }
 function fromInput(v: string): string { return v ? v.replace('T', ' ') + (v.length === 16 ? ':00' : '') : ''; }
@@ -213,6 +240,26 @@ function toggleAlarm(v: number): void {
   if (i >= 0) a.splice(i, 1); else a.push(v);
   a.sort((x, z) => z - x);
 }
+
+/**
+ * 点待办提醒进来时直达那条记事（PRD 5.10 点击行为）。
+ * 与课表页同一套 focus 机制：消费一次就清空，避免切页反复弹窗。
+ */
+function applyFocusNote(): void {
+  const f = db.focus;
+  if (!f || f.kind !== 'note') return;
+  const n = db.notes.find((x) => x.id === f.id);
+  db.focus = null;
+  if (!n) return;
+  if (n.remindAt) {
+    const day = n.remindAt.slice(0, 10);
+    sel.value = day;
+    const d = new Date(day.replace(/-/g, '/') + ' 00:00:00');
+    if (!Number.isNaN(d.getTime())) { y.value = d.getFullYear(); m.value = d.getMonth(); }
+  }
+  openEdit(n);
+}
+watch(() => db.focus, applyFocusNote, { immediate: true });
 </script>
 
 <template>
@@ -312,6 +359,9 @@ function toggleAlarm(v: number): void {
 </template>
 
 <style scoped>
+/* 悬浮「新建记事」固定在右下角（bottom 74px + 高 56px），滚动区底部留出余量，
+   否则滚到底时最后一条记事会被它永久压住。 */
+.scroll { padding-bottom: calc(150px + var(--safe-b)); }
 .modes { display: flex; gap: 8px; margin-bottom: 10px; }
 .modes button { flex: 1; padding: 8px; border-radius: 9px; background: var(--card); color: var(--muted); font-size: 13px; font-weight: 600; box-shadow: var(--shadow); }
 .modes button.on { background: var(--brand); color: #fff; }

@@ -32,6 +32,8 @@ public class FabImportView extends View {
     private boolean dragging;
     private boolean busy;
     private boolean pressed;
+    /** 按钮文字：课表模式是「导入」，考试模式是「识别考试」（后者用胶囊形，字要放得下） */
+    private String label = "导入";
 
     public FabImportView(Context c) {
         super(c);
@@ -50,6 +52,12 @@ public class FabImportView extends View {
 
     public void setListener(Listener l) { listener = l; }
 
+    public void setLabel(String s) {
+        label = (s == null || s.isEmpty()) ? "导入" : s;
+        requestLayout();
+        invalidate();
+    }
+
     public void setBusy(boolean b) {
         if (busy == b) return;
         busy = b;
@@ -59,18 +67,22 @@ public class FabImportView extends View {
     @Override
     protected void onMeasure(int wSpec, int hSpec) {
         float dp = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 1, getResources().getDisplayMetrics());
-        int size = Math.round(52 * dp);
-        setMeasuredDimension(size, size);
+        int height = Math.round(52 * dp);
+        // 文字放不下时横向撑成胶囊，而不是把字挤掉
+        int need = Math.round(text.measureText(label) + 30 * dp);
+        setMeasuredDimension(Math.max(height, need), height);
     }
 
     @Override
     protected void onDraw(Canvas c) {
-        float r = getWidth() / 2f;
+        float h = getHeight();
+        float r = h / 2f;
         bg.setColor(pressed ? Color.parseColor("#254A8F") : Color.parseColor("#2E5AAC"));
-        c.drawCircle(r, r, r - 3f, bg);
-        c.drawCircle(r, r, r - 3f, ring);
-        String label = busy ? "···" : "导入";
-        c.drawText(label, r, r - (text.ascent() + text.descent()) / 2f, text);
+        android.graphics.RectF box = new android.graphics.RectF(3f, 3f, getWidth() - 3f, h - 3f);
+        c.drawRoundRect(box, r - 3f, r - 3f, bg);
+        c.drawRoundRect(box, r - 3f, r - 3f, ring);
+        String shown = busy ? "···" : label;
+        c.drawText(shown, getWidth() / 2f, r - (text.ascent() + text.descent()) / 2f, text);
     }
 
     @Override

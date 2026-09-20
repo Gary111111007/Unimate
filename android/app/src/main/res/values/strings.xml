@@ -4,4 +4,12 @@
     <string name="title_activity_main">Unimate</string>
     <string name="package_name">com.unimate.app</string>
     <string name="custom_url_scheme">com.unimate.app</string>
+    <!--
+      版权署名（v2.15 加固的第二层）。
+      只作为 Android 字符串资源存在于 resources.arsc 里，**不会显示在界面上**，
+      但比 JS/HTML 里的注释更难被顺手删掉：即使前端产物被整体替换，这条依然随包留着。
+      查看方式：aapt dump resources <apk> | grep app_authors
+    -->
+    <string name="app_authors">果崇舜 刘佳乐 赵梓缘</string>
+    <string name="app_copyright">本app为果崇舜，刘佳乐，赵梓缘三人共同开发，未经允许，不得擅自使用。</string>
 </resources>

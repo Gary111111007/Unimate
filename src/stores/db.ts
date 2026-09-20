@@ -12,6 +12,7 @@ import { randomSalt, sha256Text } from '../services/crypto.ts';
 import { buildDemoNotes, buildDemoRecords, buildDemoTimetable } from '../services/demo.ts';
 import { rescheduleAll, scheduleDemoPing, cancelAllScheduledOnBoot } from '../services/notify.ts';
 import { guard, traceReset } from '../services/guard.ts';
+import { applyTextZoom } from '../services/display.ts';
 
 export const SCHEMA_VERSION = 1;
 export const APP_VERSION = '1.0.0';
@@ -70,6 +71,11 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   const busy = ref('');
   const toastSeq = ref(0);
   const lastError = ref('');
+  /**
+   * 从系统通知点进来的"定位目标"。写进通知的 extra，点击后由 plugins.ts 填这里，
+   * 对应页面消费一次就清空（避免切页反复弹层）。桌面预览环境下永远为 null。
+   */
+  const focus = ref<{ kind: 'course' | 'note'; id: string; week?: number } | null>(null);
   const storage = ref<{ ok: boolean; detail: string }>({ ok: true, detail: '未检测' });
 
   const activeTimetable = computed(() =>
@@ -124,6 +130,14 @@ const screen = ref<'school' | 'login' | 'app'>('login');
         { schemaVersion: SCHEMA_VERSION, schools: {}, accounts: [] } as any);
       interests.value = await guard('读意向清单', readJson<InterestEntry[]>('catalog/interests.json', []), 3000, []);
       accounts.value = await guard('读账号表', readJson<Account[]>('accounts.json', []), 3000, []);
+      /*
+       * 【v2.14 修正，真机反馈"提醒还是不响"的根因之一】
+       * Android 开机恢复广播（BOOT_COMPLETED）会把所有过期排期改写成"15 秒后立即发送"，
+       * 所以冷启动必须先清空遗留排期、再由下面的 finishLogin → loadUserData → rescheduleAll 重建。
+       * 旧顺序把这一步写在 finishLogin 之后：提醒刚排好就被 cancelAllScheduledOnBoot 全部取消，
+       * 结果是"每次重启后一条提醒都不会响，除非用户在 App 里再改点什么触发一次重建"。
+       */
+      try { await guard('清理遗留排期', cancelAllScheduledOnBoot(), 4000, undefined); } catch { /* 预览环境忽略 */ }
       const lastAccount = manifest.lastAccountId;
       const acc = lastAccount ? accounts.value.find((a) => a.id === lastAccount) : null;
       if (acc) {
@@ -138,10 +152,6 @@ const screen = ref<'school' | 'login' | 'app'>('login');
       } else {
         screen.value = 'login';       // 无历史登录态：先登录，不展示选校页
       }
-      // 冷启动先清空系统里遗留的排期，再按当前课表重建。
-      // Capacitor 启动时会恢复上次注册的本地通知，其中已过期的会被立即补发，
-      // 这正是「App 没开时不提醒、一打开所有提醒一起涌出」的成因。
-      try { await guard('清理遗留排期', cancelAllScheduledOnBoot(), 4000, undefined); } catch { /* 预览环境忽略 */ }
     } catch (e) { fail('启动', e); }
     booted.value = true;
   }
@@ -308,6 +318,8 @@ function answerConfirm(ok: boolean): void {
     timetables.value = []; courses.value = []; notes.value = []; records.value = []; hours.value = [];
     screen.value = 'login';
     activeTab.value = 0;
+    // 回登录页时把字号复位：不把上一个账号的大字号带到下一个人的登录界面
+    void applyTextZoom(100);
     void persistManifest();
   }
 
@@ -340,6 +352,12 @@ function answerConfirm(ok: boolean): void {
     if (!settings.value.lastActiveTimetableId && timetables.value.length) {
       settings.value.lastActiveTimetableId = timetables.value[0].id;
     }
+    /*
+     * 字号是"本账号的设置"，必须在载入数据后重新套用一次。
+     * 旧写法只在 App 启动时套一次，切账号 / 切学校时上一个账号的字号会留在页面上 ——
+     * 真机表现就是"演示账号的面板里写着『标准』，界面却还是上一个账号的『特大』"（v2.15 实测复现）。
+     */
+    void applyTextZoom(settings.value.fontSize || 100);
     try { await rescheduleAll(courses.value, timetables.value, notes.value, settings.value); } catch (e) { fail('重建提醒', e); }
   }
 
@@ -475,7 +493,7 @@ function hourTotal(kind: HourKind): number {
   }
 
   return {
-    booted, screen, profile, accounts, session, interests, timetables, courses, notes, records, hours, materials, settings,
+    booted, screen, profile, accounts, session, interests, timetables, courses, notes, records, hours, materials, settings, focus,
     activeTab, activeSheet, toast, toastSeq, busy, lastError, storage, activeTimetable, currentWeek, confirmReq, confirm, answerConfirm,
     boot, selectSchool, applyProfile, changeSchool, addInterest, ensureDemoAccount, register, login, logout, switchSchool,
     loadUserData, saveData, seedDemo, resetDemo, notify,

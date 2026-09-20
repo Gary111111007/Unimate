@@ -166,6 +166,26 @@ async function reschedule(): Promise<void> {
   perm.value = r.permission;
   db.notify(r.error ? '队列已重建，但有异常' : '已重建通知队列，共 ' + r.scheduled + ' 条');
 }
+
+/** 开发者联系方式（产品负责人指定写在意向清单里；只出现在这一处，不进入示例数据） */
+const DEV_CONTACT = '学号 2025040140';
+
+/**
+ * 复制意向清单。
+ * 旧实现只是把文本塞进 toast（标签写着"复制清单"却没复制），属于文案与实现不一致，这里改成真的写剪贴板；
+ * 剪贴板不可用时退回"把内容显示出来"，至少让用户能手动选中。
+ */
+async function copyInterests(): Promise<void> {
+  const lines = db.interests.map((i) => i.schoolName + ' | ' + i.createdAt + ' | ' + (i.contact || '—'));
+  lines.push('联系 Unimate 开发团队：' + DEV_CONTACT);
+  const text = lines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    db.notify('已复制 ' + db.interests.length + ' 条意向（含联系方式）');
+  } catch {
+    db.notify(text);
+  }
+}
 </script>
 
 <template>
@@ -188,7 +208,7 @@ async function reschedule(): Promise<void> {
 
     <div class="list" style="margin-top: 10px">
       <div class="li" @click="open('notify')"><span class="ico">🔔</span><div class="grow"><div class="bold">通知设置</div><div class="small muted">上课提醒 / 待办提醒 / 权限状态</div></div><span>›</span></div>
-      <div class="li" @click="open('theme')"><span class="ico">🌗</span><div class="grow"><div class="bold">外观与主题</div><div class="small muted">跟随系统深色 / 常浅 / 常深</div></div><span class="chev">›</span></div>
+      <div class="li" @click="open('theme')"><span class="ico">🌗</span><div class="grow"><div class="bold">外观与主题</div><div class="small muted">跟随系统深色 / 常浅 / 常深 · 字号（小 / 标准 / 大 / 特大）</div></div><span class="chev">›</span></div>
 <div class="li" @click="open('watermark')"><span class="ico">💧</span><div class="grow"><div class="bold">拍照水印</div><div class="small muted">自主开关水印内容与样式</div></div><span>›</span></div>
       <div class="li" @click="open('backup')"><span class="ico">💾</span><div class="grow"><div class="bold">备份与恢复</div><div class="small muted">导出 / 导入 .unimate.zip</div></div><span>›</span></div>
       <div class="li" @click="open('interests')"><span class="ico">🏫</span><div class="grow"><div class="bold">意向清单</div><div class="small muted">已提交意向的高校（本机 {{ db.interests.length }} 条）</div></div><span>›</span></div>
@@ -302,7 +322,12 @@ async function reschedule(): Promise<void> {
           <div class="grow"><div class="bold small">{{ i.schoolName }}</div><div class="small muted">{{ i.createdAt }}{{ i.contact ? ' · ' + i.contact : '' }}</div></div>
           <span class="pill dev">开发中</span>
         </div>
-        <button v-if="db.interests.length" class="btn block grey" @click="db.notify(db.interests.map((i) => i.schoolName + ' | ' + i.createdAt + ' | ' + (i.contact || '—')).join('\n'))">复制清单</button>
+        <button v-if="db.interests.length" class="btn block grey" @click="copyInterests()">复制清单</button>
+        <!-- 开发者联系方式（v2.15 产品负责人指定放在意向清单里；界面不署名） -->
+        <div class="card contact">
+          <div class="bold small">想让自己学校上线 / 给我们提意见？</div>
+          <div class="small muted" style="margin-top: 4px">联系 Unimate 开发团队：{{ DEV_CONTACT }}</div>
+        </div>
       </template>
 
       <template v-else-if="panel === 'about'">
@@ -332,4 +357,5 @@ async function reschedule(): Promise<void> {
 .prow { display: grid; grid-template-columns: 62px 1fr 12px 1fr; gap: 6px; align-items: center; margin-bottom: 6px; }
 .pn { font-size: 12px; color: var(--muted); }
 .prow input { padding: 7px; border: 1px solid var(--line); border-radius: 8px; }
+.contact { background: var(--soft); box-shadow: none; margin-top: 12px; padding: 12px; }
 </style>

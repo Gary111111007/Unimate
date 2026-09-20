@@ -12,7 +12,14 @@ export interface WebViewOpenResult {
 export interface CookieProbe { present: boolean; count: number }
 
 export interface JwWebViewPlugin {
-  open(options: { url: string; startUrl?: string; title: string; scrapeSelector?: string; allowExternal?: boolean }): Promise<WebViewOpenResult>;
+  open(options: {
+    url: string; startUrl?: string; title: string; scrapeSelector?: string; allowExternal?: boolean;
+    /**
+     * 'timetable'（默认）：抓课表，圆钮只在教务域名下出现；
+     * 'exam'：抓考试，按钮**常驻**并显示「识别考试」。
+     */
+    mode?: 'timetable' | 'exam';
+  }): Promise<WebViewOpenResult>;
   /** 只问"有没有、几条"，原生侧不返回 Cookie 内容 */
   cookieProbe(options: { url: string }): Promise<CookieProbe>;
   /** 用系统应用打开本机私有目录里的文件 */

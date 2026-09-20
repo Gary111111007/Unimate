@@ -10,7 +10,17 @@ const NOTE_ID_BASE = 200000;
 const TEST_ID = 900;
 const DEMO_ID = 999;
 const HORIZON_DAYS = 14;
-const CHANNEL_TAG = 'v2';
+/*
+ * 【v2.14 修正，真机反馈"提醒还是不响"的根因之二】
+ * 这个常量同时是渠道 id 的后缀。升到 v3 是因为：
+ *   1) v2 渠道创建时把声音写成了 audioAttributes（插件根本不读这个字段），
+ *      导致渠道建出来是"无声"的；
+ *   2) Android 8+ 的渠道一旦创建，importance / 声音 / 振动就**改不动**，
+ *      用同一个 id 重建无效，只能换 id 才能让新设置真正落到已安装的手机上。
+ */
+const CHANNEL_TAG = 'v3';
+/** 渠道提示音：必须是 android/app/src/main/res/raw 下的资源名（插件只支持 raw 资源） */
+const CHANNEL_SOUND = 'unimate_notify';
 
 /**
  * 【时区：已按源码逐跳核实，勿再改回"本地拼串"】
@@ -66,10 +76,23 @@ async function ensureChannels(): Promise<void> {
   if (typeof anyLocal.createChannel !== 'function') return;
   // Android 8+ 的通知渠道一旦创建，importance 与声音就改不动了，用同 id 重建无效。
   // 因此渠道 id 带版本号：需要调整横幅等级时递增 CHANNEL_TAG，新设置才会真正落到手机上。
+  //
+  // 字段名必须用插件真正读的那几个（详见 NotificationChannelManager.java）：
+  //   id / name / description / importance / visibility / sound / vibration / lights / lightColor
+  // 旧写法传的 lockScreenVisibility 与 audioAttributes 会被**静默忽略**：
+  // 前者让锁屏可见性没生效，后者让渠道没有声音（sound 才是声音字段）。
   for (const ch of [
-    { id: 'class-' + CHANNEL_TAG, name: '上课提醒', description: '课前提醒，横幅弹出并响铃', importance: 5, vibration: true, lightColor: '#2E5AAC', lockScreenVisibility: 1, audioAttributes: { contentType: 4, flags: 1, source: 2, usage: 5 } },
-    { id: 'todo-' + CHANNEL_TAG, name: '待办提醒', description: '记事本到期提醒，横幅弹出并响铃', importance: 5, vibration: true, lightColor: '#2E5AAC', lockScreenVisibility: 1, audioAttributes: { contentType: 4, flags: 1, source: 2, usage: 5 } }
+    { id: 'class-' + CHANNEL_TAG, name: '上课提醒', description: '课前提醒，横幅弹出并响铃', importance: 5, sound: CHANNEL_SOUND, vibration: true, lights: true, lightColor: '#2E5AAC', visibility: 1 },
+    { id: 'todo-' + CHANNEL_TAG, name: '待办提醒', description: '记事本到期提醒，横幅弹出并响铃', importance: 5, sound: CHANNEL_SOUND, vibration: true, lights: true, lightColor: '#2E5AAC', visibility: 1 }
   ]) { try { await guard('建通知渠道', anyLocal.createChannel(ch), 2500, undefined); } catch { /* 已存在或不支持 */ } }
+
+  // 渠道换 id 的副作用：系统设置里会同时列出新旧两套同名渠道，用户会以为"有两个上课提醒"。
+  // 建完新渠道后把旧的删掉。deleteChannel 对不存在的 id 是空操作，API < 26 会被插件 reject，两种情况都吞掉。
+  if (typeof anyLocal.deleteChannel === 'function') {
+    for (const id of ['class-v2', 'todo-v2']) {
+      try { await guard('清理旧通知渠道', anyLocal.deleteChannel({ id, name: id }), 2000, undefined); } catch { /* 不存在或不支持 */ }
+    }
+  }
 }
 
 async function safeScheduled(): Promise<number[]> {
@@ -147,7 +170,8 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           list.push({
             id, title: '上课提醒',
             body: '还有 ' + settings.classReminderMinutes + ' 分钟：' + c.name + (c.room ? ' · ' + c.room : ''),
-            schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, notificationChannelId: 'class-' + CHANNEL_TAG, forceAlert: true,
+            schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, channelId: 'class-' + CHANNEL_TAG,
+            extra: { k: 'c', id: c.id, w },
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
         }
@@ -167,7 +191,8 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           seen.add(String(id));
           list.push({
             id, title: '待办提醒', body: n.title + '（' + n.remindAt.slice(5, 16) + '）',
-            schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true,
+            schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, channelId: 'todo-' + CHANNEL_TAG,
+            extra: { k: 'n', id: n.id },
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
         }
@@ -204,7 +229,7 @@ export async function scheduleTest(minutes: number): Promise<{ ok: boolean; at: 
       notifications: [{
         id: TEST_ID, title: 'Unimate 测试提醒',
         body: '这条是 ' + minutes + ' 分钟前设置的，收到就说明提醒链路正常',
-        schedule: { at: atTime(when), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
+        schedule: { at: atTime(when), allowWhileIdle: true }, channelId: 'todo-' + CHANNEL_TAG, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     }), 8000, undefined);
     return { ok: true, at: when.toTimeString().slice(0, 8), error: '' };
@@ -221,7 +246,7 @@ export async function scheduleDemoPing(): Promise<boolean> {
     await guard('单条排期', LocalNotifications.schedule({
       notifications: [{
         id: DEMO_ID, title: 'Uni 提醒', body: '演示通知：Uni 已经准备好提醒你啦',
-        schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, notificationChannelId: 'todo-' + CHANNEL_TAG, forceAlert: true, smallIcon: 'ic_stat_icon', autoCancel: true
+        schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, channelId: 'todo-' + CHANNEL_TAG, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     }), 8000, undefined);
     return true;

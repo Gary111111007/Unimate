@@ -48,6 +48,91 @@ console.log('用了 ' + used.size + ' 个自定义属性，定义了 ' + defined
 ok('确实扫到 var() 用法', used.size >= 10, used.size + ' 个');
 ok('没有未定义的 CSS 变量', missing.length === 0, missing.join('\n        '));
 
+/*
+ * 组件 scoped 样式与全局工具类的**同名冲突**扫描。
+ * 真实事故（v2.14）：课表组件用 `.block` 画课程色块（position:absolute），
+ * 而全局的 `.btn.block` 是"整行按钮"宽度工具类。同一个元素 class="btn block"
+ * 同时命中两者 —— 按钮被变成绝对定位的 10px 色块，截图里就是错位叠字。
+ * 构建、类型检查、其余单测全都看不见，只有真机/渲染才暴露。
+ *
+ * 判定口径刻意收窄到"改了定位相关属性且与全局值不同"，避免把
+ * `.field { margin-bottom }` 这类无害的重复声明也算成事故。
+ */
+const globalCls = new Map<string, { position: string; display: string }>();
+const ruleRe = /\.([A-Za-z][\w-]*)([^{}]*)\{([^{}]*)\}/g;
+const stylesSrc = readFileSync(join(root, 'styles.css'), 'utf8');
+// 只取"工具类区"，不含文件末尾的 [data-theme='dark'] 覆盖区：
+// 那段是**故意**去改组件自己的类（.grid/.daycol/.tabbar 等），不是全局工具类，
+// 混进来会把正常写法全判成冲突。
+const utilitySrc = stylesSrc.split('暗色模式')[0];
+for (const m of utilitySrc.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+  // 一个选择器里可能有多个类（如 .btn.block），必须全都登记，
+  // 否则正是这个漏登记让本检查器第一次上线时抓不到真凶。
+  const names = Array.from(m[1].matchAll(/\.([A-Za-z][\w-]*)/g)).map((x) => x[1]);
+  if (!names.length) continue;
+  const pos = (m[2].match(/(?:^|;)\s*position\s*:\s*([\w-]+)/) || [])[1] || '';
+  const disp = (m[2].match(/(?:^|;)\s*display\s*:\s*([\w-]+)/) || [])[1] || '';
+  for (const cls of names) {
+    const prev = globalCls.get(cls) || { position: '', display: '' };
+    globalCls.set(cls, { position: pos || prev.position, display: disp || prev.display });
+  }
+}
+
+/** 返回该 .vue 里"同名冲突且改了定位"的类名 */
+function collisionsOf(file: string, raw: string): string[] {
+  // 注释里会写到"全局 .btn.block 怎样怎样"，不剥掉注释就会把解释文字当成选择器
+  const style = ((raw.match(/<style[^>]*scoped[^>]*>([\s\S]*?)<\/style>/) || [, ''])[1] || '').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const tpl = (raw.match(/<template>([\s\S]*)<\/template>/) || [, ''])[1];
+  if (!style) return [];
+  const usedInTpl = new Set<string>();
+  for (const m of tpl.matchAll(/\sclass="([^"]*)"/g)) {
+    for (const t of m[1].split(/\s+/)) if (/^[A-Za-z][\w-]*$/.test(t)) usedInTpl.add(t);
+  }
+  const bad: string[] = [];
+  for (const m of style.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const pos = (m[2].match(/(?:^|;)\s*position\s*:\s*([\w-]+)/) || [])[1] || '';
+    const disp = (m[2].match(/(?:^|;)\s*display\s*:\s*([\w-]+)/) || [])[1] || '';
+    // 只看定位冲突：display 的同名覆盖多半是有意为之（比如给 .sheet 补 display），
+    // 而 position 被悄悄改成 absolute/fixed 正是"元素跑到别处去了"这类事故。
+    if (!pos) continue;
+    for (const cm of m[1].matchAll(/\.([A-Za-z][\w-]*)/g)) {
+      const cls = cm[1];
+      const g = globalCls.get(cls);
+      if (!g || !usedInTpl.has(cls)) continue;
+      if (pos !== g.position) bad.push(cls + ' 的 position:' + pos + '（全局为 ' + (g.position || '未设置') + '）');
+    }
+  }
+  return bad;
+}
+
+// 先自证检查器真的能抓到（否则"全绿"没有意义）
+const selfTest = collisionsOf('self.vue', '<template><i class="btn block"></i></template><style scoped>.block { position: absolute; }</style>');
+ok('冲突检查器能抓到同名定位冲突（自证）', selfTest.length === 1, JSON.stringify(selfTest));
+
+const clashes: string[] = [];
+for (const f of files) {
+  if (!f.endsWith('.vue')) continue;
+  const bad = collisionsOf(f, readFileSync(f, 'utf8'));
+  for (const b of bad) clashes.push(relative(root, f) + '  ' + b);
+}
+ok('组件 scoped 样式没有和全局工具类抢同名定位属性', clashes.length === 0, clashes.join('\n        '));
+
+/*
+ * 课表网格的字号补偿（v2.15 真机截图驱动）。
+ * 网格几何（52px 节次列 + 12 行 × 58px + 7 天分栏）是按像素定死的，
+ * 而"字号"在真机上是原生 textZoom —— **只放大文字、不改几何**；
+ * 于是字号一调大，课程名就被挤成一列一个字、时间竖排（"左边弄得太大、课表里的课太小"）。
+ * 约定：网格内部的字号一律写成 calc(px / var(--tz, 1))，由 .grid 上绑定的 --tz 抵消。
+ */
+console.log('');
+const timetableView = readFileSync(join(root, 'views', 'TimetableView.vue'), 'utf8');
+const compensated = (timetableView.match(/calc\([^)]*\/\s*var\(--tz,\s*1\)\)/g) || []).length;
+ok('网格文字用 calc(px / var(--tz, 1)) 抵消 textZoom', compensated >= 8, compensated + ' 处');
+ok('.grid 上绑定了 --tz（Vue 内联自定义属性）', /'--tz':\s*gridTz/.test(timetableView), '');
+ok('网格几何仍是像素常数（不随字号变化）', /const ROW_H = 58;/.test(timetableView) && /'52px repeat\('/.test(timetableView), '');
+ok('补偿系数来自 display 服务，且做过范围夹取',
+  timetableView.includes('textZoomFactor') && /k > 0\.5 && k <= 2/.test(timetableView), '');
+
 // 暗色必须覆盖的关键变量都在两套主题里定义过（少一个就会有一块白）
 for (const key of ['--bg', '--card', '--text', '--muted', '--line', '--soft', '--soft-2', '--field', '--tint', '--strong']) {
   ok('暗色块里定义了 ' + key, new RegExp('\\[data-theme=.dark.\\][\\s\\S]*?' + key.replace(/-/g, '\\-') + '\\s*:').test(files.map((f) => readFileSync(f, 'utf8')).join('\n')));

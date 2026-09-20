@@ -6,6 +6,7 @@
 import { computed, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { JwWebView, isNativeWebView } from '../services/jwwebview.ts';
+import ExamPanel from './ExamPanel.vue';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import type { CampusApp } from '../types.ts';
 
@@ -32,6 +33,9 @@ const apps = computed<CampusApp[]>(() => {
 });
 
 const showAdd = ref(false);
+/** 考试查询面板（两条路径：教务系统真实抓取 / 内置演示样本） */
+const showExam = ref(false);
+const examUrl = ref('');
 const nf = ref({ name: '', url: '', icon: '🔗', iconData: '' });
 
 function normUrl(u: string): string {
@@ -42,6 +46,7 @@ function normUrl(u: string): string {
 function validUrl(u: string): boolean { return /^https?:\/\/[^\s.]+\.[^\s]{2,}$/.test(u); }
 
 async function openTarget(a: CampusApp): Promise<void> {
+  if (a.action === 'exam') { examUrl.value = a.url; showExam.value = true; return; }
   status.value = '正在打开 ' + a.name + '…';
   if (!isNativeWebView()) {
     status.value = '桌面预览环境不支持内嵌 WebView；安装 APK 后可在 App 内直接打开。';
@@ -394,6 +399,8 @@ async function probeAll(): Promise<void> {
       </div>
     </div>
   </div>
+
+  <ExamPanel v-if="showExam" :start-url="examUrl" @close="showExam = false" />
 </template>
 
 <style scoped>
