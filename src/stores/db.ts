@@ -27,12 +27,14 @@ function defaultSettings(p: SchoolProfile): Settings {
     semesterStartMonday: p.academic.semesterStartMonday,
     totalWeeks: p.academic.totalWeeks,
     showWeekend: true, theme: 'system', webviewKeepSession: true, autoBackup: true,
+    fontSize: 100,
     lastActiveTimetableId: null,
     appEdits: {},
     appOrder: [],
     hiddenApps: [],
     // 用户自行添加的校园入口（本校档案没收录的服务）
     customApps: [],
+    toolFab: null,
     // 启动时只弹一次电池优化申请
     powerPrompted: false
   };
@@ -479,4 +481,5 @@ function hourTotal(kind: HourKind): number {
     loadUserData, saveData, seedDemo, resetDemo, notify,
     newTimetable, addCourse, removeCourse, addNote, addRecord, addHour, removeHour, addMaterial, removeMaterial, materialsOf, hourTotal, blockScore, totalScore, coursesOn, persistManifest
   };
-});
+})
+;

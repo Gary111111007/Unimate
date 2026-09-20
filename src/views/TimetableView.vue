@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { COURSE_COLORS, assignCourseColors, courseColorIndex } from '../catalog/periods.ts';
 import { uuid, nowStamp } from '../services/id.ts';
@@ -356,7 +356,7 @@ async function createTimetable(): Promise<void> {
   db.newTimetable(db.profile?.academic.semesterLabel || '新课表 ' + (db.timetables.length + 1));
   await db.saveData();
   showMenu.value = false;
-  db.notify('已新建课表，可点右下角「导入课表」从教务系统抓取');
+  db.notify('已新建课表，可点右下角的「工具箱」从教务系统抓取');
 }
 /**
  * 删除一整份课表（用户明确点名："课表文件的删除没有第二次确认"）。
@@ -390,6 +390,58 @@ async function dropTimetable(id: string): Promise<void> {
   showMenu.value = false;
   db.notify('已删除课表（含 ' + nCourses + ' 个时段' + (mats.length ? '、' + mats.length + ' 个资料文件' : '') + '）');
 }
+/**
+ * 课表工具箱：把「导入课表」和原来那个 ⋯ 合成一个悬浮按钮（需求 2），
+ * 并且可以在课表界面四处拖动，位置存进 settings.toolFab。
+ * 点一下 = 开菜单；拖动超过 8px = 移动，两者互不干扰。
+ */
+const TOOL_SIZE = 52;
+const toolXY = ref({ x: 0, y: 0 });
+const toolDragging = ref(false);
+function toolDefault(): { x: number; y: number } {
+  return { x: window.innerWidth - TOOL_SIZE - 14, y: window.innerHeight - 236 };
+}
+function clampTool(pt: { x: number; y: number }): { x: number; y: number } {
+  const pad = 8;
+  const maxX = Math.max(pad, window.innerWidth - TOOL_SIZE - pad);
+  const maxY = Math.max(pad, window.innerHeight - TOOL_SIZE - pad);
+  return { x: Math.min(Math.max(pt.x, pad), maxX), y: Math.min(Math.max(pt.y, pad), maxY) };
+}
+const toolStyle = computed(() => ({
+  transform: 'translate3d(' + toolXY.value.x + 'px, ' + toolXY.value.y + 'px, 0)'
+}));
+let toolDrag: { id: number; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null = null;
+function toolDown(e: PointerEvent): void {
+  const el = e.currentTarget as HTMLElement;
+  toolDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: toolXY.value.x, oy: toolXY.value.y, moved: false };
+  try { el.setPointerCapture(e.pointerId); } catch { /* 个别 ROM 不支持，忽略 */ }
+}
+function toolMove(e: PointerEvent): void {
+  const d = toolDrag;
+  if (!d || d.id !== e.pointerId) return;
+  const dx = e.clientX - d.sx;
+  const dy = e.clientY - d.sy;
+  if (!d.moved && Math.abs(dx) + Math.abs(dy) > 8) { d.moved = true; toolDragging.value = true; }
+  if (d.moved) toolXY.value = clampTool({ x: d.ox + dx, y: d.oy + dy });
+}
+function toolUp(): void {
+  const d = toolDrag;
+  toolDrag = null;
+  toolDragging.value = false;
+  if (!d) return;
+  if (d.moved) {
+    db.settings.toolFab = { x: toolXY.value.x, y: toolXY.value.y };
+    void db.saveData();
+    return;
+  }
+  showMenu.value = !showMenu.value;
+}
+onMounted(() => {
+  const saved = db.settings.toolFab;
+  toolXY.value = clampTool(saved && typeof saved.x === 'number' ? saved : toolDefault());
+});
+
+
 function goToday(): void { week.value = db.currentWeek; }
 function toggleWeek(w: number): void {
   const c = editing.value!;
@@ -425,7 +477,7 @@ function toggleWeek(w: number): void {
     <div v-if="!db.courses.length" class="empty">
       <div class="big">🗓</div>
       <div>还没有课表</div>
-      <div class="small">点右下角「导入课表」<br />从教务系统抓取个人课表</div>
+      <div class="small">点右下角的「工具箱」<br />从教务系统抓取个人课表</div>
       <button class="btn sm" style="margin-top: 14px" @click="openNew">手动添加课程</button>
     </div>
 
@@ -459,13 +511,23 @@ function toggleWeek(w: number): void {
     </transition>
   </div>
 
-  <button class="fab" @click="showImport = true">导入<br />课表</button>
-  <button class="fab2" @click="showMenu = true">⋯</button>
+      <!-- 需求：导入课表与 ⋯ 收进同一个工具箱，且工具箱可以在课表界面四处拖动 -->
+      <button
+        class="toolbox"
+        :class="{ dragging: toolDragging }"
+        :style="toolStyle"
+        aria-label="课表工具箱"
+        @pointerdown="toolDown"
+        @pointermove="toolMove"
+        @pointerup="toolUp"
+        @pointercancel="toolUp"
+      ><span class="tico">🧰</span><span class="tlabel">工具箱</span></button>
 
   <div v-if="showMenu" class="mask" @click.self="showMenu = false">
     <div class="sheet">
-      <div class="title">课表</div>
+        <div class="title">课表工具箱</div>
       <div class="hairline"></div>
+        <div class="li" @click="showImport = true; showMenu = false"><span class="ico2">📥</span><span class="grow">导入课表（从教务系统抓取）</span><span>›</span></div>
       <div class="li" @click="showImport = true; showMenu = false"><span class="ico2">🏛</span><span class="grow">教务系统（jwglxt.buct.edu.cn）</span><span>›</span></div>
       <div class="li" @click="openNew"><span class="ico2">＋</span><span class="grow">手动添加课程</span><span>›</span></div>
       <div class="li" @click="showSettings = true; showMenu = false"><span class="ico2">⚙</span><span class="grow">课表设置（学期起始周 / 节次时间）</span><span>›</span></div>
@@ -618,7 +680,10 @@ function toggleWeek(w: number): void {
 .bm.rm { opacity: .82; }
 .bn { font-weight: 700; font-size: 11px; word-break: break-all; }
 .bm { opacity: .88; word-break: break-all; }
-.fab2 { position: fixed; right: 18px; bottom: calc(150px + var(--safe-b)); width: 42px; height: 42px; border-radius: 50%; background: var(--card); color: var(--brand); box-shadow: var(--shadow); font-size: 20px; z-index: 39; }
+.toolbox { position: fixed; left: 0; top: 0; width: 52px; height: 52px; border-radius: 17px; border: none; background: var(--brand); color: #fff; box-shadow: 0 6px 16px rgba(20, 32, 60, .30); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; z-index: 45; touch-action: none; user-select: none; -webkit-user-select: none; will-change: transform; }
+.toolbox.dragging { opacity: .82; transform-origin: center; box-shadow: 0 10px 22px rgba(20, 32, 60, .38); }
+.tico { font-size: 19px; line-height: 1; }
+.tlabel { font-size: 9.5px; line-height: 1; opacity: .9; }
 .ico2 { width: 24px; text-align: center; }
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
 .kv span { color: var(--muted); flex: none; }

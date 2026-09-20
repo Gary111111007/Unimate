@@ -8,6 +8,7 @@ import { Camera, CameraSource } from '@capacitor/camera';
 import { Geolocation } from '@capacitor/geolocation';
 import { useDb } from '../stores/db.ts';
 import { BLOCK_HINTS, QUICK_SCORES, SCORE_PRESETS, SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE, blockDef } from '../catalog/secondClass.ts';
+import { FILLABLE, clauseById, clauseLabel, clausesOf, chapterIntro, STAGE_LABEL, clauseNo, type HandbookClause } from '../catalog/handbook.ts';
 import { applyWatermark } from '../services/watermark.ts';
 import { writeBinaryBase64, writeJson, fileUri } from '../services/io.ts';
 import { sha256Base64 } from '../services/crypto.ts';
@@ -61,7 +62,7 @@ function openViewer(items: { url: string; title: string; sub: string }[], index:
 }
 
 const form = ref({
-  block: 'de' as BlockKey, stage: 'basic' as 'basic' | 'extended', activityName: '', description: '',
+  block: 'de' as BlockKey, stage: 'basic' as 'basic' | 'extended', clauseId: '', activityName: '', description: '',
   activityDate: dateStamp(), score: 10, scorePreset: '', hours: 0, watermark: true, address: '', photos: [] as { ev: PhotoEvidence; uri: string }[]
 });
 
@@ -73,6 +74,58 @@ const stats = computed(() => SECOND_CLASS_BLOCKS.map((b) => ({
   def: b, score: db.blockScore(b.key),
   over: b.key === active.value && db.blockScore(b.key) > b.fullScore
 })));
+
+/**
+ * 大类抬头：基础/拓展分别的小计与上限、合计与满分，全部由条款记录实时汇总。
+ * 需求原话：大类可以看到所有小类的信息并且有总和。
+ */
+const blockTotals = computed(() => SECOND_CLASS_BLOCKS.map((b) => {
+  const mine = db.records.filter((r) => !r.deletedAt && r.block === b.key);
+  const sumOf = (stage: 'basic' | 'extended') => Math.round(mine.filter((r) => r.stage === stage).reduce((a, r) => a + r.score, 0) * 2) / 2;
+  const basic = sumOf('basic');
+  const extended = sumOf('extended');
+  const total = Math.round((basic + extended) * 2) / 2;
+  return {
+    def: b, basic, extended, total, count: mine.length,
+    basicOver: basic > b.basicCap, extendedOver: extended > b.extendedCap, totalOver: total > b.fullScore,
+    intro: chapterIntro(b.key)
+  };
+}));
+
+/** 当前板块的"节 → 条款 → 该条款记录"三级结构（条款一条不落，全按手册顺序排） */
+const clauseSections = computed(() => {
+  if (active.value === 'all') return [];
+  const bk = active.value as BlockKey;
+  const defs = SECOND_CLASS_BLOCKS.find((x) => x.key === bk)!;
+  return (['basic', 'extended'] as const).map((stage) => ({
+    stage,
+    label: (stage === 'basic' ? '第一节 基础评定' : '第二节 拓展评定') + '（上限 ' + (stage === 'basic' ? defs.basicCap : defs.extendedCap) + ' 分）',
+    cap: stage === 'basic' ? defs.basicCap : defs.extendedCap,
+    sum: Math.round(db.records.filter((r) => !r.deletedAt && r.block === bk && r.stage === stage).reduce((a, r) => a + r.score, 0) * 2) / 2,
+    clauses: clausesOf(bk, stage).map((c) => {
+      const recs = db.records.filter((r) => !r.deletedAt && r.clauseId === c.id);
+      const legacy = db.records.filter((r) => !r.deletedAt && r.block === bk && r.stage === stage && !r.clauseId);
+      const sum = Math.round(recs.reduce((a, r) => a + r.score, 0) * 2) / 2;
+      return { c, recs, sum, over: typeof c.cap === 'number' && sum > c.cap };
+    }),
+    legacyCount: stage === 'basic' ? db.records.filter((r) => !r.deletedAt && r.block === bk && !r.clauseId).length : 0
+  }));
+});
+
+/** 当前板块的抬头数据 */
+const curTotal = computed(() => {
+  const bk = active.value;
+  return bk === 'all' ? null : blockTotals.value.find((x) => x.def.key === bk) || null;
+});
+/** 展开状态：默认收起，点条款行才展开它的记录 */
+const openClauseIds = ref<string[]>([]);
+function toggleClause(id: string): void {
+  const i = openClauseIds.value.indexOf(id);
+  if (i >= 0) openClauseIds.value.splice(i, 1); else openClauseIds.value.push(id);
+}
+function clauseSumOf(id: string): number {
+  return Math.round(db.records.filter((r) => !r.deletedAt && r.clauseId === id).reduce((a, r) => a + r.score, 0) * 2) / 2;
+}
 
 /** 志愿时长统计（对应需求：像课表/记事本那样能累计）。 */
 const HOUR_PRESETS = [1, 2, 3, 4, 6, 8, 10, 12, 20, 24];
@@ -91,10 +144,34 @@ function hoursText(r: SecondClassRecord): string {
   const h = (r && (r as any).hours) || 0;
   return h > 0 ? ' · 志愿时长 ' + h + ' 小时' : '';
 }
-function resetForm(): void {
-  form.value = { block: (active.value === 'all' ? 'de' : active.value) as BlockKey, stage: 'basic', activityName: '', description: '', activityDate: dateStamp(), score: 10, scorePreset: '', hours: 0, watermark: db.settings.watermarkEnabledDefault, address: '', photos: [] };
+function resetForm(clause?: HandbookClause): void {
+  const bk = (clause ? clause.block : (active.value === 'all' ? 'de' : active.value)) as BlockKey;
+  form.value = {
+    block: bk,
+    stage: clause ? clause.stage : 'basic',
+    clauseId: clause ? clause.id : '',
+    activityName: '', description: '', activityDate: dateStamp(),
+    score: clause && clause.options && clause.options.length ? clause.options[0].score : 10,
+    scorePreset: clause && clause.options && clause.options.length ? clause.options[0].label : '',
+    hours: 0, watermark: db.settings.watermarkEnabledDefault, address: '', photos: []
+  };
 }
 function openForm(): void { resetForm(); showForm.value = true; }
+/** 从某一条条款直接开填：板块、节次、条款、预设分值都带过去 */
+function openClause(c: HandbookClause): void { resetForm(c); showForm.value = true; }
+/** 点手册给定的分值档（如"国家级 30"）直接带着分数开表单，少一次手输 */
+/** 点手册分值档：填进当前表单，不重开，避免丢掉已选照片 */
+function pickOption(o: { label: string; score: number }): void {
+  form.value.score = o.score;
+  form.value.scorePreset = o.label;
+}
+function openClauseWith(c: HandbookClause, o: { label: string; score: number }): void {
+  resetForm(c);
+  form.value.score = o.score;
+  form.value.scorePreset = o.label;
+  showForm.value = true;
+}
+const formClause = computed<HandbookClause | null>(() => clauseById(form.value.clauseId) || null);
 
 /** 定位状态要在界面上看得见。旧写法 catch 后静默返回 null，用户只会发现"经纬度没了"。 */
 const locState = ref({ text: '尚未定位', ok: false });
@@ -223,7 +300,7 @@ async function saveRecord(): Promise<void> {
   if (!f.photos.length) { db.notify('至少添加 1 张照片'); return; }
   if (f.score <= 0 || f.score > 180) { db.notify('分数需在 0~180 之间'); return; }
   db.addRecord({
-    block: f.block, stage: f.stage, activityName: f.activityName.trim(), description: f.description.trim(),
+    block: f.block, stage: f.stage, clauseId: f.clauseId || '', activityName: f.activityName.trim(), description: f.description.trim(),
     activityDate: f.activityDate, score: Math.round(f.score * 2) / 2, scorePreset: f.scorePreset,
     hours: Math.round((Number(f.hours) || 0) * 10) / 10,
     photos: f.photos.map((p) => p.ev)
@@ -231,7 +308,8 @@ async function saveRecord(): Promise<void> {
   await db.saveData();
   showForm.value = false;
   active.value = f.block;
-  db.notify('已保存：' + blockDef(f.block).name + ' +' + f.score + ' 分' + (f.hours ? ' · ' + f.hours + ' 小时' : '') + ')');
+  const cl = clauseById(f.clauseId);
+  db.notify('已保存：' + blockDef(f.block).name + (cl ? ' ' + clauseNo(cl) : '') + ' +' + f.score + ' 分' + (f.hours ? ' · ' + f.hours + ' 小时' : ''));
 }
 
 /** 删除走全局二次确认：二课记录带照片与存证，误删代价高。 */
@@ -314,12 +392,55 @@ const total = computed(() => db.totalScore());
       <button v-for="b in SECOND_CLASS_BLOCKS" :key="b.key" class="chip sm" :class="{ on: active === b.key }" @click="active = b.key">{{ b.name }} · {{ b.fullName }}</button>
     </div>
 
-    <div v-if="active !== 'all'" class="card hints">
-      <div class="small bold" style="margin-bottom: 6px">{{ blockDef(active as BlockKey).fullName }} · 手册常见计分档</div>
-      <div v-for="(h, i) in BLOCK_HINTS[active as BlockKey]" :key="i" class="small muted">· {{ h }}</div>
-    </div>
+    <!-- 大类视图：抬头（基础/拓展/合计与各自上限）+ 手册逐条填写。
+         需求原话：不要用简化版、每一条都写上、每个小条能单独填写、大类能看到所有小条与总和。 -->
+    <template v-if="curTotal">
+      <div class="card blkhead">
+        <div class="row" style="align-items: flex-end; gap: 10px">
+          <div><div class="hnum">{{ curTotal.total }}</div><div class="small muted">合计自评 / {{ curTotal.def.fullScore }}</div></div>
+          <div class="grow" style="text-align: right">
+            <div class="small">基础 <b>{{ curTotal.basic }}</b> / {{ curTotal.def.basicCap }}　拓展 <b>{{ curTotal.extended }}</b> / {{ curTotal.def.extendedCap }}</div>
+            <div class="small muted">{{ curTotal.def.fullName }}评定 · {{ curTotal.count }} 条记录</div>
+          </div>
+        </div>
+        <div v-if="curTotal.intro" class="small muted intro">{{ curTotal.intro.text }}</div>
+        <div v-if="curTotal.totalOver" class="small warn">合计已超过本章满分，按满分计算。</div>
+      </div>
 
-    <div v-if="!records.length" class="empty"><div class="big">🏅</div>还没有填报记录<div class="small">点右下角「填报活动」</div></div>
+      <div v-for="sec in clauseSections" :key="sec.stage" class="sec">
+        <div class="sechead">
+          <span class="grow small bold">{{ sec.label }}</span>
+          <span class="small muted">小计 {{ sec.sum }} / {{ sec.cap }}</span>
+        </div>
+        <div v-if="sec.stage === 'basic' && sec.legacyCount" class="legacy small">
+          另有 {{ sec.legacyCount }} 条未对应条款的旧记录，已计入板块合计；点上方「全部」可查看明细。
+        </div>
+        <div v-for="row in sec.clauses" :key="row.c.id" class="clause">
+          <div class="crow" @click="toggleClause(row.c.id)">
+            <div class="grow">
+              <div class="ctop"><b>{{ clauseNo(row.c) }}</b><span class="ctitle">{{ row.c.title }}</span></div>
+              <div class="small muted">{{ row.c.unit }}<span v-if="row.c.cap"> · 上限 {{ row.c.cap }} 分</span></div>
+            </div>
+            <div class="csum" :class="{ over: row.over }">{{ row.sum }}<span v-if="row.c.cap" class="small muted"> / {{ row.c.cap }}</span></div>
+            <button class="btn sm" @click.stop="openClause(row.c)">记一条</button>
+            <span class="chev">{{ openClauseIds.includes(row.c.id) ? '▾' : '▸' }}</span>
+          </div>
+          <div v-if="openClauseIds.includes(row.c.id)" class="cbody">
+            <div class="ctext">{{ row.c.text }}</div>
+            <div v-if="row.c.options && row.c.options.length" class="chips">
+              <button v-for="o in row.c.options" :key="o.label" class="chip sm" @click.stop="openClauseWith(row.c, o)">{{ o.label }} {{ o.score }}</button>
+            </div>
+            <div v-if="!row.recs.length" class="small muted" style="padding: 2px 0 4px">这一条还没有记录</div>
+            <div v-for="r in row.recs" :key="r.id" class="crec" @click.stop="openDetail(r)">
+              <span class="grow small">{{ r.activityName }}<span class="muted"> · {{ r.activityDate }} · {{ r.photos.length }} 张存证照片</span></span>
+              <b class="score">+{{ r.score }}</b>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+      <div v-if="!records.length" class="empty"><div class="big">🏅</div>还没有填报记录<div class="small">选一个板块，逐条点「记一条」；或点右下角自由填报</div></div>
 
     <div v-if="hourCount" class="card hoursum">
       <div class="row" style="align-items: flex-end; gap: 10px">
@@ -330,7 +451,7 @@ const total = computed(() => db.totalScore());
         </div>
       </div>
     </div>
-    <div v-for="r in records" :key="r.id" class="card rec" @click="openDetail(r)">
+    <div v-if="active === 'all'" v-for="r in records" :key="r.id" class="card rec" @click="openDetail(r)">
       <div class="tag">{{ blockDef(r.block).name }}</div>
       <div class="grow">
         <div class="bold">{{ r.activityName }}</div>
@@ -356,6 +477,14 @@ const total = computed(() => db.totalScore());
       <div class="hairline"></div>
       <div class="field"><label>选择板块</label>
         <div class="chips"><button v-for="b in SECOND_CLASS_BLOCKS" :key="b.key" class="chip" :class="{ on: form.block === b.key }" @click="form.block = b.key">{{ b.name }} {{ b.fullName }}</button></div>
+      </div>
+      <div v-if="formClause" class="clausectx">
+        <div class="small bold">{{ clauseNo(formClause) }} · {{ formClause.title }}</div>
+        <div class="small muted">{{ formClause.text }}</div>
+        <div v-if="formClause.cap" class="small">该条上限 {{ formClause.cap }} 分（本条已填 {{ clauseSumOf(formClause.id) }} 分）</div>
+      </div>
+      <div v-else-if="form.clauseId === '' && form.block" class="small muted" style="margin: 2px 0 8px">
+        未指定条款时记作自由填报，仍会计入所选板块合计；建议从板块页对应条款点「记一条」，学校填报时更好核对。
       </div>
       <div class="field"><label>活动名称（必填）</label><input v-model="form.activityName" maxlength="40" placeholder="如：社区志愿服务" /></div>
       <div class="field"><label>描述（选填）</label><textarea v-model="form.description" rows="2" maxlength="300"></textarea></div>
@@ -411,6 +540,12 @@ const total = computed(() => db.totalScore());
         <div class="chips" style="margin-top: 8px">
           <button v-for="p in SCORE_PRESETS" :key="p.label" class="chip sm" @click="form.score = p.score; form.scorePreset = p.label">{{ p.score }}·{{ p.label }}</button>
         </div>
+      <div v-if="formClause && formClause.options && formClause.options.length" class="field">
+        <label>该条手册给定的分值档（点一下即填入）</label>
+        <div class="chips">
+          <button v-for="o in formClause.options" :key="o.label" class="chip sm" :class="{ on: form.scorePreset === o.label }" @click="pickOption(o)">{{ o.label }} {{ o.score }}</button>
+        </div>
+      </div>
       </div>
       <div class="row">
         <button class="btn grow" @click="saveRecord">保存</button>
@@ -446,6 +581,26 @@ const total = computed(() => db.totalScore());
 </template>
 
 <style scoped>
+/* 手册条款树 */
+.blkhead { margin-bottom: 10px; }
+.blkhead .intro { margin-top: 8px; line-height: 1.65; max-height: 3.3em; overflow: hidden; }
+.warn { color: var(--warn); margin-top: 6px; }
+.sec { margin: 14px 0 6px; }
+.sechead { display: flex; align-items: center; gap: 8px; padding: 6px 2px; border-bottom: 1px solid var(--line); }
+.legacy { padding: 7px 9px; margin: 6px 0; background: var(--tint); border-radius: 9px; line-height: 1.55; }
+.clause { border-bottom: 1px dashed var(--line); }
+.crow { display: flex; align-items: center; gap: 8px; padding: 9px 2px; }
+.ctop { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.ctop b { font-size: 12px; color: var(--brand); flex: none; }
+.ctitle { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.csum { font-size: 15px; font-weight: 700; flex: none; min-width: 42px; text-align: right; }
+.csum.over { color: var(--warn); }
+.chev { font-size: 11px; color: var(--muted); flex: none; width: 12px; text-align: center; }
+.cbody { padding: 0 2px 10px; }
+.ctext { font-size: 12px; line-height: 1.7; color: var(--muted); background: var(--soft); border-radius: 9px; padding: 8px 10px; margin-bottom: 7px; }
+.crec { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 9px; background: var(--soft-2); margin-top: 5px; }
+.clausectx { background: var(--soft); border-radius: 10px; padding: 9px 11px; margin: 8px 0; }
+.clausectx .small { line-height: 1.65; }
 .modes3 { display: flex; gap: 6px; margin-bottom: 12px; }
 .modes3 button { flex: 1; padding: 9px 4px; border-radius: 11px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 12.5px; }
 .modes3 button.on { background: var(--brand); color: #fff; border-color: var(--brand); font-weight: 700; }

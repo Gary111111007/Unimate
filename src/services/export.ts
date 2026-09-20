@@ -2,6 +2,7 @@
 import { makeZip, bytesToBase64, base64ToBytes } from './zip.ts';
 import { readBinaryBase64, writeBinaryBase64, nativeUri, fileUri } from './io.ts';
 import { blockDef } from '../catalog/secondClass.ts';
+import { clauseById, clauseLabel, clausesOf, STAGE_LABEL } from '../catalog/handbook.ts';
 import { nowStamp } from './id.ts';
 import type { SecondClassRecord } from '../types.ts';
 import { Capacitor } from '@capacitor/core';
@@ -73,6 +74,7 @@ function recordTxt(r: SecondClassRecord): string {
   return [
     '活动名称：' + r.activityName,
     '板块：' + blockDef(r.block).name + ' · ' + blockDef(r.block).fullName + '（' + (r.stage === 'basic' ? '基础评定' : '拓展评定') + '）',
+    '手册依据：' + (clauseById(r.clauseId) ? clauseLabel(clauseById(r.clauseId)!) : '未对应具体条款（自由填报）'),
     '自评分数：' + r.score + ' 分' + (r.scorePreset ? '（参考档：' + r.scorePreset + '）' : ''),
     '活动时间：' + r.activityDate,
     '志愿 / 活动时长：' + ((r as any).hours || 0) + ' 小时',
@@ -123,8 +125,32 @@ export async function exportAllZip(records: SecondClassRecord[]): Promise<{ file
     const sum = list.reduce((a, r) => a + r.score, 0);
     const def = blockDef(b);
     lines.push('【' + def.name + ' · ' + def.fullName + '】自评合计 ' + sum + ' / ' + def.fullScore + ' 分，共 ' + list.length + ' 条，志愿时长合计 ' + (Math.round(list.reduce((a, x) => a + ((x as any).hours || 0), 0) * 10) / 10) + ' 小时');
+    // 按手册条款分组列清单：学校二课系统就是按条款填报的，逐条小计最有用
+    const byClause = new Map<string, typeof list>();
     for (const r of list) {
-      lines.push('  · ' + r.activityName + '｜' + r.activityDate + '｜' + r.score + ' 分｜' + ((r as any).hours || 0) + ' 小时｜照片 ' + r.photos.length + ' 张');
+      const key = r.clauseId || '';
+      const arr = byClause.get(key) || [];
+      arr.push(r);
+      byClause.set(key, arr);
+    }
+    for (const c of clausesOf(b)) {
+      const arr = byClause.get(c.id);
+      if (!arr || !arr.length) continue;
+      const sub = Math.round(arr.reduce((a, r) => a + r.score, 0) * 2) / 2;
+      lines.push('  ' + clauseLabel(c) + '（' + STAGE_LABEL[c.stage] + (c.cap ? '，上限 ' + c.cap + ' 分' : '') + '）小计 ' + sub + ' 分');
+      for (const r of arr) {
+        lines.push('      · ' + r.activityName + '｜' + r.activityDate + '｜' + r.score + ' 分｜照片 ' + r.photos.length + ' 张');
+      }
+    }
+    const free = byClause.get('');
+    if (free && free.length) {
+      const sub = Math.round(free.reduce((a, r) => a + r.score, 0) * 2) / 2;
+      lines.push('  未对应条款（自由填报）小计 ' + sub + ' 分');
+      for (const r of free) {
+        lines.push('      · ' + r.activityName + '｜' + r.activityDate + '｜' + r.score + ' 分｜照片 ' + r.photos.length + ' 张');
+      }
+    }
+    for (const r of list) {
       for (let i = 0; i < r.photos.length; i++) {
         const item = await photoBytes(r, i);
         if (!item) continue;

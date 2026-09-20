@@ -4,9 +4,9 @@ import { useDb } from '../stores/db.ts';
 import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
 import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck } from '../services/notify.ts';
-import { JwWebView } from '../services/jwwebview.ts';
 import { nowStamp } from '../services/id.ts';
 import { applyTheme, type ThemeMode } from '../services/theme.ts';
+import { FONT_LEVELS, applyTextZoom } from '../services/display.ts';
 import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts';
 
 const db = useDb();
@@ -20,6 +20,7 @@ const sched = ref(0);
 const stats = ref({ total: 0, classReminders: 0, todoReminders: 0, testReminders: 0, nextFireAt: '' });
 const schedMsg = ref('');
 const exact = ref('unknown');
+const wire = ref({ ok: true, sample: '', hint: '' });
 
 const sub = computed(() => SECOND_CLASS_BLOCKS.map((b) => b.name + ' ' + db.blockScore(b.key)).join(' · '));
 
@@ -70,31 +71,17 @@ function setTheme(t: ThemeMode): void {
   applyTheme(t);
 }
 
+/** 字号：改设置 + 立刻生效 + 落盘，避免"点了没反应"（真机反复反馈过这个） */
+async function setFont(percent: number): Promise<void> {
+  db.settings.fontSize = percent;
+  const r = await applyTextZoom(percent);
+  await db.saveData();
+  db.notify(r.ok ? '字号已切换为 ' + percent + '%（' + r.via + '）' : r.error);
+}
+
 async function askExact(): Promise<void> {
   exact.value = await requestExactAlarmSetting();
   db.notify(exact.value === 'granted' ? '精确闹钟已授权，提醒会按时到点触发' : '返回后请重新打开通知设置查看状态');
-}
-
-/** 电池优化状态：来自原生 PowerManager + 机型指引（PRD 11.19） */
-const power = ref({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: '' });
-const powerLabel = computed(() => (!power.value.ok ? '无法检测' : power.value.ignoring ? '已豁免' : '未豁免'));
-const powerClass = computed(() => (!power.value.ok ? '' : power.value.ignoring ? 'live' : 'danger'));
-const wire = ref({ ok: true, sample: '', hint: '' });
-
-async function refreshPower(): Promise<void> {
-  try {
-    const r: any = await JwWebView.powerStatus();
-    power.value = { ok: true, ignoring: !!r.ignoring, exactAlarm: !!r.exactAlarm, rom: r.rom || '', hint: r.hint || '', error: r.error || '' };
-  } catch {
-    power.value = { ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: 'native-unavailable' };
-  }
-}
-
-async function askBattery(): Promise<void> {
-  if (!power.ok) { await refreshPower(); return; }
-  const r: any = await JwWebView.requestIgnoreBattery();
-  if (!r || !r.ok) { db.notify((r && r.error) || '未能打开系统设置，请手动到 设置 → 电池 里查找'); return; }
-  db.notify(r.mode === 'dialog' ? '请在系统弹窗里选「允许」，然后回到本页查看状态' : '请在应用列表里找到 Unimate → 选「不优化 / 无限制」');
 }
 
 /** 从系统设置页返回时自动刷新四项状态，避免用户看不到变化。 */
@@ -102,7 +89,6 @@ async function askBattery(): Promise<void> {
 async function refreshNotifyState(): Promise<void> {
   perm.value = await permissionState();
   exact.value = await exactAlarmState();
-  await refreshPower();
   wire.value = wireSelfCheck();
   stats.value = await scheduleStats();
   sched.value = stats.value.total;
@@ -237,12 +223,7 @@ async function reschedule(): Promise<void> {
           <div class="row" style="justify-content: space-between; margin-top: 10px"><span class="grow small">精确闹钟授权</span><span class="pill" :class="exact === 'granted' ? 'live' : 'danger'">{{ exact === 'granted' ? '已授权' : (exact === 'unsupported' ? '系统无需此授权' : '未授权') }}</span></div>
           <button v-if="exact !== 'granted' && exact !== 'unsupported'" class="btn block sm grey" style="margin-top: 8px" @click="askExact">去授权精确闹钟</button>
           <div v-if="exact !== 'granted' && exact !== 'unsupported'" class="small muted" style="margin-top: 6px">未授权时系统会把提醒并入省电批处理：后台基本不响，等你打开 App 才一次性补发。这就是"不打开不提醒、一打开全涌出"的成因。</div>
-          <div class="row" style="justify-content: space-between; margin-top: 10px"><span class="grow small">电池优化豁免</span><span class="pill" :class="powerClass">{{ powerLabel }}</span></div>
-          <button v-if="!power.ignoring" class="btn block sm grey" style="margin-top: 8px" @click="askBattery">{{ power.ok ? '申请不优化（推荐）' : '重新检测' }}</button>
-          <div v-if="power.ignoring" class="small muted" style="margin-top: 6px">已加入白名单：系统在后台不会冻结本应用的闹钟，提醒才能准点到。</div>
-          <div v-else class="small muted" style="margin-top: 6px">未豁免时，国产 ROM 会在息屏后冻结后台闹钟 —— 这正是"不打开 App 就不提醒、一打开全涌出"的主因。</div>
-          <div v-if="power.rom" class="small muted" style="margin-top: 8px">你的机型：{{ power.rom }}。{{ power.hint }}</div>
-          <div v-else class="small muted" style="margin-top: 8px">部分国产 ROM 还需手动允许自启动：小米/澎湃在 设置 → 应用设置 → 应用管理 → Unimate → 省电策略选「无限制」+ 打开「自启动」，并在最近任务里下拉卡片锁定后台。</div>
+          <div class="small muted" style="margin-top: 8px">提醒依赖三件事：系统通知权限、精确闹钟授权、以及厂商后台保留策略。前两项在下面直接开；后者各品牌入口不同，本产品按你的要求不再主动跳转系统设置。</div>
         </div>
         <div class="card" style="box-shadow: none; background: var(--soft); margin-top: 10px">
           <div class="row" style="justify-content: space-between"><span class="small">系统已排期提醒</span><b class="small">{{ sched }} 条</b></div>
@@ -271,9 +252,15 @@ async function reschedule(): Promise<void> {
             <button class="chip" :class="{ on: db.settings.theme === 'dark' }" @click="setTheme('dark')">始终深色</button>
           </div>
         </div>
+        <div class="field" style="margin-top: 10px"><label>字号</label>
+          <div class="chips">
+            <button v-for="f in FONT_LEVELS" :key="f.k" class="chip" :class="{ on: (db.settings.fontSize || 100) === f.k }" @click="setFont(f.k)">{{ f.t }}</button>
+          </div>
+        </div>
         <div class="small muted" style="margin-top: 4px; line-height: 1.7">
           选「跟随系统」时，手机开深色模式 App 会立刻跟着变，不用重启。<br />
-          深色下页面底色、卡片、输入框与文字会整体换一套；课表色块保持原色（白字对比度已够），不做额外降饱和。
+          深色下页面底色、卡片、输入框与文字会整体换一套；课表色块保持原色（白字对比度已够），不做额外降饱和。<br />
+          字号用系统 WebView 的 textZoom，只放大文字、不改布局，所以课表格子不会被挤歪；切换后立即生效，无需重启。
         </div>
         <button class="btn block grey" style="margin-top: 12px" @click="saveSettings('外观与主题')">保存设置</button>
       </template>

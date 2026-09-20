@@ -6,9 +6,8 @@ import Login from './screens/Login.vue';
 import Main from './screens/Main.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import { ensurePermission, permissionState } from './services/notify.ts';
-import { JwWebView } from './services/jwwebview.ts';
 import { bootTrace } from './services/guard.ts';
-const isNative = (): boolean => { try { return !!(window as any).Capacitor && (window as any).Capacitor.isNativePlatform(); } catch { return false; } };
+import { applyTextZoom } from './services/display.ts';
 
 const db = useDb();
 const showErr = ref(false);
@@ -58,17 +57,11 @@ function forceEnter(): void {
 
 /** 后台补齐提醒所需的系统条件；不 await 回开屏流程，卡住也不挡界面。 */
 async function postBootPermissions(): Promise<void> {
+  // 产品负责人 2026-09-20 明确要求：自启动 / 电池优化那套不要了，这里只补通知权限。
+  // （原生 powerStatus / requestIgnoreBattery 仍留在 JwWebViewPlugin 里，但不再被调用。）
   try {
     const state = await permissionState();
-    const granted = state === 'granted' || state === 'unsupported' ? true : await ensurePermission();
-    // 电池优化：国产 ROM 不豁免就会冻结后台闹钟。整个生命周期只提一次，且只在主界面提。
-    if (granted && isNative() && !db.settings.powerPrompted && db.screen === 'app') {
-      db.settings.powerPrompted = true;
-      await db.saveData();
-      await new Promise((r) => setTimeout(r, 1500));
-      const st: any = await JwWebView.powerStatus();
-      if (st && st.ok !== false && !st.ignoring) await JwWebView.requestIgnoreBattery();
-    }
+    if (state !== 'granted' && state !== 'unsupported') await ensurePermission();
   } catch { }
 }
 onMounted(async () => {
@@ -87,6 +80,8 @@ onMounted(async () => {
   // 下面这行是开屏的唯一正常出口。v2.9 我用行号 splice 改权限块时把它一起删了，
   // 结果 splashDone 永远是 false：开屏关不掉、5 秒后必然弹"启动失败"，只能靠"跳过开屏"进去。
   // 教训：按行号删代码必须逐行确认边界，改完要 diff 看被删掉了什么。
+  // boot 会把 settings 从磁盘读回来，字号要按落盘值再应用一次
+  void applyTextZoom(db.settings.fontSize || 100);
   splashDone.value = true;
   // 需求：一启动就申请通知权限，否则提醒永远不生效。
   // 但这一步不能挡在进入界面之前 —— 以前它 await 在开屏流程里，

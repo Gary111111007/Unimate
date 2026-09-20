@@ -88,6 +88,8 @@ export interface SecondClassRecord {
   id: string;
   block: BlockKey;
   stage: 'basic' | 'extended';
+  /** 归属的手册条款 id（如 de-7 = 第七条）。空 = 自由填报，归入"未对应条款"。 */
+  clauseId?: string;
   activityName: string;
   description: string;
   activityDate: string;
@@ -198,6 +200,8 @@ export interface Settings {
   totalWeeks: number;
   showWeekend: boolean;
   theme: 'light' | 'dark' | 'system';
+  /** 界面字号（WebView textZoom 百分比，100 = 标准） */
+  fontSize: number;
   webviewKeepSession: boolean;
   autoBackup: boolean;
   lastActiveTimetableId: string | null;
@@ -209,6 +213,8 @@ export interface Settings {
   hiddenApps: string[];
   /** 用户自己添加的校园入口（本校未收录的服务由用户自行补全） */
   customApps: CampusApp[];
+  /** 课表工具箱悬浮按钮的位置（可拖动，null = 用默认右下角） */
+  toolFab?: { x: number; y: number } | null;
   /** 是否已在启动时弹过一次"取消电池优化"系统框，避免反复打扰 */
   powerPrompted: boolean;
 }

@@ -11,6 +11,14 @@
   --ok: #2F9E5F;
   --warn: #C97A12;
   --ink: #14181F;
+  /* 语义表面色：组件里凡"比卡片更淡/更深的第二层底色"都走这几个，
+     别再写死 #fff 或 #F2F4F8，否则暗色下就是一块白。 */
+  --soft: #F6F8FC;
+  --soft-2: #EDF1F7;
+  --field: #FFFFFF;
+  --tint: #EEF3FC;
+  --strong: #14181F;
+
   --r: 14px;
   --shadow: 0 2px 10px rgba(20, 30, 60, .06);
   --safe-b: env(safe-area-inset-bottom, 0px);
@@ -106,6 +114,11 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   --danger: #F0776E;
   --ok: #4FC083;
   --warn: #E0A03A;
+  --soft: #1B2432;
+  --soft-2: #222D3D;
+  --field: #101823;
+  --tint: #17233A;
+  --strong: #E8ECF3;
   --shadow: 0 2px 12px rgba(0, 0, 0, .45);
 }
 :root[data-theme='dark'] body { background: var(--bg); color: var(--text); }

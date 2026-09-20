@@ -22,6 +22,8 @@ export interface JwWebViewPlugin {
   /** 申请加入电池优化白名单（先试系统一键弹窗，退回设置列表页） */
   requestIgnoreBattery(): Promise<{ ok: boolean; mode: string; error: string }>;
   openExactAlarmSettings(): Promise<{ ok: boolean; error: string }>;
+  /** 界面字号：原生用 WebView textZoom，只放大文字不动布局坐标系 */
+  setTextZoom(options: { percent: number }): Promise<{ ok: boolean; applied: number; error: string }>;
 }
 
 export interface PowerStatus {
@@ -40,7 +42,8 @@ export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
     openFile: async (): Promise<{ ok: boolean; error: string }> => ({ ok: false, error: '桌面预览环境无法调用系统应用' }),
     powerStatus: async (): Promise<PowerStatus> => ({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '桌面预览环境无法查询电池优化状态，请在手机上查看', error: 'web-unsupported' }),
     requestIgnoreBattery: async () => ({ ok: false, mode: '', error: '桌面预览环境无法调用系统设置' }),
-    openExactAlarmSettings: async () => ({ ok: false, error: '桌面预览环境无法调用系统设置' })
+    openExactAlarmSettings: async () => ({ ok: false, error: '桌面预览环境无法调用系统设置' }),
+    setTextZoom: async (o: { percent: number }) => ({ ok: false, applied: o && o.percent ? o.percent : 100, error: 'web-unsupported' })
   })
 });
 

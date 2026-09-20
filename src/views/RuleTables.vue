@@ -26,7 +26,7 @@ const rules = () => RULE_ITEMS.filter((r) => !q.value.trim() || r.text.includes(
         <button v-for="t in TABS" :key="t.k" class="chip sm" :class="{ on: tab === t.k }" @click="tab = t.k">{{ t.t }}</button>
       </div>
 
-      <div v-if="tab === 'caps'" class="tbl">
+      <div v-if="tab === 'caps'" class="tbl caps">
         <div class="tr th"><span>板块</span><span>评定名称</span><span>满分</span><span>基础上限</span><span>拓展上限</span></div>
         <div v-for="b in BLOCK_CAPS" :key="b.name" class="tr">
           <span class="bk">{{ b.name }}</span><span class="small">{{ b.full }}</span><span>{{ b.total }}</span><span>{{ b.basic }}</span><span>{{ b.extended }}</span>
@@ -59,9 +59,18 @@ const rules = () => RULE_ITEMS.filter((r) => !q.value.trim() || r.text.includes(
 .tbl { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .tr { display: flex; align-items: center; gap: 6px; min-width: 400px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
 /* 首列固定宽度、可换行；数值列等分且不换行。之前用 grid-auto-columns 时首列的 min-width 撑不开轨道，只会溢出压到隔壁数字上 */
-.tr > span:first-child { flex: 0 0 104px; line-height: 1.3; }
+.tr > span:first-child { flex: 0 0 96px; line-height: 1.3; white-space: normal; }
 .tr > span:not(:first-child) { flex: 1 1 0; min-width: 40px; text-align: center; white-space: nowrap; }
 .tr.th { font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line); }
+/* 板块上限表：名称列（如"道德与思想素质评定"9 个字）以前和数字列等分，
+   85px 装不下又 nowrap，直接溢出压到"满分"数字上（真机截图反馈的排版问题）。
+   这里让名称列吃掉剩余宽度并允许换行，数字列固定窄宽。 */
+.caps .tr { min-width: 0; }
+.caps .tr > span:first-child { flex: 0 0 34px; }
+.caps .tr > span:nth-child(2) { flex: 1 1 auto; min-width: 0; text-align: left; white-space: normal; line-height: 1.35; }
+.caps .tr > span:nth-child(n+3) { flex: 0 0 56px; text-align: center; white-space: normal; line-height: 1.3; }
+.caps .tr.th > span:nth-child(n+3) { font-size: 10.5px; }
+
 
 .bk { font-weight: 700; color: var(--brand); }
 .tname { font-size: 13px; font-weight: 700; margin-bottom: 6px; }

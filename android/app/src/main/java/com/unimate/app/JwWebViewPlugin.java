@@ -216,6 +216,37 @@ public class JwWebViewPlugin extends Plugin {
         } catch (Exception e) { ret.put("ok", false); ret.put("error", e.getMessage()); }
         call.resolve(ret);
     }
+
+    /**
+     * 界面字号。用 WebView 原生 textZoom 而不是 CSS zoom：
+     * 只放大文字、不改变布局坐标系，课表拖动/抓取那些按像素算的交互不会被缩放带偏。
+     */
+    @PluginMethod
+    public void setTextZoom(PluginCall call) {
+        JSObject ret = new JSObject();
+        int percent = 100;
+        try {
+            Integer req = call.getInt("percent");
+            if (req != null) percent = req;
+            if (percent < 70) percent = 70;
+            if (percent > 180) percent = 180;
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().getSettings().setTextZoom(percent);
+                ret.put("ok", true);
+                ret.put("applied", percent);
+                ret.put("error", "");
+            } else {
+                ret.put("ok", false);
+                ret.put("applied", 0);
+                ret.put("error", "主 WebView 尚未就绪");
+            }
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("applied", 0);
+            ret.put("error", e.getMessage() == null ? "设置失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
     @ActivityCallback
     private void handleOpenResult(PluginCall activityCall, ActivityResult result) {
         PluginCall call = pending;

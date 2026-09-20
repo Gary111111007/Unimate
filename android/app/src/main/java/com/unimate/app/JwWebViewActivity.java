@@ -15,6 +15,8 @@ import android.view.View;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.content.ClipData;
+import android.webkit.ValueCallback;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -54,6 +56,10 @@ public class JwWebViewActivity extends Activity {
     private String homeUrl = "";
     private boolean retriedOnce;
     private int barWidth;
+
+    /** 网页里的 <input type=file>（交作业、传附件）：北化在线/学习通提交作业必走这条路。 */
+    private static final int REQ_FILES = 4108;
+    private ValueCallback<Uri[]> uploadCallback;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -284,6 +290,21 @@ public class JwWebViewActivity extends Activity {
                 android.view.ViewGroup.LayoutParams lp = pv.getLayoutParams();
                 if (lp != null) { lp.width = total <= 0 ? 0 : (int) (total * newProgress / 100f); pv.setLayoutParams(lp); }
             }
+
+            // 关键：不实现这个回调，网页上的"上传作业/选择文件"按钮点了完全没反应
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (uploadCallback != null) { try { uploadCallback.onReceiveValue(null); } catch (Exception ignored) { } }
+                uploadCallback = callback;
+                try {
+                    Intent it = params.createIntent();
+                    startActivityForResult(it, REQ_FILES);
+                    return true;
+                } catch (Exception e) {
+                    uploadCallback = null;
+                    return false;
+                }
+            }
         });
 
         homeUrl = url;
@@ -423,6 +444,35 @@ public class JwWebViewActivity extends Activity {
     }
 
     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQ_FILES) {
+            ValueCallback<Uri[]> cb = uploadCallback;
+            uploadCallback = null;
+            if (cb == null) return;
+            Uri[] uris = null;
+            try {
+                if (resultCode == RESULT_OK && data != null) {
+                    java.util.ArrayList<Uri> list = new java.util.ArrayList<Uri>();
+                    ClipData clip = data.getClipData();
+                    if (clip != null) {
+                        for (int i = 0; i < clip.getItemCount(); i++) {
+                            Uri u = clip.getItemAt(i).getUri();
+                            if (u != null) list.add(u);
+                        }
+                    } else if (data.getData() != null) {
+                        list.add(data.getData());
+                    }
+                    if (!list.isEmpty()) uris = list.toArray(new Uri[0]);
+                }
+            } catch (Exception ignored) { }
+            // 必须回调一次（哪怕是 null），否则网页端的文件框会永久卡住、再也点不开
+            cb.onReceiveValue(uris);
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
     public void onBackPressed() {
         if (webView != null && webView.canGoBack()) webView.goBack();
         else finishWith("", "cancelled");
@@ -444,6 +494,7 @@ public class JwWebViewActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (uploadCallback != null) { try { uploadCallback.onReceiveValue(null); } catch (Exception ignored) { } uploadCallback = null; }
         flushCookies();
         if (webView != null) {
             try {
