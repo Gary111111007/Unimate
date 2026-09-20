@@ -60,3 +60,24 @@ npm run check:provider preview DeepSeek     # 不切换，用 DeepSeek 那条配
 ```
 
 脚本位置：`scripts/check-provider.mjs`。
+## 追加（2026-09-20 10:45，真机撞上了）：切过去报 400 "No tool output found for tool call xxx"
+
+拿本会话真实历史做隔离实验（每次只让它回 8 个 token）：
+
+| 发给 DeepSeek 的历史 | 结果 |
+| --- | --- |
+| 原样（含 6 条 `web_search_call`） | 200 |
+| 删掉 `web_search_call` | 200 |
+| `function_call` **没有**配对的 `function_call_output` | **400 No tool output found for tool call xxx** |
+| 同一个 `function_call` **补上**配对输出 | 200 |
+
+结论：唯一元凶是**半截工具调用**。你在回合还在跑工具的时候切模型，那次调用就永远等不到输出，DeepSeek 严格校验直接拒收整条历史；千问不校验，所以"切回千问就好了"，看着像 DeepSeek 的锅。
+
+按这个顺序处理：
+
+1. 等回合彻底空闲（界面里没有正在执行的工具）。
+2. `npm run fix:history` —— 只读扫描，报告哪条会话有半截调用（默认扫今天，加 `-- --all` 扫最近 3 天）。
+3. 有的话：**完全退出 Codex 桌面版（托盘图标也退）**，再 `npm run fix:history -- --write`。它会给每个半截调用补一条"该调用被中断未执行"的输出，并先把原件备份成 `.bak-时间戳`；60 秒内还在被写入的文件它拒绝改（防止和内存版互相覆盖）。
+4. cc-switch 切 DeepSeek → 重开 Codex → 发消息。
+
+本次实测时（10:45）今天 20 个会话、最近 3 天全部会话都是 **0 个半截调用**，也就是说那条 400 是瞬时状态，历史已经自愈，直接再切一次就行。

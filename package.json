@@ -21,7 +21,8 @@
     "test:login": "node --experimental-strip-types tests/login.test.ts",
     "cap:sync": "cap sync android",
     "apk": "scripts/build-apk.ps1",
-    "check:provider": "node scripts/check-provider.mjs"
+    "check:provider": "node scripts/check-provider.mjs",
+    "fix:history": "node scripts/fix-codex-history.mjs"
   },
   "dependencies": {
     "@capacitor/app": "^6.0.2",
