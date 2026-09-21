@@ -49,6 +49,9 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   min-height: 44px; padding: 0 16px; border-radius: 12px; background: var(--brand); color: #fff; font-weight: 600;
 }
 .btn:active { opacity: .85; }
+/* 禁用的按钮必须看得出来（v2.24）：以前 .btn 没有 disabled 样式，
+   "天气关着时的「立即更新」""备份恢复的「开始恢复」"看着和能点的一模一样 */
+.btn:disabled { opacity: .45; }
 .btn.block { width: 100%; }
 .btn.ghost { background: #fff; color: var(--brand); border: 1px solid var(--line); }
 .btn.grey { background: #EDF0F5; color: #3A424E; }

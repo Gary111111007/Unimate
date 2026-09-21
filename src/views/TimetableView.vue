@@ -10,6 +10,7 @@ import { anchorFromLegacy, anchorFromPos, clampToBox, posFromAnchor, toolBox } f
 import { textZoomFactor } from '../services/display.ts';
 import { buildShareUrl, encodeShare, shareHost } from '../services/share.ts';
 import { canEncodeQr, qrSvg } from '../services/qr.ts';
+import { agoText, weatherText, weatherTip } from '../services/weather.ts';
 import ImportPanel from './ImportPanel.vue';
 import SettingsPanel from '../components/SettingsPanel.vue';
 
@@ -551,6 +552,37 @@ onUnmounted(() => {
 function goToday(): void { week.value = db.currentWeek; }
 
 /**
+ * 天气（Net.md P0 / PRD 5.13）。
+ * 只在开关打开、并且本机已经有数据（或正在更新）时才渲染这一行 —— 关着的时候页面上
+ * 不多一块空卡片，也**一次请求都不发**（判断全在 store 的 `ensureWeather` 里）。
+ * 挂载时按 30 分钟节流拉一次；失败就继续显示上次结果 + "x 分钟前更新"。
+ */
+const wxTick = ref(Date.now());
+let wxTimer = 0;
+onMounted(() => {
+  void db.ensureWeather();
+  // "x 分钟前更新"要自己走字，否则停在打开页面那一刻的时间，越看越不准
+  wxTimer = setInterval(() => { wxTick.value = Date.now(); }, 60000) as unknown as number;
+});
+onUnmounted(() => { clearInterval(wxTimer as any); });
+
+const wxNow = computed(() => (db.settings.weatherEnabled ? db.settings.weatherNow : null));
+const wxText = computed(() => (wxNow.value ? weatherText(wxNow.value) : ''));
+const wxAge = computed(() => (wxNow.value ? agoText(wxNow.value.fetchedAt, wxTick.value) : ''));
+const wxTip = computed(() => (wxNow.value ? weatherTip(wxNow.value.code) : ''));
+
+/**
+ * 点这张卡 = 更新一次，但**走 30 分钟节流**（产品口径是"打开后 30 分钟最多拉一次"）。
+ * 被节流挡下时要说清楚原因，不能点了没反应；真要立刻重拉，去「我的 → 天气 → 立即更新」。
+ */
+async function refreshWeather(): Promise<void> {
+  const before = db.settings.weatherTriedAt;
+  await db.ensureWeather();
+  if (db.settings.weatherTriedAt !== before) db.notify(db.weatherMsg || '天气已更新');
+  else db.notify('30 分钟内只更新一次（上次 ' + wxAge.value + '）');
+}
+
+/**
  * 分享整张课表（PRD 5.12）。
  * 数据编码进链接的 # 片段（**不上传服务器**），二维码在本机生成；
  * 课表内容太多、二维码放不下时自动降级为"只给链接"。
@@ -618,6 +650,14 @@ function toggleWeek(w: number): void {
       <button v-if="week !== db.currentWeek" class="btn sm ghost today" @click="goToday">回本周</button>
     </div>
     <div v-if="db.activeTimetable" class="swipe-hint center">左右滑动可切换周次</div>
+      <!-- 天气（Net.md P0）：默认关闭。关着、或还没拿到数据时这里一行都不渲染，
+           不会给课表页顶出多余的空白；点一下 = 更新（同样受 30 分钟限制）。 -->
+      <div v-if="wxNow" class="wxbar" @click="refreshWeather()" aria-label="天气，点一下更新">
+        <b class="wxt">{{ wxText }}</b>
+        <span class="wxu">{{ wxAge }}更新</span>
+        <span v-if="wxTip" class="wxu wxtip">☔ {{ wxTip }}</span>
+        <span class="wxr">↻</span>
+      </div>
       <!-- 真机反馈：这块原来是三行大卡片，把课表整个顶到屏幕外。压成一条，点整条看详情。 -->
       <div v-if="nextClass" class="nextbar" @click="detail = nextClass">
         <span class="ndot" :style="{ background: colorOf(nextClass) }"></span>
@@ -867,6 +907,13 @@ function toggleWeek(w: number): void {
 .tiny { font-size: 10.5px; }
 .filebtn { cursor: pointer; }
 .swipe-hint { margin: 4px 0 8px; }
+/* 天气一行卡（v2.24）：只有开关打开且有数据时才出现。
+   刻意做成"一条细带"——课表页顶部已经被真机反馈过一次"卡片把课表顶出屏幕"。 */
+.wxbar { display: flex; align-items: center; gap: 8px; margin: 0 0 7px; padding: 6px 10px; border-radius: 11px; background: var(--card); box-shadow: var(--shadow); }
+.wxt { font-size: 13px; color: var(--strong); flex: none; }
+.wxu { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wxtip { color: var(--warn); flex: none; }
+.wxr { margin-left: auto; font-size: 12px; color: var(--muted); flex: none; }
 .nextbar { display: flex; align-items: center; gap: 9px; background: var(--card); border-radius: 11px; padding: 7px 10px; margin: 0 0 7px; box-shadow: var(--shadow); }
 .ndot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .ngrow { flex: 1; min-width: 0; }

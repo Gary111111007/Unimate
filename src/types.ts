@@ -1,4 +1,5 @@
 // Unimate 数据模型（PRD 5.2 / 5.9.1）
+import type { WeatherNow } from './services/weather.ts';
 
 export type LessonType = 'lecture' | 'machine' | 'practice' | 'lab' | 'other';
 export type CourseSource = 'jwglxt' | 'manual';
@@ -149,6 +150,20 @@ export interface Account {
 
 export interface PeriodTime { period: number; start: string; end: string }
 
+/**
+ * 天气用的位置（Net.md P0）。
+ * 来源必须能区分：手填城市不许冒充"定位"，将来做存证/分享也照这个口径。
+ */
+export interface WeatherLocation {
+  lat: number; lon: number;
+  /** gps=卫星定位 network=WiFi/基站定位 manual=手填城市转坐标 */
+  from: 'gps' | 'network' | 'manual';
+  /** 手填城市时是城市名；系统定位时是"卫星定位/WiFi 定位"这类说明（界面直接显示） */
+  name: string;
+  /** 取到这份坐标的时间（毫秒）：系统定位 24 小时内复用，不必每次开 App 都调一次定位 */
+  at: number;
+}
+
 export interface SecondClassBlockDef { key: BlockKey; name: string; fullName: string; fullScore: number; basicCap: number; extendedCap: number }
 
 /** 校园服务入口（"北化通"这类一站式聚合页的一项）。 */
@@ -233,6 +248,19 @@ export interface Settings {
   toolFab?: { fx?: number; fy?: number; x?: number; y?: number } | null;
   /** 是否已在启动时弹过一次"取消电池优化"系统框，避免反复打扰 */
   powerPrompted: boolean;
+  /**
+   * 天气（Net.md P0 / PRD 5.13）：**默认关闭**。
+   * 关着的时候一次请求都不发 —— 这是产品口径，改动前先看 AGENTS.md 第 4 条。
+   */
+  weatherEnabled: boolean;
+  /** 手填城市（拒绝定位授权时的兜底）。非空 = 用它查，不再申请定位权限 */
+  weatherCity: string;
+  /** 上次用的坐标（手填城市 / 系统定位） */
+  weatherLoc: WeatherLocation | null;
+  /** 上次成功拉到的天气：断网/接口失败时显示这一份 + "x 分钟前更新" */
+  weatherNow: WeatherNow | null;
+  /** 上次**尝试**拉取的时间（成功失败都记）：保证 30 分钟内最多一次请求 */
+  weatherTriedAt: number;
 }
 
 export interface InterestEntry { schoolId: string; schoolName: string; contact: string; createdAt: string }

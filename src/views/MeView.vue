@@ -8,9 +8,10 @@ import { nowStamp } from '../services/id.ts';
 import { applyTheme, type ThemeMode } from '../services/theme.ts';
 import { FONT_LEVELS, applyTextZoom } from '../services/display.ts';
 import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts';
+import { agoText, weatherText } from '../services/weather.ts';
 
 const db = useDb();
-const panel = ref<'' | 'notify' | 'theme' | 'watermark' | 'backup' | 'about' | 'interests'>('');
+const panel = ref<'' | 'notify' | 'theme' | 'watermark' | 'weather' | 'backup' | 'about' | 'interests'>('');
 const perm = ref('unknown');
 const lastBackup = ref('');
 const restoreB64 = ref('');
@@ -21,12 +22,15 @@ const stats = ref({ total: 0, classReminders: 0, todoReminders: 0, testReminders
 const schedMsg = ref('');
 const exact = ref('unknown');
 const wire = ref({ ok: true, sample: '', hint: '' });
+/** 打开「天气」面板时的开关与城市：用它判断"保存时用户是不是明确改过"（改过就允许立刻拉一次） */
+const wxOpened = ref({ enabled: false, city: '' });
 
 const sub = computed(() => SECOND_CLASS_BLOCKS.map((b) => b.name + ' ' + db.blockScore(b.key)).join(' · '));
 
 async function open(name: typeof panel.value): Promise<void> {
   panel.value = name;
   if (name === 'notify') { await refreshNotifyState(); }
+  if (name === 'weather') wxOpened.value = { enabled: db.settings.weatherEnabled, city: (db.settings.weatherCity || '').trim() };
 }
 
 async function test(minutes: number): Promise<void> {
@@ -82,6 +86,30 @@ async function setFont(percent: number): Promise<void> {
 async function askExact(): Promise<void> {
   exact.value = await requestExactAlarmSetting();
   db.notify(exact.value === 'granted' ? '精确闹钟已授权，提醒会按时到点触发' : '返回后请重新打开通知设置查看状态');
+}
+
+/**
+ * 天气（Net.md P0）。
+ * 开关状态直接写在设置里（和别的面板一样），只有点「保存设置」才落盘；
+ * 关着的时候**一次请求都不发**（`ensureWeather` 里由 `shouldRequestWeather` 兜底），
+ * 所以这里的按钮也会先看开关，避免"关着还能点出一次请求"这种自相矛盾的界面。
+ */
+async function updateWeatherNow(): Promise<void> {
+  if (!db.settings.weatherEnabled) { db.notify('天气是关闭状态，不会发任何请求'); return; }
+  await db.ensureWeather(true);
+  db.notify(db.weatherMsg || '已更新');
+}
+
+/**
+ * 保存天气设置。
+ * 「打开开关 / 改城市」是用户明确表达"我要看这个地方的天气"，保存后**立刻**拉一次；
+ * 只是重新点了一次保存（什么都没改）则仍走 30 分钟节流 —— 免得反复保存变成反复请求。
+ */
+async function saveWeather(): Promise<void> {
+  db.settings.weatherCity = (db.settings.weatherCity || '').trim();
+  const changed = db.settings.weatherCity !== wxOpened.value.city || db.settings.weatherEnabled !== wxOpened.value.enabled;
+  await saveSettings('天气设置');
+  if (db.settings.weatherEnabled) void db.ensureWeather(changed);
 }
 
 /** 从系统设置页返回时自动刷新四项状态，避免用户看不到变化。 */
@@ -221,6 +249,7 @@ async function copyInterests(): Promise<void> {
       <div class="li" @click="open('notify')"><span class="ico">🔔</span><div class="grow"><div class="bold">通知设置</div><div class="small muted">上课提醒 / 待办提醒 / 权限状态</div></div><span>›</span></div>
       <div class="li" @click="open('theme')"><span class="ico">🌗</span><div class="grow"><div class="bold">外观与主题</div><div class="small muted">跟随系统深色 / 常浅 / 常深 · 字号（小 / 标准 / 大 / 特大）</div></div><span class="chev">›</span></div>
 <div class="li" @click="open('watermark')"><span class="ico">💧</span><div class="grow"><div class="bold">拍照水印</div><div class="small muted">自主开关水印内容与样式</div></div><span>›</span></div>
+      <div class="li" @click="open('weather')"><span class="ico">🌤️</span><div class="grow"><div class="bold">天气</div><div class="small muted">{{ db.settings.weatherEnabled ? '已开启 · 课表页顶部一行天气' : '默认关闭 · 打开后课表页顶部显示一行天气' }}</div></div><span>›</span></div>
       <div class="li" @click="open('backup')"><span class="ico">💾</span><div class="grow"><div class="bold">备份与恢复</div><div class="small muted">导出 / 导入 .unimate.zip</div></div><span>›</span></div>
       <div class="li" @click="open('interests')"><span class="ico">🏫</span><div class="grow"><div class="bold">意向清单</div><div class="small muted">已提交意向的高校（本机 {{ db.interests.length }} 条）</div></div><span>›</span></div>
       <div class="li" @click="open('about')"><span class="ico">ℹ️</span><div class="grow"><div class="bold">关于 Unimate</div><div class="small muted">版本、定位与隐私说明</div></div><span>›</span></div>
@@ -239,7 +268,7 @@ async function copyInterests(): Promise<void> {
 
   <div v-if="panel" class="mask" @click.self="panel = ''">
     <div class="sheet">
-      <div class="row"><div class="title grow">{{ { notify: '通知设置', watermark: '拍照水印', backup: '备份与恢复', about: '关于 Unimate', interests: '意向清单' }[panel] }}</div><button class="btn sm ghost" @click="panel = ''">关闭</button></div>
+      <div class="row"><div class="title grow">{{ { notify: '通知设置', watermark: '拍照水印', weather: '天气', backup: '备份与恢复', about: '关于 Unimate', interests: '意向清单' }[panel] }}</div><button class="btn sm ghost" @click="panel = ''">关闭</button></div>
       <div class="hairline"></div>
 
       <template v-if="panel === 'notify'">
@@ -312,6 +341,49 @@ async function copyInterests(): Promise<void> {
         <button class="btn block" style="margin-top: 10px" @click="saveSettings('拍照水印')">保存设置</button>
       </template>
 
+      <template v-else-if="panel === 'weather'">
+        <div class="li" style="padding: 10px 0">
+          <span class="grow">天气（课表页顶部一行）</span>
+          <button class="chip sm" :class="{ on: db.settings.weatherEnabled }" @click="db.settings.weatherEnabled = !db.settings.weatherEnabled">{{ db.settings.weatherEnabled ? '开' : '关' }}</button>
+        </div>
+        <div class="small muted" style="line-height: 1.7; margin-bottom: 10px">
+          <b>默认关闭</b>，打开后课表页顶部才出现一行天气。<br />
+          关着的时候 App <b>一次请求都不发</b>；打开后 <b>30 分钟最多更新一次</b>（失败也算一次，不会在没网时反复试）。<br />
+          打开开关或改城市后保存，会<b>立刻</b>拉一次；其它时候点「保存设置」不会重复请求。
+        </div>
+
+        <div class="field">
+          <label>查询位置（留空 = 用系统定位）</label>
+          <input v-model="db.settings.weatherCity" maxlength="20" placeholder="如：北京（拒绝定位授权时在这里手填）" />
+        </div>
+        <div class="small muted" style="margin-bottom: 10px">
+          留空时用系统定位（会申请定位权限）；填了城市名就只按你填的查，<b>不再申请定位权限</b>。
+        </div>
+
+        <div class="card" style="box-shadow: none; background: var(--soft)">
+          <div class="row" style="justify-content: space-between">
+            <span class="small">当前显示</span>
+            <b class="small">{{ db.settings.weatherNow ? weatherText(db.settings.weatherNow) : '还没有数据' }}</b>
+          </div>
+          <div class="small muted" style="margin-top: 4px">
+            <template v-if="db.settings.weatherNow">{{ agoText(db.settings.weatherNow.fetchedAt) }}更新<template v-if="db.settings.weatherLoc"> · 位置来源：{{ db.settings.weatherLoc.name }}</template></template>
+            <template v-else>打开开关 → 点下面的「立即更新」，课表页顶部就会出现那一行</template>
+          </div>
+          <div v-if="db.weatherMsg" class="small" style="margin-top: 6px">{{ db.weatherMsg }}</div>
+          <div class="small muted" style="margin-top: 6px">
+            课表页那张卡点一下也会更新，同样受 30 分钟限制；要立刻重拉就点这里的「立即更新」。
+          </div>
+        </div>
+
+        <button class="btn block" style="margin-top: 10px" :disabled="db.weatherBusy || !db.settings.weatherEnabled" @click="updateWeatherNow()">{{ db.weatherBusy ? '更新中…' : '立即更新' }}</button>
+        <div v-if="!db.settings.weatherEnabled" class="small muted" style="margin-top: 6px">天气现在是关闭状态，点它也不会发请求 —— 先打开上面的开关。</div>
+        <div class="small muted" style="margin-top: 10px; line-height: 1.7">
+          数据来自 Open-Meteo（免费、免注册、不用 Key）。只把<b>大致坐标</b>（或你手填的城市名）发过去查天气，
+          不带账号、课表、设备号；断网或接口失败时显示上次结果 + "x 分钟前更新"，不影响其它功能。
+        </div>
+        <button class="btn block ghost" style="margin-top: 10px" @click="saveWeather()">保存设置</button>
+      </template>
+
       <template v-else-if="panel === 'backup'">
         <button class="btn block" @click="doExport">导出备份（.unimate.zip）</button>
         <div v-if="lastBackup" class="small muted" style="margin: 8px 0; word-break: break-all">已导出：{{ lastBackup }}</div>
@@ -351,7 +423,9 @@ async function copyInterests(): Promise<void> {
         <div class="hairline"></div>
         <div class="small" style="line-height: 1.8">
           <b>我们想做的事：</b>把大学里高频却分散的"课表、待办、第二课堂材料、在线教学平台、教务系统"收进一个 App，并做成<b>可复制到不同高校的框架</b>——每所学校的差异收敛到一份高校档案与一个数据适配器，先做好北化，再按校推进。<br /><br />
-          <b>隐私：</b>全部数据只存本机；账号密码不读取、不保存、不代填；不使用第三方地图 Key；无埋点、无上报。<br /><br />
+          <b>隐私：</b>全部数据只存本机；账号密码不读取、不保存、不代填；不使用第三方地图 Key；无埋点、无上报。<br />
+          App 自己发起的联网请求只有一处，就是<b>天气</b>（默认关闭，开关在「我的 → 天气」）：<b>开启天气后会向 Open-Meteo 发送你的大致位置用于查询天气，不发送其他信息</b>；关掉开关后一次请求都不发。<br />
+          （你在「北化通」里打开的教务/教学系统网页属于你主动访问，不由 App 上传数据。）<br /><br />
           <b>声明：</b>本项目为学生自制演示作品，与学校官方无关；第二课堂分数为自评记录，非学校认定结果。
         </div>
       </template>

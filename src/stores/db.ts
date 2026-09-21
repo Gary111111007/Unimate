@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import type {
   Account, Course, CourseMaterial, HourEntry, HourKind, InterestEntry, NoteItem, SchoolProfile, SecondClassRecord,
-  Settings, Timetable
+  Settings, Timetable, WeatherLocation
 } from '../types.ts';
 import { findSchool, profileFor, SCHOOLS } from '../catalog/universities.ts';
 import { DEFAULT_PERIOD_TIMES, courseColorIndex } from '../catalog/periods.ts';
@@ -13,6 +13,8 @@ import { buildDemoBisuCourses, buildDemoNotes, buildDemoRecords, buildDemoTimeta
 import { rescheduleAll, scheduleDemoPing, cancelAllScheduledOnBoot } from '../services/notify.ts';
 import { guard, traceReset } from '../services/guard.ts';
 import { applyTextZoom } from '../services/display.ts';
+import { fetchWeather, firstFulfilled, geocode, shouldRequestWeather } from '../services/weather.ts';
+import { Geolocation } from '@capacitor/geolocation';
 
 export const SCHEMA_VERSION = 1;
 export const APP_VERSION = '1.0.0';
@@ -37,7 +39,9 @@ function defaultSettings(p: SchoolProfile): Settings {
     customApps: [],
     toolFab: null,
     // 启动时只弹一次电池优化申请
-    powerPrompted: false
+    powerPrompted: false,
+    // 天气（Net.md P0）：默认关闭 —— 关着的时候一次请求都不发
+    weatherEnabled: false, weatherCity: '', weatherLoc: null, weatherNow: null, weatherTriedAt: 0
   };
 }
 
@@ -504,12 +508,116 @@ function hourTotal(kind: HourKind): number {
     return courses.value.filter((c) => c.timetableId === (activeTimetable.value && activeTimetable.value.id) && c.day === day && c.weeks.indexOf(week) >= 0);
   }
 
+  // ---------------- 天气（Net.md P0 / PRD 5.13，v2.24） ----------------
+  /*
+   * 这是 App 的**第一个真联网功能**，三条口径都在这里守（界面只负责调 ensureWeather）：
+   *  1) 关着就一次都不发：开关为 false 时直接返回，连定位权限都不查；
+   *  2) 30 分钟最多一次：**成功、失败都记 weatherTriedAt**，断网时不会退化成"每进一次课表发一次请求"；
+   *  3) 不阻塞、不抛错：定位与网络全部包 guard() 超时，失败只留一句文案，界面照常能用。
+   * 上次结果与上次坐标都存在本机设置里：断网时显示上次数据 + "x 分钟前更新"。
+   */
+  const weatherBusy = ref(false);
+  /** 上次请求的结果文案（已更新 / 没网 / 权限没给…）：面板里直接显示，不静默失败 */
+  const weatherMsg = ref('');
+  /** 系统定位坐标的复用窗口：24 小时内不重复调定位（省电，也不反复弹权限） */
+  const LOC_REUSE_MS = 24 * 60 * 60 * 1000;
+
+  /** 只写设置文件：天气这种小改动不必把课表/记事/照片索引全部重写一遍 */
+  async function saveSettingsFile(): Promise<void> {
+    if (!session.value || !profile.value) return;
+    await writeJson(base() + '/settings.json', settings.value);
+  }
+
+  /**
+   * 系统定位（网络定位与卫星定位同时发起、谁先回来用谁）。
+   * 权限查询/申请/取坐标都是原生调用，一律包 guard()：宁可拿不到位置，也不许把界面挂住。
+   */
+  async function locateForWeather(): Promise<WeatherLocation | null> {
+    try {
+      let allowed: boolean | null = null;
+      try {
+        const cur: any = await guard('查定位权限', Geolocation.checkPermissions(), 3000, null as any);
+        if (cur) allowed = cur.location === 'granted' || cur.coarseLocation === 'granted';
+      } catch { allowed = null; }
+      if (allowed === false) {
+        const req: any = await guard('申请定位权限', Geolocation.requestPermissions(), 8000, null as any);
+        if (req) allowed = req.location === 'granted' || req.coarseLocation === 'granted';
+      }
+      if (allowed === false) {
+        weatherMsg.value = '定位权限没给：可在本页手填城市，一样能查天气';
+        return null;
+      }
+      const got: any = await guard('获取定位', firstFulfilled([
+        Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }).then((p) => ({ p, from: 'network' as const })),
+        Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }).then((p) => ({ p, from: 'gps' as const }))
+      ]), 6500, null);
+      const c = got && got.p && got.p.coords;
+      if (!c || !Number.isFinite(c.latitude) || !Number.isFinite(c.longitude)) {
+        weatherMsg.value = '没取到位置：可在本页手填城市再试';
+        return null;
+      }
+      return {
+        lat: c.latitude, lon: c.longitude, from: got.from,
+        name: got.from === 'gps' ? '卫星定位' : 'WiFi/基站定位', at: Date.now()
+      };
+    } catch {
+      weatherMsg.value = '当前环境用不了系统定位：可在本页手填城市';
+      return null;
+    }
+  }
+
+  /** 决定用哪个坐标：手填城市优先（geocode 换坐标），否则系统定位（24 小时内的坐标直接复用） */
+  async function weatherLocation(force: boolean): Promise<WeatherLocation | null> {
+    const s = settings.value;
+    const city = (s.weatherCity || '').trim();
+    const cached = s.weatherLoc;
+    if (city) {
+      if (!force && cached && cached.from === 'manual' && cached.name === city) return cached;
+      const g = await geocode(city);
+      if (g) return { lat: g.lat, lon: g.lon, from: 'manual', name: g.name || city, at: Date.now() };
+      if (cached && cached.from === 'manual') return cached;   // 城市没查出来时，继续用上次那个，不把已有数据弄丢
+      weatherMsg.value = '没查到城市「' + city + '」：换个写法（如"北京""上海"）再试';
+      return null;
+    }
+    if (!force && cached && cached.from !== 'manual' && Date.now() - cached.at < LOC_REUSE_MS) return cached;
+    const p = await locateForWeather();
+    return p || cached || null;   // 这次定位失败、上次有坐标：用旧的比没有强（文案里已经说明了原因）
+  }
+
+  /**
+   * 天气的唯一入口。界面（课表页那张卡、「我的 → 天气」面板）只调它。
+   * force=true 只在用户点「立即更新」时用；点「保存设置」走的是节流版，
+   * 免得"反复保存设置"变成"反复发请求"。
+   */
+  async function ensureWeather(force = false): Promise<void> {
+    const s = settings.value;
+    if (!shouldRequestWeather({ enabled: !!s.weatherEnabled, lastTryAt: s.weatherTriedAt || 0, force })) return;
+    if (weatherBusy.value) return;
+    weatherBusy.value = true;
+    s.weatherTriedAt = Date.now();      // 先记"已经试过"：请求挂起时也不会被重复触发
+    try {
+      const loc = await weatherLocation(force);
+      if (loc) {
+        s.weatherLoc = loc;
+        const w = await fetchWeather(loc.lat, loc.lon);
+        if (w) { s.weatherNow = w; weatherMsg.value = '已更新 · ' + loc.name; }
+        else weatherMsg.value = '这次没拉到天气（多半是没网）：先显示上次结果，30 分钟后自动再试';
+      }
+    } catch (e) {
+      weatherMsg.value = '天气更新失败：' + (e instanceof Error ? e.message : String(e));
+    } finally {
+      weatherBusy.value = false;
+      try { await saveSettingsFile(); } catch { /* 天气写盘失败不影响主流程，内存里这份照常显示 */ }
+    }
+  }
+
   return {
     booted, screen, profile, accounts, session, interests, timetables, courses, notes, records, hours, materials, settings, focus,
     activeTab, activeSheet, toast, toastSeq, busy, lastError, storage, activeTimetable, currentWeek, confirmReq, confirm, answerConfirm,
     boot, selectSchool, applyProfile, changeSchool, addInterest, ensureDemoAccount, register, login, logout, switchSchool,
     loadUserData, saveData, seedDemo, resetDemo, notify,
-    newTimetable, addCourse, removeCourse, addNote, addRecord, addHour, removeHour, addMaterial, removeMaterial, materialsOf, hourTotal, blockScore, totalScore, coursesOn, persistManifest
+    newTimetable, addCourse, removeCourse, addNote, addRecord, addHour, removeHour, addMaterial, removeMaterial, materialsOf, hourTotal, blockScore, totalScore, coursesOn, persistManifest,
+    weatherBusy, weatherMsg, ensureWeather
   };
 })
 ;
