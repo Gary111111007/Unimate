@@ -72,6 +72,9 @@ npm run test:schoolpack     # 103 条：发布包自检（验签/sha256/白名�
 | --- | --- | --- |
 | 选校页写着"签名校验失败，已拒收" | 站点上的 `index.json` 与 `index.json.sig` 不配对（改了清单没重签，或上传了旧的 sig） | 重跑 `make-school-pack.mjs`，把 `public/catalog` 一起传上去 |
 | 写着"签名校验失败：这份清单不是官方发布的" | 站点上的 `index.json` 与 `.sig` 不配对，或换过密钥没重出包 | 重跑 `make-school-pack.mjs`；换过密钥就还要重出 APK（旧包只认旧公钥） |
+| 写着"站点上还没有下发清单（取回来的是网页而不是 JSON）" | 演示站还没部署 `catalog/`：静态托管把未知路径回落成了首页 | 按 `docs/deploy.md` 重新部署 `dist`（**`catalog/` 必须在里面**），然后核对 `curl …/catalog/index.json` |
+| 写着"站点上没有清单或签名文件（HTTP 404）" | 部署了但路径不对（比如只传了 `index.html`），或部署到了别的项目 | 同上一行；确认传的是 `dist` 的**内容**，站点根下直接就是 `catalog/` |
+| 写着"清单与签名文件不齐" | 只传上去一个（常见于手工挑文件上传） | 把 `public/catalog` 下四个文件一起传（`index.json`、`index.json.sig`、各校 `<id>.json`） |
 | 写着"站点上没有清单或签名文件" | 只传了档案没传清单，或路径不是 `/catalog/` | 站点根目录下要有 `catalog/index.json`、`index.json.sig`、`<id>.json` |
 | 明明改过档案，App 里还是"已可使用"没有「可更新」 | `profileVersion` 没 +1（或等于内置版本） | 把 `profileVersion` +1 再签一次 |
 | 脚本报"公钥与私钥不配对，别上传" | `schoolKey.ts` 里是另一把钥匙的公钥 | 重新 `keygen` 并把新公钥贴进去（或找回对应的私钥） |

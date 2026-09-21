@@ -233,6 +233,24 @@ ok('catalogUrl 拼在站点根下', catalogUrl('index.json', BASE) === BASE + 'c
 }
 ok('sha256Hex 与 node 的 sha256 一致', (await sha256Hex(fixtureText)) === fixtureSha);
 ok('断网/404 时返回 ok:false 而不是抛异常', (await fetchCatalog(testPubB64, 'https://empty.test/')).ok === false);
+{
+  // 真机验收踩到的坑：演示站还没部署 catalog/ 时，静态托管把未知路径回落成首页（200 + text/html），
+  // 老代码把它报成"签名校验失败：这份清单不是官方发布的" —— 听起来像被投毒，其实只是没上传。
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, headers: { get: () => 'text/html; charset=utf-8' }, text: async () => '<!doctype html><html><body>站点首页</body></html>' })) as any;
+  const r1 = await fetchCatalog(testPubB64, BASE);
+  ok('站点回落成首页（HTML）→ 报"还没有下发清单"，而不是"签名校验失败"',
+    r1.ok === false && /还没有下发清单/.test((r1 as any).reason) && !/签名校验失败/.test((r1 as any).reason), JSON.stringify(r1));
+  globalThis.fetch = (async () => ({ ok: false, status: 404, headers: { get: () => 'text/plain' }, text: async () => 'Not Found' })) as any;
+  const r2 = await fetchCatalog(testPubB64, BASE);
+  ok('真的 404 → 报"站点上没有清单或签名文件"', r2.ok === false && /没有清单或签名文件/.test((r2 as any).reason), JSON.stringify(r2));
+  globalThis.fetch = (async (u: any) => (String(u).endsWith('.sig')
+    ? { ok: false, status: 404, headers: { get: () => 'text/plain' }, text: async () => '' }
+    : { ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => site.get('index.json')! })) as any;
+  const r3 = await fetchCatalog(testPubB64, BASE);
+  ok('清单在、签名不在 → 报"两个文件不齐"', r3.ok === false && /不齐/.test((r3 as any).reason), JSON.stringify(r3));
+  globalThis.fetch = realFetch;
+}
 
 // ---------------- D. store 接线（拒收 / 限频 / 安装 / 持久化 / 删除） ----------------
 console.log('\n--- store：拒收、限频、安装、持久化、删回内置 ---');

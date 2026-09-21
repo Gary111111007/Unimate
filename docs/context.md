@@ -1,4 +1,4 @@
-# 项目上下文交接（压缩版 · 2026-09-21，v2.26）
+# 项目上下文交接（压缩版 · 2026-09-21，v2.27）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
@@ -11,11 +11,12 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 项 | 值 |
 | --- | --- |
 | 仓库 | `E:\Gary\北京化工大学\北化app\Work` |
-| 最新提交 | 本次 v2.26（纯 JS 验签；上一个提交 `74ae606` — v2.25 学校档案热更新） |
+| 最新提交 | 本次 v2.27（区分"没部署/签名不对"；上一个 `1404130` — v2.26 纯 JS 验签，再上一个 `74ae606` — v2.25 档案热更新） |
 | 上一个提交 | `45e5e32` — 实际是 v2.15~v2.19（提交信息误写 v2.14，已在 PRD §14.1 登记真实口径，历史不重写） |
 | 未提交（本轮） | 无 —— 纯 JS 验签 + 重新签名的下发包一起提交（v2.26） |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages，免备案） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.26，SHA 见 PRD §14.4） |
+| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.27，SHA `AC746B42…`；v2.26 是 `D3EFDEBD…`） |
+| 演示站状态 | **仍是 v2.23 的包**（线上 `index-UMPn5m76.js`），`/catalog/` 不存在 → App 会提示"站点上还没有下发清单"，属正常降级 |
 | 签名私钥 | `keys\school-signing.key`（**未入库**，丢了要重新 keygen 并改公钥 + 重出包） |
 
 ## 3. 下一步（按优先级）
@@ -57,6 +58,7 @@ curl.exe -sS https://unimate3.pages.dev/ | Select-String 'index-.*\.js'      # �
 | `.btn` 从来没有 `:disabled` 样式 | 禁用按钮和可点按钮长得一样（"点了没反应"的观感）→ 已补 `.btn:disabled{opacity:.45}` |
 | 登录页写着"不联网、不上传" | 有了天气就不成立；文档与界面口径要跟着实现走（AGENTS.md 第 7 条） |
 | **真机报"WebCrypto 用不了验签"**（v2.25 的坑，v2.26 修） | 安卓 WebView 的平台密码学实现差异会让整个热更新在部分机型上不可用 → **改用纯 JS 验签**（`@noble/ed25519` + `@noble/hashes`），算法回到规范写的 Ed25519，从此不依赖 WebCrypto |
+| **把"还没部署"报成"签名不对"**（v2.26 的坑，v2.27 修） | 静态托管对未知路径会回落成首页（200 + text/html），App 拿 HTML 去验签必然失败 → `fetchCatalog()` 现在同时看 HTTP 状态与 content-type，四种情况分别给文案；**只有"两个文件都在但验不过"才是可能被投毒的告警** |
 | 顺带的发现：明文 http 下 `crypto.subtle` 根本不存在（仅安全上下文才有） | 用局域网 IP（`http://192.168.x.x`）调试时，浏览器里连 SHA-256 都算不了 —— 这也是"别把关键能力押在平台 API 上"的又一例证 |
 | `build-apk.ps1` 行尾是**混着的**（老行 `CR CR LF`，新加的行纯 LF） | 改它只能用 node 按字节插入、并**沿用相邻行的行尾**，别统一行尾 —— 否则 diff 里上百行假变更 |
 | 私钥差点进了仓库 | `keys/` 已写进 `.gitignore`；出包反查里也要确认 APK 里**没有** `BEGIN PRIVATE KEY` |

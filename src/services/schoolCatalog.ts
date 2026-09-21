@@ -302,13 +302,29 @@ export type FetchCatalogResult = { ok: true; index: CatalogIndex } | { ok: false
 /** 拉清单 → 验签 → 解析。任何一步不过都返回 ok:false（调用方保留旧缓存/内置名单） */
 export async function fetchCatalog(pubB64: string, base?: string): Promise<FetchCatalogResult> {
   try {
+    // 连 HTTP 状态与 content-type 一起拿回来：站点"还没部署 catalog/"和"清单被人改过"必须给不同的文案，
+    // 否则用户（和验收的人）会以为站点被投毒了，其实只是没上传（真机验收时就是这么误报的）。
+    const grab = (u: string) => fetch(u).then(async (r: any) => ({
+      ok: !!r.ok,
+      type: String((r.headers && r.headers.get && r.headers.get('content-type')) || ''),
+      text: await r.text()
+    }));
     const res: any = await guard('拉学校清单', Promise.all([
-      fetch(catalogUrl('index.json', base)).then((r) => r.text()),
-      fetch(catalogUrl('index.json.sig', base)).then((r) => r.text())
+      grab(catalogUrl('index.json', base)),
+      grab(catalogUrl('index.json.sig', base))
     ]), 8000, null);
     if (!res) return { ok: false, reason: '拉取超时或断网' };
-    const indexText = normalize(res[0]);
-    const sigText = String(res[1] || '').trim();
+    const a = res[0] || { ok: false, type: '', text: '' };
+    const b = res[1] || { ok: false, type: '', text: '' };
+    /** 静态托管对未知路径常回落到首页（200 + text/html）——那是"还没部署"，不是"签名不对" */
+    const looksHtml = (x: any) => /text\/html/i.test(x.type) || /^\s*<(!doctype|html)/i.test(String(x.text || ''));
+    if ((a.ok && looksHtml(a)) || (b.ok && looksHtml(b))) {
+      return { ok: false, reason: '站点上还没有下发清单（取回来的是网页而不是 JSON）：多半是演示站还没部署 catalog/ 目录' };
+    }
+    if (!a.ok && !b.ok) return { ok: false, reason: '站点上没有清单或签名文件（HTTP 404）：还没部署，或部署的路径不对' };
+    if (!a.ok || !b.ok) return { ok: false, reason: '站点上的清单与签名文件不齐（一个在、一个不在），已跳过' };
+    const indexText = normalize(a.text);
+    const sigText = String(b.text || '').trim();
     if (!indexText || !sigText) return { ok: false, reason: '站点上没有清单或签名文件' };
     const v = await verifySignature(new TextEncoder().encode(indexText), sigText, pubB64);
     if (v !== 'ok') return { ok: false, reason: '签名校验失败：这份清单不是官方发布的，已拒收' };
