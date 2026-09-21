@@ -70,11 +70,14 @@ export const SCHOOLS: SchoolEntry[] = [
 
 export const BUCT_PROFILE: SchoolProfile = {
   schoolId: 'buct',
+  // 内置档案版本：远端 index.json 的 version 比它大时，选校页显示「可更新」
+  profileVersion: 1,
   name: '北京化工大学',
   shortName: '北化',
   status: 'live',
   order: 0,
   province: '北京',
+  letter: 'B',
   brand: { primaryColor: '#2E5AAC', accentColor: '#E8A33D', iconLetter: '化' },
   // 第三栏改名"北化通"：取"校园一卡通"式的国民认知，一眼是聚合入口而非单一平台。
   // 注意北化官网导航里自己有一个"北化在线"（继续教育平台），沿用旧名会与之撞车。
@@ -136,9 +139,11 @@ export function findSchool(schoolId: string): SchoolEntry | undefined {
  */
 export const BISU_PROFILE: SchoolProfile = {
   schoolId: 'bisu',
+  profileVersion: 1,
   name: '北京第二外国语学院',
   shortName: '北二外',
   status: 'live',
+  letter: 'B',
   order: 3,
   province: '北京',
   brand: { primaryColor: '#B4443C', accentColor: '#E8A33D', iconLetter: '外' },
@@ -196,3 +201,13 @@ export function profileFor(schoolId: string): SchoolProfile | null {
   if (schoolId === 'bisu') return JSON.parse(JSON.stringify(BISU_PROFILE));
   return null;
 }
+
+/**
+ * APK 里内置档案的版本号（Net.md P2 学校档案热更新）。
+ * 远端 `catalog/index.json` 里同一所学校的 `version` 比这里大 → 选校页显示「可更新」；
+ * **改了内置档案的内容就要把 profileVersion +1**，否则老用户永远看不到「可更新」。
+ */
+export const BUILTIN_PROFILE_VERSIONS: Record<string, number> = {
+  buct: BUCT_PROFILE.profileVersion,
+  bisu: BISU_PROFILE.profileVersion
+};

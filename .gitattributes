@@ -1,0 +1,6 @@
+# 下发档案与签名**必须按字节稳定**（Net.md P2 / PRD 5.14）：
+# 客户端是拿"签名清单里记录的 sha256"去比站点上那份文件的字节的。
+# 本机 core.autocrlf=true，如果不在这里关掉换行转换，别人 clone 出来的档案会变成 CRLF，
+# sha256 立刻对不上 → 线上所有下载都会被判成"校验和不一致，已拒收"。
+catalog/*.json -text
+public/catalog/* -text

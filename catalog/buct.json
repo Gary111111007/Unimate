@@ -1,0 +1,182 @@
+{
+  "schoolId": "buct",
+  "profileVersion": 1,
+  "name": "北京化工大学",
+  "shortName": "北化",
+  "status": "live",
+  "order": 0,
+  "province": "北京",
+  "letter": "B",
+  "brand": {
+    "primaryColor": "#2E5AAC",
+    "accentColor": "#E8A33D",
+    "iconLetter": "化"
+  },
+  "tabs": {
+    "online": "北化通"
+  },
+  "campusApps": [
+    {
+      "key": "course",
+      "name": "北化在线",
+      "url": "https://course.buct.edu.cn/",
+      "icon": "📚",
+      "desc": "在线课程与作业",
+      "builtin": true
+    },
+    {
+      "key": "jwglxt",
+      "name": "教务系统",
+      "url": "https://jwglxt.buct.edu.cn/",
+      "icon": "🏛",
+      "desc": "课表 · 成绩 · 选课",
+      "builtin": true
+    },
+    {
+      "key": "exam",
+      "name": "考试查询",
+      "url": "https://jwglxt.buct.edu.cn/jwglxt/kwgl/kscx_cxXsksxxIndex.html?gnmkdm=N358105&layout=default",
+      "icon": "📝",
+      "desc": "识别考试 · 写进记事本提醒",
+      "builtin": true,
+      "action": "exam"
+    },
+    {
+      "key": "health",
+      "name": "健康云",
+      "url": "https://tygl.buct.edu.cn/",
+      "icon": "🩺",
+      "desc": "体质测试与健康数据",
+      "builtin": true
+    },
+    {
+      "key": "library",
+      "name": "图书馆",
+      "url": "https://library.buct.edu.cn/",
+      "icon": "📖",
+      "desc": "馆藏检索 · 数据库导航",
+      "builtin": true
+    },
+    {
+      "key": "zy",
+      "name": "电子资源",
+      "url": "https://zy.buct.edu.cn/",
+      "icon": "🔑",
+      "desc": "统一身份认证 · 校外访问",
+      "builtin": true
+    },
+    {
+      "key": "portal",
+      "name": "信息门户",
+      "url": "https://portal.buct.edu.cn/",
+      "icon": "🧭",
+      "desc": "统一身份认证主入口",
+      "builtin": true
+    },
+    {
+      "key": "home",
+      "name": "学校主页",
+      "url": "https://www.buct.edu.cn/",
+      "icon": "🏫",
+      "desc": "通知公告 · 数字校园",
+      "builtin": true
+    },
+    {
+      "key": "tree",
+      "name": "校园网平台",
+      "url": "https://tree.buct.edu.cn/",
+      "icon": "🌳",
+      "desc": "网络认证 · 校园网服务",
+      "builtin": true
+    }
+  ],
+  "academic": {
+    "semesterLabel": "2026-2027学年第1学期",
+    "semesterStartMonday": "2026-08-31",
+    "totalWeeks": 18,
+    "periodCount": 12,
+    "periodTimes": [
+      {
+        "period": 1,
+        "start": "08:00",
+        "end": "08:45"
+      },
+      {
+        "period": 2,
+        "start": "08:50",
+        "end": "09:35"
+      },
+      {
+        "period": 3,
+        "start": "09:45",
+        "end": "10:30"
+      },
+      {
+        "period": 4,
+        "start": "10:40",
+        "end": "11:25"
+      },
+      {
+        "period": 5,
+        "start": "11:30",
+        "end": "12:15"
+      },
+      {
+        "period": 6,
+        "start": "13:30",
+        "end": "14:15"
+      },
+      {
+        "period": 7,
+        "start": "14:20",
+        "end": "15:05"
+      },
+      {
+        "period": 8,
+        "start": "15:15",
+        "end": "16:00"
+      },
+      {
+        "period": 9,
+        "start": "16:05",
+        "end": "16:50"
+      },
+      {
+        "period": 10,
+        "start": "18:00",
+        "end": "18:45"
+      },
+      {
+        "period": 11,
+        "start": "18:50",
+        "end": "19:35"
+      },
+      {
+        "period": 12,
+        "start": "19:40",
+        "end": "20:25"
+      }
+    ]
+  },
+  "systems": {
+    "jwglxtUrl": "https://jwglxt.buct.edu.cn/",
+    "timetableUrl": "https://jwglxt.buct.edu.cn/jwglxt/kbcx/xskbcx_cxXskbcxIndex.html?gnmkdm=N2151&layout=default",
+    "onlinePlatformUrl": "https://course.buct.edu.cn/",
+    "timetableAdapter": "jwglxt-buct"
+  },
+  "campuses": [
+    "北区",
+    "东区",
+    "西校区"
+  ],
+  "secondClass": {
+    "enabled": true,
+    "label": "第二课堂",
+    "blocks": [],
+    "rulePack": "buct-student-handbook-2025"
+  },
+  "watermark": {
+    "schoolBadgeText": "北京化工大学"
+  },
+  "dataDir": "schools/buct"
+}

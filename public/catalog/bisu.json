@@ -1,0 +1,133 @@
+{
+  "schoolId": "bisu",
+  "profileVersion": 1,
+  "name": "北京第二外国语学院",
+  "shortName": "北二外",
+  "status": "live",
+  "letter": "B",
+  "order": 3,
+  "province": "北京",
+  "brand": {
+    "primaryColor": "#B4443C",
+    "accentColor": "#E8A33D",
+    "iconLetter": "外"
+  },
+  "tabs": {
+    "online": "校园服务"
+  },
+  "campusApps": [
+    {
+      "key": "home",
+      "name": "学校主页",
+      "url": "https://www.bisu.edu.cn/",
+      "icon": "🏫",
+      "desc": "学校新闻与通知公告",
+      "builtin": true
+    },
+    {
+      "key": "jwglxt",
+      "name": "教务处",
+      "url": "https://jwglxt.bisu.edu.cn/",
+      "icon": "🏛",
+      "desc": "教学通知与教务服务",
+      "builtin": true
+    },
+    {
+      "key": "exam",
+      "name": "考试查询",
+      "url": "https://jwglxt.bisu.edu.cn/jwglxt/kwgl/kscx_cxXsksxxIndex.html?gnmkdm=N358105&layout=default",
+      "icon": "📝",
+      "desc": "识别考试 · 写进记事本提醒",
+      "builtin": true,
+      "action": "exam"
+    }
+  ],
+  "academic": {
+    "semesterLabel": "2026-2027学年第1学期",
+    "semesterStartMonday": "2026-09-07",
+    "totalWeeks": 18,
+    "periodCount": 12,
+    "periodTimes": [
+      {
+        "period": 1,
+        "start": "08:00",
+        "end": "08:45"
+      },
+      {
+        "period": 2,
+        "start": "08:50",
+        "end": "09:35"
+      },
+      {
+        "period": 3,
+        "start": "09:50",
+        "end": "10:35"
+      },
+      {
+        "period": 4,
+        "start": "10:40",
+        "end": "11:25"
+      },
+      {
+        "period": 5,
+        "start": "11:30",
+        "end": "12:15"
+      },
+      {
+        "period": 6,
+        "start": "13:20",
+        "end": "14:05"
+      },
+      {
+        "period": 7,
+        "start": "14:10",
+        "end": "14:55"
+      },
+      {
+        "period": 8,
+        "start": "15:10",
+        "end": "15:55"
+      },
+      {
+        "period": 9,
+        "start": "16:00",
+        "end": "16:45"
+      },
+      {
+        "period": 10,
+        "start": "16:50",
+        "end": "17:35"
+      },
+      {
+        "period": 11,
+        "start": "18:30",
+        "end": "19:15"
+      },
+      {
+        "period": 12,
+        "start": "19:20",
+        "end": "20:05"
+      }
+    ]
+  },
+  "systems": {
+    "jwglxtUrl": "https://jwglxt.bisu.edu.cn/",
+    "timetableUrl": "https://jwglxt.bisu.edu.cn/jwglxt/kbcx/xskbcx_cxXskbcxIndex.html?gnmkdm=N2151&layout=default",
+    "onlinePlatformUrl": "https://www.bisu.edu.cn/",
+    "timetableAdapter": "jwglxt-buct"
+  },
+  "campuses": [
+    "校本部"
+  ],
+  "secondClass": {
+    "enabled": false,
+    "label": "活动材料",
+    "blocks": [],
+    "rulePack": "",
+    "notice": "不会套用北京化工大学的第二课堂分值表。你仍可使用上方\"志愿时长\"和\"劳育时长\"记录本地材料，照片与数据不会上传。"
+  },
+  "watermark": {
+    "schoolBadgeText": "北京第二外国语学院"
+  },
+  "dataDir": "schools/bisu"
+}

@@ -4,7 +4,8 @@ import type {
   Account, Course, CourseMaterial, HourEntry, HourKind, InterestEntry, NoteItem, SchoolProfile, SecondClassRecord,
   Settings, Timetable, WeatherLocation
 } from '../types.ts';
-import { findSchool, profileFor, SCHOOLS } from '../catalog/universities.ts';
+import { BUILTIN_PROFILE_VERSIONS, findSchool, profileFor, SCHOOLS } from '../catalog/universities.ts';
+import { SCHOOL_CATALOG_PUBKEY } from '../catalog/schoolKey.ts';
 import { DEFAULT_PERIOD_TIMES, courseColorIndex } from '../catalog/periods.ts';
 import { uuid, nowStamp, dateStamp } from '../services/id.ts';
 import { readJson, writeJson, readText, writeText, remove, probeStorage } from '../services/io.ts';
@@ -15,6 +16,10 @@ import { guard, traceReset } from '../services/guard.ts';
 import { applyTextZoom } from '../services/display.ts';
 import { fetchWeather, firstFulfilled, geocode, shouldRequestWeather } from '../services/weather.ts';
 import { Geolocation } from '@capacitor/geolocation';
+import {
+  catalogCheckAllowed, downloadSchoolProfile, fetchCatalog, mergeSchoolRows,
+  type CatalogIndex, type SchoolRow
+} from '../services/schoolCatalog.ts';
 
 export const SCHEMA_VERSION = 1;
 export const APP_VERSION = '1.0.0';
@@ -82,6 +87,16 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   const focus = ref<{ kind: 'course' | 'note'; id: string; week?: number } | null>(null);
   const storage = ref<{ ok: boolean; detail: string }>({ ok: true, detail: '未检测' });
 
+  // ---------------- 学校档案热更新（Net.md P2 / PRD 5.14） ----------------
+  /**
+   * 已下载的高校档案（全局，不属于某个账号 —— 换账号也不用重下）。
+   * 只有**验签通过 + sha256 一致 + 域名白名单通过**的档案才会进这里。
+   */
+  const downloadedSchools = ref<Record<string, { profile: SchoolProfile; version: number; sha256: string; downloadedAt: string }>>({});
+  /** 远端清单（含缓存）与限频状态；lastOkAt/lastTryAt 落盘，重启后不会反复请求 */
+  const catalog = ref<{ index: CatalogIndex | null; lastOkAt: number; lastTryAt: number; msg: string; busy: boolean }>(
+    { index: null, lastOkAt: 0, lastTryAt: 0, msg: '', busy: false });
+
   const activeTimetable = computed(() =>
     timetables.value.find((t) => t.id === settings.value.lastActiveTimetableId) || timetables.value[0] || null);
 
@@ -134,6 +149,25 @@ const screen = ref<'school' | 'login' | 'app'>('login');
         { schemaVersion: SCHEMA_VERSION, schools: {}, accounts: [] } as any);
       interests.value = await guard('读意向清单', readJson<InterestEntry[]>('catalog/interests.json', []), 3000, []);
       accounts.value = await guard('读账号表', readJson<Account[]>('accounts.json', []), 3000, []);
+      // 学校档案热更新（P2）：已下载的档案与远端清单缓存。读不到就退回内置 53 所，用户无感。
+      // 这两份都是"全局数据"，不属于某个账号 —— 换账号不用重下，也不会因为没登录就读不到。
+      try {
+        const dl = await guard('读已下载档案', readJson<any>('catalog/downloaded-schools.json', { items: {} }), 3000, { items: {} } as any);
+        downloadedSchools.value = (dl && dl.items && typeof dl.items === 'object') ? dl.items : {};
+      } catch { downloadedSchools.value = {}; }
+      try {
+        const cc: any = await guard('读学校清单缓存', readJson<any>('catalog/catalog-cache.json', null), 3000, null);
+        /*
+         * 注意：即使上次检查**失败**（没有 index），也要把 lastTryAt 读回来 ——
+         * 否则"失败退避 5 分钟"会随每次重启清零，变成每次开机都去请求一遍。
+         */
+        if (cc) {
+          catalog.value = {
+            index: cc.index || null, lastOkAt: Number(cc.lastOkAt) || 0, lastTryAt: Number(cc.lastTryAt) || 0,
+            msg: typeof cc.msg === 'string' ? cc.msg : '', busy: false
+          };
+        }
+      } catch { /* 缓存读不到：就当今天还没检查过，到时重新拉 */ }
       /*
        * 【v2.14 修正，真机反馈"提醒还是不响"的根因之一】
        * Android 开机恢复广播（BOOT_COMPLETED）会把所有过期排期改写成"15 秒后立即发送"，
@@ -173,7 +207,7 @@ const screen = ref<'school' | 'login' | 'app'>('login');
 
   // ---------------- school ----------------
   async function applyProfile(schoolId: string): Promise<boolean> {
-    const p = profileFor(schoolId);
+    const p = profileOf(schoolId);
     if (!p) return false;
     profile.value = p;
     settings.value = defaultSettings(p);
@@ -181,9 +215,8 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   }
 
   async function selectSchool(schoolId: string, silent = false): Promise<boolean> {
-    const entry = findSchool(schoolId);
-    const p = profileFor(schoolId);
-    if (!entry || !p) {
+    // 能不能选，只取决于"本机有没有这所学校的档案"：内置的、或热更新下载来的都算（PRD 5.14）
+    if (!profileOf(schoolId)) {
       if (!silent) notify('当前高校尚未加入 Unimate 落地计划');
       return false;
     }
@@ -247,7 +280,8 @@ function answerConfirm(ok: boolean): void {
   async function finishLogin(): Promise<void> {
     const acc = accounts.value.find((a) => a.id === session.value?.accountId);
     const sid = acc?.schoolId;
-    if (sid && profileFor(sid)) {
+    // 已下载档案的学校也要能被认出来（否则重启后会被丢回选校页）
+    if (sid && profileOf(sid)) {
       await applyProfile(sid);
       try { await loadUserData(); } catch (e) { fail('读取本机数据', e); }
       if (acc?.isDemo && !timetables.value.length) { try { await seedDemo(); } catch (e) { fail('填充演示数据', e); } }
@@ -508,6 +542,119 @@ function hourTotal(kind: HourKind): number {
     return courses.value.filter((c) => c.timetableId === (activeTimetable.value && activeTimetable.value.id) && c.day === day && c.weeks.indexOf(week) >= 0);
   }
 
+  // ---------------- 学校档案热更新（Net.md P2 / PRD 5.14） ----------------
+  /**
+   * 取某校的档案：**已下载的优先**，没有则用 APK 内置的。
+   * 全工程取档案都必须走这里（`profileFor` 只认识内置的两所），否则热更新下载完也用不上。
+   */
+  function profileOf(schoolId: string): SchoolProfile | null {
+    const d = downloadedSchools.value[schoolId];
+    if (d && d.profile) return JSON.parse(JSON.stringify(d.profile));
+    return profileFor(schoolId);
+  }
+
+  /** 选校页要显示的行 = 内置 53 所 + 远端清单 + 已下载合并（纯函数在 services/schoolCatalog.ts 里，有单测） */
+  const schoolRows = computed<SchoolRow[]>(() => {
+    // 已下载的学校连名字/名次一起带上：远端清单拉不到时，这些学校也要照常显示（只是没有"可更新"）
+    const metas: Record<string, { version: number; name: string; shortName: string; province: string; order: number; letter: string }> = {};
+    for (const id of Object.keys(downloadedSchools.value)) {
+      const p = downloadedSchools.value[id].profile;
+      metas[id] = {
+        version: downloadedSchools.value[id].version,
+        name: p.name, shortName: p.shortName, province: p.province,
+        order: typeof p.order === 'number' ? p.order : 899, letter: p.letter || '#'
+      };
+    }
+    return mergeSchoolRows(SCHOOLS, BUILTIN_PROFILE_VERSIONS, catalog.value.index, metas);
+  });
+
+  /** 本机已下载的档案（选校页底部管理用） */
+  const downloadedList = computed(() => Object.keys(downloadedSchools.value).map((id) => ({
+    schoolId: id, name: downloadedSchools.value[id].profile.name, shortName: downloadedSchools.value[id].profile.shortName,
+    version: downloadedSchools.value[id].version, downloadedAt: downloadedSchools.value[id].downloadedAt,
+    /** 内置也有这所学校 → 删掉只是"回到内置"，不会失去它 */
+    builtin: !!profileFor(id)
+  })));
+
+  function saveDownloaded(): Promise<void> {
+    return writeJson('catalog/downloaded-schools.json', { schemaVersion: 1, items: downloadedSchools.value });
+  }
+  function saveCatalogCache(): Promise<void> {
+    return writeJson('catalog/catalog-cache.json', {
+      lastOkAt: catalog.value.lastOkAt, lastTryAt: catalog.value.lastTryAt, index: catalog.value.index,
+      // 文案也存下来：重启后不该把"上次为什么没检查成"这件事丢掉（不静默失败的延伸）
+      msg: catalog.value.msg
+    });
+  }
+
+  /**
+   * 检查远端清单。**每天最多成功一次**（失败 5 分钟退避），用户点「检查更新」可以强制。
+   * 失败不动旧缓存：验签不过 / 断网时，之前那份清单照常显示徽标（降级口径）。
+   */
+  async function checkCatalog(force = false): Promise<void> {
+    const c = catalog.value;
+    if (c.busy) return;
+    if (!catalogCheckAllowed({ lastOkAt: c.lastOkAt, lastTryAt: c.lastTryAt, force })) return;
+    c.busy = true;
+    c.lastTryAt = Date.now();
+    try {
+      const r = await fetchCatalog(SCHOOL_CATALOG_PUBKEY);
+      if (!r.ok) { c.msg = r.reason; return; }
+      c.index = r.index;
+      c.lastOkAt = Date.now();
+      c.msg = r.index.schools.length
+        ? '远端有 ' + r.index.schools.length + ' 份可下发档案'
+        : '远端还没有可下发的高校档案';
+    } catch (e) {
+      c.msg = '检查更新失败：' + (e instanceof Error ? e.message : String(e));
+    } finally {
+      c.busy = false;
+      try { await saveCatalogCache(); } catch { /* 缓存写不动不影响本次结果 */ }
+    }
+  }
+
+  /** 下载一份档案：sha256 校验 + 结构与域名检查都在服务层做，这里只负责落盘与文案 */
+  async function downloadSchool(schoolId: string): Promise<boolean> {
+    const c = catalog.value;
+    const entry = c.index ? c.index.schools.find((e) => e.id === schoolId) : null;
+    if (!entry) { notify('远端还没有这所高校的可下发档案'); return false; }
+    if (c.busy) return false;
+    c.busy = true;
+    try {
+      const r = await downloadSchoolProfile(entry);
+      if (!r.ok) { c.msg = r.reason; notify('下载失败：' + r.reason); return false; }
+      downloadedSchools.value[schoolId] = {
+        profile: r.profile, version: r.version, sha256: entry.sha256, downloadedAt: nowStamp()
+      };
+      await saveDownloaded();
+      c.msg = '已下载 ' + r.profile.name + '（v' + r.version + '）';
+      notify('已下载 ' + (r.profile.shortName || r.profile.name) + ' 档案，点一下就能用');
+      return true;
+    } finally {
+      c.busy = false;
+    }
+  }
+
+  /**
+   * 删除已下载的档案，回到 APK 内置版本（Net.md P2 的"坏档案可一键回到内置"）。
+   * 内置也有这所学校 → 删除是安全的；只在远端存在（新高校）且**正在使用**时不删 ——
+   * 那等于把账号脚下的档案抽走，必须先切到别的高校。
+   */
+  async function removeDownloaded(schoolId: string): Promise<boolean> {
+    const item = downloadedSchools.value[schoolId];
+    if (!item) return false;
+    const label = item.profile.shortName || item.profile.name || schoolId;
+    if (profile.value && profile.value.schoolId === schoolId && !profileFor(schoolId)) {
+      notify('正用着这所高校：先切换到别的高校，再删除它的下载档案');
+      return false;
+    }
+    delete downloadedSchools.value[schoolId];
+    await saveDownloaded();
+    if (profile.value && profile.value.schoolId === schoolId) await applyProfile(schoolId);   // 回到内置档案
+    notify('已删除 ' + label + ' 的下载档案' + (profileFor(schoolId) ? '，已回到内置档案' : ''));
+    return true;
+  }
+
   // ---------------- 天气（Net.md P0 / PRD 5.13，v2.24） ----------------
   /*
    * 这是 App 的**第一个真联网功能**，三条口径都在这里守（界面只负责调 ensureWeather）：
@@ -617,7 +764,10 @@ function hourTotal(kind: HourKind): number {
     boot, selectSchool, applyProfile, changeSchool, addInterest, ensureDemoAccount, register, login, logout, switchSchool,
     loadUserData, saveData, seedDemo, resetDemo, notify,
     newTimetable, addCourse, removeCourse, addNote, addRecord, addHour, removeHour, addMaterial, removeMaterial, materialsOf, hourTotal, blockScore, totalScore, coursesOn, persistManifest,
-    weatherBusy, weatherMsg, ensureWeather
+    weatherBusy, weatherMsg, ensureWeather,
+    downloadedSchools, downloadedList, schoolRows, catalog, profileOf, checkCatalog, downloadSchool, removeDownloaded,
+    /** 把已下载档案落盘：正常流程由 downloadSchool/removeDownloaded 调用（测试里模拟"下载成功"时会直接用） */
+    saveDownloaded
   };
 })
 ;

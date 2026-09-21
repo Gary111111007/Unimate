@@ -63,8 +63,9 @@ async function useDemo(): Promise<void> {
         <div class="diag" :class="{ bad: !db.storage.ok }">本机存储自检：{{ db.storage.ok ? '正常' : '异常' }} · {{ db.storage.detail }}</div>
         <div v-if="db.lastError" class="errbox">{{ db.lastError }}</div>
         <div class="note muted small">
-          账号与全部数据只保存在本机、不上传。App 自己不会上传任何数据：会联网的只有你主动打开的网页（教务系统等）
-          和<b>默认关闭</b>的天气（见「我的 → 天气」）。密码只存不可逆哈希、没有"找回"入口，忘了密码就重新建号，
+          账号与全部数据只保存在本机、不上传。App 自己不会上传任何数据：会联网的只有你主动打开的网页（教务系统等）、
+          <b>默认关闭</b>的天气（见「我的 → 天气」）与"选择高校"页每天最多一次的高校档案检查（只下载公开档案，不上传）。
+          密码只存不可逆哈希、没有"找回"入口，忘了密码就重新建号，
           旧数据可用「我的 → 备份与恢复」导入新账号。
         </div>
       </div>

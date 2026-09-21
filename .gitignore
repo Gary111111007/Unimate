@@ -5,6 +5,10 @@ artifacts/
 build-gradle*.log
 .DS_Store
 
+# 学校档案下发的签名私钥（Net.md P2）：绝不入库、绝不外发。
+# 丢了就 keygen 一套新的，并把新公钥写回 src/catalog/schoolKey.ts（**旧 APK 会认新签名无效**）。
+keys/
+
 # android/ 只忽略生成物。AndroidManifest.xml、res/xml/file_paths.xml、
 # network_security_config.xml、java 源码与 gradle 配置都是**手写源文件**，
 # 必须纳入版本控制，否则换机或误删 android/ 后这些修复会凭空消失。

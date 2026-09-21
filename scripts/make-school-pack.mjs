@@ -1,0 +1,205 @@
+/**
+ * 学校档案下发包工具（Net.md P2）。
+ *
+ *   node --experimental-strip-types scripts/make-school-pack.mjs keygen   # 只做一次：生成签名密钥对
+ *   node --experimental-strip-types scripts/make-school-pack.mjs export   # 从内置 TS 档案导出 catalog/*.json
+ *   node --experimental-strip-types scripts/make-school-pack.mjs sign     # 生成并签名 public/catalog/index.json
+ *   node --experimental-strip-types scripts/make-school-pack.mjs          # = export + sign（默认）
+ *
+ * 三条必须记住的规矩：
+ *  1) 私钥 `keys/school-signing.key` **绝不入库、绝不外发**（.gitignore 已挡）。丢了就重新 keygen 一套、
+ *     把新公钥写回 `src/catalog/schoolKey.ts`；但**旧 APK 会认为新签名无效** —— 真上线时按 Net.md 3.3
+ *     把私钥放进 CI secrets，别只放在开发机上。
+ *  2) 只下发 **status = live** 的档案：没核实过的高校绝不能出现在下发清单里（AGENTS.md 第 4 条：
+ *     不得写成已支持）。
+ *  3) 档案里的域名只允许 **https**：签约渠道下发的是"App 会打开的网址"，http / IP / 奇怪 scheme
+ *     就是现成的钓鱼入口。
+ *
+ * 签名方案：**ECDSA P-256 + SHA-256（ES256）**；签名 = 64 字节 r||s（IEEE P1363），公钥 = 65 字节未压缩点。
+ * 为什么不用 Net.md 初稿里写的 Ed25519：Ed25519 的 WebCrypto 要 Chrome 113+（2023-05），
+ * 国产 ROM 的 WebView 普遍更旧 —— 实测本项目应用内浏览器就直接抛 NotSupportedError，
+ * 那样手机上会"永远没有热更新"。ECDSA P-256 从 Chrome 37（2014）起就有，任何 Android 7+ 的 WebView 都能验。
+ */
+import { createHash, createPublicKey, createVerify, generateKeyPairSync, sign as nodeSign } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const srcDir = join(root, 'catalog');            // 源档案（人写 + 从 TS 导出）
+const outDir = join(root, 'public', 'catalog');  // 随 npm run build 进 dist，由静态站托管
+const keyFile = join(root, 'keys', 'school-signing.key');
+const keySource = join(root, 'src', 'catalog', 'schoolKey.ts');
+const SCHEMA = 1;
+
+/** 统一写文件：UTF-8 无 BOM、LF、末尾一个换行 —— 客户端是**按字节**验签与算 sha256 的，格式必须稳定 */
+function writeText(file, text) {
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, text.replace(/\r\n/g, '\n'), 'utf8');
+}
+const jsonText = (v) => JSON.stringify(v, null, 2) + '\n';
+const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+
+/** 下发域名的唯一白名单规则：https + 不能是 IP/localhost */
+function urlProblem(u, where) {
+  let url;
+  try { url = new URL(String(u)); } catch { return where + ' 不是合法网址：' + u; }
+  if (url.protocol !== 'https:') return where + ' 必须是 https（当前 ' + url.protocol + '）：' + u;
+  const host = url.hostname;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(':') || /^(localhost|127\.|0\.0\.0\.0)/i.test(host)) {
+    return where + ' 不允许用 IP/localhost：' + host;
+  }
+  return '';
+}
+
+function checkProfile(p) {
+  const bad = [];
+  if (!p || typeof p !== 'object') return ['档案不是对象'];
+  if (!/^[a-z][a-z0-9-]{1,15}$/.test(String(p.schoolId || ''))) bad.push('schoolId 只允许小写字母数字与连字符');
+  if (p.dataDir !== 'schools/' + p.schoolId) bad.push('dataDir 必须是 schools/<schoolId>（当前 ' + p.dataDir + '）');
+  if (typeof p.profileVersion !== 'number' || !(p.profileVersion >= 1)) bad.push('profileVersion 必须是 >=1 的整数');
+  if (p.status !== 'live') bad.push('status 不是 live —— 没核实过的档案不许下发');
+  if (!p.name || !p.shortName || !p.province) bad.push('缺 name/shortName/province');
+  if (!p.academic || !Array.isArray(p.academic.periodTimes) || p.academic.periodTimes.length !== p.academic.periodCount) {
+    bad.push('academic.periodTimes 与 periodCount 对不上');
+  }
+  const urls = [
+    ['systems.jwglxtUrl', p.systems && p.systems.jwglxtUrl],
+    ['systems.timetableUrl', p.systems && p.systems.timetableUrl],
+    ['systems.onlinePlatformUrl', p.systems && p.systems.onlinePlatformUrl]
+  ];
+  for (const c of (p.campusApps || [])) urls.push(['campusApps[' + c.key + ']', c.url]);
+  for (const pair of urls) {
+    if (!pair[1]) { bad.push(pair[0] + ' 为空'); continue; }
+    const prob = urlProblem(pair[1], pair[0]);
+    if (prob) bad.push(prob);
+  }
+  if (!p.watermark || !p.watermark.schoolBadgeText) bad.push('缺 watermark.schoolBadgeText');
+  return bad;
+}
+
+/** 从 src/catalog/universities.ts 导出内置档案（单一真相：改 TS 就够，导出物自动跟上） */
+async function exportBuiltin() {
+  const mod = await import('../src/catalog/universities.ts');
+  const names = [];
+  for (const id of ['buct', 'bisu']) {
+    const p = mod.profileFor(id);
+    if (!p) continue;
+    writeText(join(srcDir, id + '.json'), jsonText(p));
+    names.push(id);
+  }
+  console.log('已从内置 TS 档案导出：' + names.join(', '));
+  return names;
+}
+
+function loadSources() {
+  const files = readdirSync(srcDir).filter((f) => f.endsWith('.json') && f !== 'index.json');
+  const out = [];
+  for (const f of files) {
+    const raw = readFileSync(join(srcDir, f), 'utf8');
+    let p;
+    try { p = JSON.parse(raw); } catch (e) { throw new Error(f + ' 不是合法 JSON：' + e.message); }
+    const bad = checkProfile(p);
+    if (bad.length) throw new Error(f + ' 不合格：\n  - ' + bad.join('\n  - '));
+    if (f !== p.schoolId + '.json') throw new Error(f + ' 的文件名必须是 <schoolId>.json');
+    out.push({ file: f, profile: p });
+  }
+  // 排序先按内置名单里的名次，未收录的（新高校）按 id 稳定排序
+  const order = { buct: 0, bisu: 3 };
+  out.sort((a, b) => {
+    const oa = Object.prototype.hasOwnProperty.call(order, a.profile.schoolId) ? order[a.profile.schoolId] : 900;
+    const ob = Object.prototype.hasOwnProperty.call(order, b.profile.schoolId) ? order[b.profile.schoolId] : 900;
+    return oa - ob || a.profile.schoolId.localeCompare(b.profile.schoolId);
+  });
+  return out;
+}
+
+function readPubKey() {
+  try {
+    const m = readFileSync(keySource, 'utf8').match(/'([A-Za-z0-9_-]{40,})'/);
+    return m ? m[1] : '';
+  } catch { return ''; }
+}
+
+function keygen() {
+  if (existsSync(keyFile)) {
+    console.error('已经存在 ' + keyFile + '，不覆盖（要换密钥就先把旧文件挪走）。');
+    process.exit(1);
+  }
+  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  writeText(keyFile, privateKey.export({ type: 'pkcs8', format: 'pem' }));
+  // SPKI 末尾 65 字节 = 未压缩点（04||X||Y），WebCrypto 用 'raw' 直接导入它就是 P-256 公钥
+  const rawPub = publicKey.export({ type: 'spki', format: 'der' }).subarray(-65);
+  const pubB64 = Buffer.from(rawPub).toString('base64url');
+  console.log('私钥已写入：' + keyFile + '（已 gitignore，别外发）');
+  console.log('公钥（base64url，贴进 ' + keySource + '）：');
+  console.log('  ' + pubB64);
+}
+
+function signPack() {
+  if (!existsSync(keyFile)) {
+    console.error('缺少私钥 ' + keyFile + '：先跑 `keygen`（或把 CI secrets 里的私钥放回这个路径）。');
+    process.exit(1);
+  }
+  const sources = loadSources();
+  const entries = [];
+  const outFiles = new Map();
+  for (const item of sources) {
+    const text = jsonText(item.profile);
+    const bytes = Buffer.from(text, 'utf8');
+    outFiles.set(item.file, text);
+    entries.push({
+      id: item.profile.schoolId,
+      name: item.profile.name,
+      shortName: item.profile.shortName,
+      province: item.profile.province,
+      status: item.profile.status,
+      letter: item.profile.letter || item.profile.name.slice(0, 1),
+      order: typeof item.profile.order === 'number' ? item.profile.order : 900,
+      version: item.profile.profileVersion,
+      file: item.file,
+      sha256: sha256(bytes),
+      size: bytes.length
+    });
+  }
+  const index = {
+    schemaVersion: SCHEMA,
+    updatedAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    schools: entries
+  };
+  const indexText = jsonText(index);
+  // ECDSA 必须指定摘要；用 IEEE P1363 原始 r||s（64 字节）而不是默认的 DER —— WebCrypto 端要的就是这种
+  const sig = nodeSign('sha256', Buffer.from(indexText, 'utf8'),
+    { key: readFileSync(keyFile, 'utf8'), dsaEncoding: 'ieee-p1363' });
+  const sigText = Buffer.from(sig).toString('base64url') + '\n';
+
+  for (const pair of outFiles) writeText(join(outDir, pair[0]), pair[1]);
+  writeText(join(outDir, 'index.json'), indexText);
+  writeText(join(outDir, 'index.json.sig'), sigText);
+
+  // 自检：① 私钥推导出的公钥必须与 schoolKey.ts 里那串一致；② 签出来的签名必须能验过
+  const pub = readPubKey();
+  if (!pub) {
+    console.log('提示：' + keySource + ' 里还没写公钥，先 keygen 再贴进去。');
+  } else {
+    const derived = Buffer.from(createPublicKey(readFileSync(keyFile, 'utf8')).export({ type: 'spki', format: 'der' }).subarray(-65)).toString('base64url');
+    if (derived !== pub) {
+      console.error('*** 自检失败：' + keySource + ' 里的公钥不是这把私钥对应的那个，别上传！ ***');
+      process.exit(1);
+    }
+    const verifier = createVerify('sha256');
+    verifier.update(Buffer.from(indexText, 'utf8'));
+    const ok = verifier.verify({ key: readFileSync(keyFile, 'utf8'), dsaEncoding: 'ieee-p1363' }, Buffer.from(sigText.trim(), 'base64url'));
+    console.log('自检（公钥配对 + 签名可验）：' + (ok ? '通过' : '*** 失败，别上传！ ***'));
+    if (!ok) process.exit(1);
+  }
+  console.log('已生成 ' + outDir + '：index.json + index.json.sig + ' + entries.length + ' 份档案');
+  for (const e of entries) console.log('  ' + e.file + '  v' + e.version + '  ' + e.sha256.slice(0, 12) + '…  ' + e.size + ' B');
+}
+
+const cmd = process.argv[2] || 'pack';
+if (cmd === 'keygen') keygen();
+else if (cmd === 'export') { await exportBuiltin(); }
+else if (cmd === 'sign') { signPack(); }
+else if (cmd === 'pack') { await exportBuiltin(); signPack(); }
+else { console.error('用法：keygen | export | sign | pack（默认 pack）'); process.exit(1); }

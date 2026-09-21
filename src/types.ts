@@ -178,10 +178,22 @@ export interface CampusApp { key: string; name: string; url: string; icon: strin
 
 export interface SchoolProfile {
   schoolId: string;
+  /**
+   * 档案版本（Net.md P2 热更新用）。
+   * 内置档案的版本号硬编码在 APK 里；远端 index.json 的 `version` 比它大时，
+   * 选校页才显示「可更新」。**改档案内容就要 +1**，否则用户看不到更新。
+   */
+  profileVersion: number;
   name: string;
   shortName: string;
   status: SchoolStatus;
   order: number;
+  /**
+   * 校名拼音首字母（选校页 A–Z 分组用）。
+   * 内置档案由 `catalog/universities.ts` 的名单提供；**热更新下发的新高校必须在档案里写上它**
+   * （App 不猜拼音：部分国产 ROM 的 WebView 没有完整 ICU）。
+   */
+  letter?: string;
   province: string;
   brand: { primaryColor: string; accentColor: string; iconLetter: string };
   tabs: { online: string };
