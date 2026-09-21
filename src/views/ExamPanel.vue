@@ -8,6 +8,7 @@ import { useDb } from '../stores/db.ts';
 import { JwWebView, isNativeWebView } from '../services/jwwebview.ts';
 import { parseJwglxtExams, examNoteDraft } from '../services/parser/jwglxtExam.ts';
 import { buildExamSampleHtml } from '../services/examDemo.ts';
+import ParserRulesBar from '../components/ParserRulesBar.vue';
 
 const props = defineProps<{ startUrl: string }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
@@ -100,6 +101,7 @@ async function importHtml(html: string, demo: boolean): Promise<void> {
         <button class="btn block" style="margin-top: 14px" @click="openJwglxt">🏛 打开教务系统（识别考试）</button>
         <button class="btn block grey" style="margin-top: 10px" @click="useSample">用内置演示样本走一遍（离线可用）</button>
         <div class="small muted" style="margin-top: 10px">演示样本是虚构数据，考试日期会跟着今天走（今天 +2 / +9 / +16 / +23 天），所以「提前 1 天 / 半小时」的提醒能真的触发。样本结构与真实教务页面一致，走的是同一个解析器。</div>
+        <ParserRulesBar adapter-id="jwglxt-exam" />
 
         <div v-if="summary" class="card res">
           <div class="row" style="justify-content: space-between">

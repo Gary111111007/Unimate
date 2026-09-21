@@ -26,6 +26,7 @@
     "test:share": "node --experimental-strip-types tests/share.test.ts",
     "test:weather": "node --experimental-strip-types tests/weather.test.ts",
     "test:schoolpack": "node --experimental-strip-types tests/schoolPack.test.ts",
+    "test:adapters": "node --experimental-strip-types tests/adapters.test.ts",
     "test:login": "node --experimental-strip-types tests/login.test.ts",
     "cap:sync": "cap sync android",
     "apk": "scripts/build-apk.ps1",

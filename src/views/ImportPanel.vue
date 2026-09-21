@@ -4,6 +4,7 @@ import { useDb } from '../stores/db.ts';
 import { courseColorIndex } from '../catalog/periods.ts';
 import { JwWebView, isNativeWebView } from '../services/jwwebview.ts';
 import { parseJwglxtTimetable } from '../services/parser/jwglxtBuct.ts';
+import ParserRulesBar from '../components/ParserRulesBar.vue';
 import { uuid, nowStamp } from '../services/id.ts';
 import { writeText } from '../services/io.ts';
 import type { Course, ParseResult } from '../types.ts';
@@ -120,6 +121,8 @@ const warns = () => (result.value?.diagnostics || []).filter((d) => d.kind !== '
         <button class="btn block" style="margin-top: 14px" @click="openJwglxt">🏛 打开教务系统</button>
         <button class="btn block grey" style="margin-top: 10px" @click="useSample">用内置脱敏样本演示导入（离线可用）</button>
         <div class="small muted" style="margin-top: 10px">样本为已脱敏的真实教务页面，可完整演示"抓取 → 解析 → 预览 → 入库"链路。</div>
+        <!-- 解析规则来源（Net.md P2.5）：教务改版时可下发新规则，不用发新版 App -->
+        <ParserRulesBar adapter-id="jwglxt-buct" />
       </template>
 
       <div v-else-if="step === 'working'" class="empty"><div class="big">⏳</div>正在抓取并解析课表…</div>

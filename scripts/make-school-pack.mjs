@@ -27,6 +27,8 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const srcDir = join(root, 'catalog');            // 源档案（人写 + 从 TS 导出）
 const outDir = join(root, 'public', 'catalog');  // 随 npm run build 进 dist，由静态站托管
+const adapterSrcDir = join(root, 'adapters');            // 源规则包（Net.md P2.5，只在教务改版时新增/修改）
+const adapterOutDir = join(root, 'public', 'adapters');  // 规则包下发产物
 const keyFile = join(root, 'keys', 'school-signing.key');
 const keySource = join(root, 'src', 'catalog', 'schoolKey.ts');
 const SCHEMA = 1;
@@ -113,6 +115,42 @@ function loadSources() {
   return out;
 }
 
+/**
+ * 规则包源文件（Net.md P2.5）：`adapters/<adapterId>.json`。
+ * 目录可以不存在/为空 —— 那就只下发学校档案（这是常态：教务没改版就不需要规则包）。
+ * 校验口径与客户端 `validateRulePack()` 一致：键白名单 + 正则可编译 + 取值范围。
+ */
+function loadAdapters() {
+  if (!existsSync(adapterSrcDir)) return [];
+  const files = readdirSync(adapterSrcDir).filter((f) => f.endsWith('.json'));
+  const out = [];
+  for (const f of files) {
+    let p;
+    try { p = JSON.parse(readFileSync(join(adapterSrcDir, f), 'utf8')); } catch (e) { throw new Error(f + ' 不是合法 JSON：' + e.message); }
+    const bad = checkAdapterPack(p);
+    if (bad.length) throw new Error(f + ' 不合格：\n  - ' + bad.join('\n  - '));
+    if (f !== p.adapterId + '.json') throw new Error(f + ' 的文件名必须是 <adapterId>.json');
+    out.push({ file: f, pack: p });
+  }
+  out.sort((a, b) => a.pack.adapterId.localeCompare(b.pack.adapterId));
+  return out;
+}
+
+/** 规则包自检（与客户端 rules.ts 的白名单保持一致的**最小**子集；客户端还会再查一遍） */
+function checkAdapterPack(p) {
+  const bad = [];
+  if (!p || typeof p !== 'object') return ['不是对象'];
+  if (p.kind !== 'timetable' && p.kind !== 'exam') bad.push('kind 必须是 timetable 或 exam');
+  if (!/^[a-z][a-z0-9-]{2,31}$/.test(String(p.adapterId || ''))) bad.push('adapterId 不合法');
+  if (!(Number(p.version) >= 1)) bad.push('version 必须是 >=1 的整数');
+  if (!(Number(p.schemaVersion) >= 1) || Number(p.schemaVersion) > 1) bad.push('schemaVersion 必须是 1');
+  if (!p.rules || typeof p.rules !== 'object' || Array.isArray(p.rules)) bad.push('缺 rules 对象');
+  // 规则包里**不允许**出现任何像代码的东西（这是 Net.md 2.4 的红线，脚本这边先挡一道）
+  const raw = JSON.stringify(p.rules || {});
+  if (/\b(eval|Function|import|require|setTimeout|setInterval)\b/.test(raw)) bad.push('规则里出现了可执行代码的字样（本机制只允许声明式规则）');
+  return bad;
+}
+
 function readPubKey() {
   try {
     const m = readFileSync(keySource, 'utf8').match(/'([A-Za-z0-9_-]{40,})'/);
@@ -141,6 +179,7 @@ function signPack() {
     process.exit(1);
   }
   const sources = loadSources();
+  const adapters = loadAdapters();
   const entries = [];
   const outFiles = new Map();
   for (const item of sources) {
@@ -164,14 +203,28 @@ function signPack() {
   const index = {
     schemaVersion: SCHEMA,
     updatedAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
-    schools: entries
+    schools: entries,
+    // 解析规则包与学校档案共用这一份签名清单：客户端只需验一次签、也只受同一套每天一次的限频
+    adapters: adapters.map((a) => {
+      const text = jsonText(a.pack);
+      const bytes = Buffer.from(text, 'utf8');
+      outFiles.set('adapters/' + a.file, { dir: adapterOutDir, text });
+      return {
+        id: a.pack.adapterId, kind: a.pack.kind, version: Number(a.pack.version),
+        file: a.file, sha256: sha256(bytes), size: bytes.length, note: String(a.pack.note || '')
+      };
+    })
   };
   const indexText = jsonText(index);
   // Ed25519 是"无摘要"签名算法（内部自带哈希），Node 侧直接传 null 作为 digest
   const sig = nodeSign(null, Buffer.from(indexText, 'utf8'), readFileSync(keyFile, 'utf8'));
   const sigText = Buffer.from(sig).toString('base64url') + '\n';
 
-  for (const pair of outFiles) writeText(join(outDir, pair[0]), pair[1]);
+  for (const pair of outFiles) {
+    const v = pair[1];
+    if (v && typeof v === 'object' && v.dir) writeText(join(v.dir, pair[0].replace(/^adapters\//, '')), v.text);
+    else writeText(join(outDir, pair[0]), v);
+  }
   writeText(join(outDir, 'index.json'), indexText);
   writeText(join(outDir, 'index.json.sig'), sigText);
 
@@ -191,6 +244,8 @@ function signPack() {
   }
   console.log('已生成 ' + outDir + '：index.json + index.json.sig + ' + entries.length + ' 份档案');
   for (const e of entries) console.log('  ' + e.file + '  v' + e.version + '  ' + e.sha256.slice(0, 12) + '…  ' + e.size + ' B');
+  console.log('规则包：' + (index.adapters.length ? '' : '（无 —— 教务没改版时这是正常的）'));
+  for (const a of index.adapters) console.log('  adapters/' + a.file + '  ' + a.kind + ' v' + a.version + '  ' + a.sha256.slice(0, 12) + '…  ' + a.size + ' B');
 }
 
 const cmd = process.argv[2] || 'pack';

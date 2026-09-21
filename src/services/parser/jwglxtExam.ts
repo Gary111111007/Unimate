@@ -9,6 +9,12 @@
 // 与课表解析器一样是纯字符串解析，不依赖 DOM —— 浏览器、WebView 注入脚本与 Node 单测共用同一份代码。
 import type { ParseDiagnostic } from '../../types.ts';
 import { textOf } from './jwglxtBuct.ts';
+import { compile, examRules, type ExamRules } from './rules.ts';
+
+export const adapterId = 'jwglxt-exam';
+
+/** 当前生效的考试规则（默认 + 已下载规则包覆盖项） */
+export function currentRules(): ExamRules { return examRules(adapterId); }
 
 export interface ExamItem {
   /** 课程名称（kcmc） */
@@ -59,10 +65,10 @@ function pad2(n: string | number): string { return String(n).padStart(2, '0'); }
  * 解析一个"考试时间"单元格，可能含多个时段（页面里偶尔用换行/逗号并列）。
  * 支持：2026-07-04(08:00-10:00) / 2026-07-04 08:00-10:00 / 2026年7月4日 08:00~10:00
  */
-export function parseExamTime(raw: string): { date: string; start: string; end: string }[] {
+export function parseExamTime(raw: string, rules: ExamRules = currentRules()): { date: string; start: string; end: string }[] {
   const t = fullToHalf(textOf(raw)).replace(/[，,、;；]/g, ' ').replace(/\s+/g, ' ');
   const out: { date: string; start: string; end: string }[] = [];
-  const re = /(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?[^0-9]{0,3}(\d{1,2}):(\d{2})[^0-9]{0,3}(\d{1,2}):(\d{2})/g;
+  const re = new RegExp(rules.timePattern, 'g');
   let m: RegExpExecArray | null;
   while ((m = re.exec(t)) !== null) {
     out.push({
@@ -75,41 +81,43 @@ export function parseExamTime(raw: string): { date: string; start: string; end: 
 }
 
 /** 把一行考试单元格解析成 ExamItem（时间可能有多个时段 → 每个时段一条） */
-export function parseExamRow(cells: Record<string, string>): ExamItem[] {
-  const course = (cells.kcmc || '').trim();
-  const rawTime = (cells.kssj || '').trim();
+export function parseExamRow(cells: Record<string, string>, rules: ExamRules = currentRules()): ExamItem[] {
+  const C = rules.columns;
+  const course = (cells[C.course] || '').trim();
+  const rawTime = (cells[C.time] || '').trim();
   if (!course || !rawTime) return [];
-  const times = parseExamTime(rawTime);
-  const semester = [(cells.xnmc || '').trim(), (cells.xqmmc || '').trim()].filter(Boolean).join(' 第 ') + ((cells.xqmmc || '').trim() ? ' 学期' : '');
+  const times = parseExamTime(rawTime, rules);
+  const semester = [(cells[C.year] || '').trim(), (cells[C.term] || '').trim()].filter(Boolean).join(' 第 ') + ((cells[C.term] || '').trim() ? ' 学期' : '');
   return times.map((t) => ({
     course,
-    name: (cells.ksmc || '').trim(),
+    name: (cells[C.name] || '').trim(),
     semester,
     date: t.date,
     start: t.start,
     end: t.end,
-    campus: (cells.cdxqmc || cells.xqmc || '').trim(),
-    room: (cells.cdmc || '').trim(),
-    seat: (cells.zwh || '').trim(),
-    examType: (cells.khfs || '').trim(),
-    mode: (cells.ksfs || '').trim(),
-    college: (cells.kkxy || '').trim(),
-    className: (cells.jxbmc || '').trim(),
-    note: (cells.ksbz || '').trim()
+    campus: (cells[C.campus] || cells[C.campusAlt] || '').trim(),
+    room: (cells[C.room] || '').trim(),
+    seat: (cells[C.seat] || '').trim(),
+    examType: (cells[C.examType] || '').trim(),
+    mode: (cells[C.mode] || '').trim(),
+    college: (cells[C.college] || '').trim(),
+    className: (cells[C.className] || '').trim(),
+    note: (cells[C.note] || '').trim()
   }));
 }
 
 /** 一行的所有单元格 → { 列名: 文本 }（文本为空时回退到 title 属性） */
-function rowCells(rowHtml: string): Record<string, string> {
+function rowCells(rowHtml: string, rules: ExamRules): Record<string, string> {
   const map: Record<string, string> = {};
-  const cellRe = /<td([^>]*)>([\s\S]*?)<\/td>/g;
+  const cellRe = new RegExp(rules.cellPattern, 'g');
+  const colAttrRe = new RegExp(rules.colAttr + '="([^"]+)"');
   let m: RegExpExecArray | null;
   while ((m = cellRe.exec(rowHtml)) !== null) {
     const attrs = m[1];
     // jqGrid 的列标记形如 aria-describedby="tabGrid_kcmc"：取最后一个下划线之后的部分作为列名，
     // 这样即使以后表格 id 变了（不是 tabGrid）也还能对上。
-    const described = (attrs.match(/aria-describedby="([^"]+)"/) || [, ''])[1];
-    const col = described ? described.split('_').pop() || '' : '';
+    const described = (attrs.match(colAttrRe) || [, ''])[1];
+    const col = described ? described.split(rules.colNameSeparator).pop() || '' : '';
     if (!col) continue;
     const text = textOf(m[2]);
     const title = (attrs.match(/title="([^"]*)"/) || [, ''])[1];
@@ -118,23 +126,25 @@ function rowCells(rowHtml: string): Record<string, string> {
   return map;
 }
 
-export function parseJwglxtExams(html: string): ExamParseResult {
+export function parseJwglxtExams(html: string, adapter: string = adapterId): ExamParseResult {
+  const rules = examRules(adapter);
+  const C = rules.columns;
   const diagnostics: ParseDiagnostic[] = [];
   const exams: ExamItem[] = [];
 
-  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/g;
+  const rowRe = new RegExp(rules.rowPattern, 'g');
   let m: RegExpExecArray | null;
   let dataRows = 0;
   let timeUnparsed = 0;
   while ((m = rowRe.exec(html)) !== null) {
-    const cells = rowCells(m[1]);
-    if (!cells.kcmc && !cells.kssj) continue;      // jqGrid 的空骨架行 / 表头行
+    const cells = rowCells(m[1], rules);
+    if (!cells[C.course] && !cells[C.time]) continue;      // jqGrid 的空骨架行 / 表头行
     dataRows++;
-    if (!cells.kcmc || !cells.kssj) continue;
-    const items = parseExamRow(cells);
+    if (!cells[C.course] || !cells[C.time]) continue;
+    const items = parseExamRow(cells, rules);
     if (!items.length) {
       timeUnparsed++;
-      diagnostics.push({ kind: 'missing-fields', message: '考试时间无法识别：' + cells.kssj + '（' + cells.kcmc + '）', courseName: cells.kcmc });
+      diagnostics.push({ kind: 'missing-fields', message: '考试时间无法识别：' + cells[C.time] + '（' + cells[C.course] + '）', courseName: cells[C.course] });
       continue;
     }
     for (const it of items) exams.push(it);
@@ -168,7 +178,9 @@ export function examNoteDraft(ex: ExamItem, now: Date = new Date()): ExamNoteDra
   return { title, content: bits.join(' · '), remindAt, alarms: EXAM_ALARMS.slice(), past: at.getTime() < now.getTime() };
 }
 
-export const adapterId = 'jwglxt-exam';
 export function matches(url: string, html: string): boolean {
-  return /kscx_cxXsksxxIndex|gnmkdm=N358105/i.test(url) || html.indexOf('tabGrid_kssj') >= 0;
+  const rules = currentRules();
+  const urlRe = compile(rules.matchUrl, 'i');
+  if (urlRe && urlRe.test(url)) return true;
+  return html.indexOf(rules.htmlMarker) >= 0;
 }

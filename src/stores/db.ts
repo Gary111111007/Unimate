@@ -17,9 +17,10 @@ import { applyTextZoom } from '../services/display.ts';
 import { fetchWeather, firstFulfilled, geocode, shouldRequestWeather } from '../services/weather.ts';
 import { Geolocation } from '@capacitor/geolocation';
 import {
-  catalogCheckAllowed, downloadSchoolProfile, fetchCatalog, mergeSchoolRows,
+  catalogCheckAllowed, downloadAdapterPack, downloadSchoolProfile, fetchCatalog, mergeSchoolRows,
   type CatalogIndex, type SchoolRow
 } from '../services/schoolCatalog.ts';
+import { activeRulePacks, builtinAdapterVersion, setActiveRulePacks, type RulePack } from '../services/parser/rules.ts';
 
 export const SCHEMA_VERSION = 1;
 export const APP_VERSION = '1.0.0';
@@ -93,6 +94,11 @@ const screen = ref<'school' | 'login' | 'app'>('login');
    * 只有**验签通过 + sha256 一致 + 域名白名单通过**的档案才会进这里。
    */
   const downloadedSchools = ref<Record<string, { profile: SchoolProfile; version: number; sha256: string; downloadedAt: string }>>({});
+  /**
+   * 已下载的解析规则包（Net.md P2.5）。与学校档案同一套信任链：签名清单 → sha256 → 结构校验。
+   * 只激活"版本高于内置"的包（`setActiveRulePacks` 里把关），所以下载一份等于内置的包不会有副作用。
+   */
+  const downloadedAdapters = ref<Record<string, { pack: RulePack; sha256: string; downloadedAt: string }>>({});
   /** 远端清单（含缓存）与限频状态；lastOkAt/lastTryAt 落盘，重启后不会反复请求 */
   const catalog = ref<{ index: CatalogIndex | null; lastOkAt: number; lastTryAt: number; msg: string; busy: boolean }>(
     { index: null, lastOkAt: 0, lastTryAt: 0, msg: '', busy: false });
@@ -155,6 +161,16 @@ const screen = ref<'school' | 'login' | 'app'>('login');
         const dl = await guard('读已下载档案', readJson<any>('catalog/downloaded-schools.json', { items: {} }), 3000, { items: {} } as any);
         downloadedSchools.value = (dl && dl.items && typeof dl.items === 'object') ? dl.items : {};
       } catch { downloadedSchools.value = {}; }
+      try {
+        const da = await guard('读已下载规则包', readJson<any>('adapters/downloaded.json', { items: {} }), 3000, { items: {} } as any);
+        downloadedAdapters.value = (da && da.items && typeof da.items === 'object') ? da.items : {};
+      } catch { downloadedAdapters.value = {}; }
+      // 规则包要在**任何解析发生之前**生效（导入面板/考试识别都可能紧接着打开）
+      try {
+        const packs: Record<string, RulePack> = {};
+        for (const id of Object.keys(downloadedAdapters.value)) packs[id] = downloadedAdapters.value[id].pack;
+        setActiveRulePacks(packs);
+      } catch { setActiveRulePacks({}); }
       try {
         const cc: any = await guard('读学校清单缓存', readJson<any>('catalog/catalog-cache.json', null), 3000, null);
         /*
@@ -590,6 +606,67 @@ function hourTotal(kind: HourKind): number {
     });
   }
 
+  function saveAdapters(): Promise<void> {
+    return writeJson('adapters/downloaded.json', { schemaVersion: 1, items: downloadedAdapters.value });
+  }
+
+  /** 已下载规则包一览（导入面板显示"当前用的是内置还是下发"） */
+  const adapterRows = computed(() => Object.keys(downloadedAdapters.value).map((id) => {
+    const p = downloadedAdapters.value[id].pack;
+    const active = !!activeRulePacks()[id];
+    return {
+      adapterId: id, kind: p.kind, version: p.version, note: p.note || '',
+      downloadedAt: downloadedAdapters.value[id].downloadedAt,
+      builtinVersion: builtinAdapterVersion(id),
+      /** 是否真的生效（版本不高于内置时只算"存着"） */
+      active
+    };
+  }));
+
+  /** 某适配器当前生效的规则来源文案（导入面板/考试面板用） */
+  function adapterSourceText(adapterId: string): string {
+    const p = activeRulePacks()[adapterId];
+    if (p) return '规则包 v' + p.version + (p.note ? '（' + p.note + '）' : '');
+    return '内置规则 v' + builtinAdapterVersion(adapterId);
+  }
+
+  /** 下载并启用一份解析规则包（版本不高于内置时只提示、不生效） */
+  async function downloadAdapter(adapterId: string): Promise<boolean> {
+    const c = catalog.value;
+    const entry = c.index ? c.index.adapters.find((a) => a.id === adapterId) : null;
+    if (!entry) { notify('远端还没有这个适配器的规则包'); return false; }
+    if (c.busy) return false;
+    c.busy = true;
+    try {
+      const r = await downloadAdapterPack(entry);
+      if (!r.ok) { c.msg = r.reason; notify('规则包下载失败：' + r.reason); return false; }
+      downloadedAdapters.value[adapterId] = { pack: r.pack, sha256: entry.sha256, downloadedAt: nowStamp() };
+      await saveAdapters();
+      const packs: Record<string, RulePack> = {};
+      for (const id of Object.keys(downloadedAdapters.value)) packs[id] = downloadedAdapters.value[id].pack;
+      setActiveRulePacks(packs);
+      const on = !!activeRulePacks()[adapterId];
+      c.msg = '已下载规则包 v' + r.pack.version + (on ? '（已生效）' : '（版本不高于内置，未启用）');
+      notify(on ? '规则包 v' + r.pack.version + ' 已生效' : '规则包已下载，但版本不高于内置，仍用内置规则');
+      return true;
+    } finally {
+      c.busy = false;
+    }
+  }
+
+  /** 删掉下载的规则包，回到内置解析（Net.md P2.5 的降级口径） */
+  async function removeAdapter(adapterId: string): Promise<boolean> {
+    const item = downloadedAdapters.value[adapterId];
+    if (!item) return false;
+    delete downloadedAdapters.value[adapterId];
+    await saveAdapters();
+    const packs: Record<string, RulePack> = {};
+    for (const id of Object.keys(downloadedAdapters.value)) packs[id] = downloadedAdapters.value[id].pack;
+    setActiveRulePacks(packs);
+    notify('已回到内置解析规则（' + adapterId + ' v' + builtinAdapterVersion(adapterId) + '）');
+    return true;
+  }
+
   /**
    * 检查远端清单。**每天最多成功一次**（失败 5 分钟退避），用户点「检查更新」可以强制。
    * 失败不动旧缓存：验签不过 / 断网时，之前那份清单照常显示徽标（降级口径）。
@@ -605,9 +682,10 @@ function hourTotal(kind: HourKind): number {
       if (!r.ok) { c.msg = r.reason; return; }
       c.index = r.index;
       c.lastOkAt = Date.now();
-      c.msg = r.index.schools.length
-        ? '远端有 ' + r.index.schools.length + ' 份可下发档案'
-        : '远端还没有可下发的高校档案';
+      const parts: string[] = [];
+      if (r.index.schools.length) parts.push(r.index.schools.length + ' 份可下发档案');
+      if (r.index.adapters.length) parts.push(r.index.adapters.length + ' 份解析规则包');
+      c.msg = parts.length ? ('远端有 ' + parts.join(' · ')) : '远端还没有可下发的内容';
     } catch (e) {
       c.msg = '检查更新失败：' + (e instanceof Error ? e.message : String(e));
     } finally {
@@ -770,7 +848,8 @@ function hourTotal(kind: HourKind): number {
     weatherBusy, weatherMsg, ensureWeather,
     downloadedSchools, downloadedList, schoolRows, catalog, profileOf, checkCatalog, downloadSchool, removeDownloaded,
     /** 把已下载档案落盘：正常流程由 downloadSchool/removeDownloaded 调用（测试里模拟"下载成功"时会直接用） */
-    saveDownloaded
+    saveDownloaded,
+    downloadedAdapters, adapterRows, adapterSourceText, downloadAdapter, removeAdapter
   };
 })
 ;

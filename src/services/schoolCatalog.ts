@@ -20,6 +20,7 @@ import type { SchoolProfile } from '../types.ts';
 import { verify as edVerify, etc as edEtc } from '@noble/ed25519';
 import { sha512 } from '@noble/hashes/sha512';
 import { sha256 } from '@noble/hashes/sha256';
+import { validateRulePack } from './parser/rules.ts';
 
 /*
  * 【为什么验签是纯 JS 实现，而不是用平台自带的 WebCrypto】
@@ -57,7 +58,21 @@ export interface CatalogEntry {
   size: number;
 }
 
-export interface CatalogIndex { schemaVersion: number; updatedAt: string; schools: CatalogEntry[] }
+/**
+ * 解析适配器规则包（Net.md P2.5 / PRD 5.15）：与学校档案**共用同一份签名清单**，
+ * 所以限频、验签、失败降级全都不需要再来一套。文件放在站点的 `/adapters/` 下。
+ */
+export interface AdapterEntry {
+  id: string;
+  kind: 'timetable' | 'exam';
+  version: number;
+  file: string;
+  sha256: string;
+  size: number;
+  note: string;
+}
+
+export interface CatalogIndex { schemaVersion: number; updatedAt: string; schools: CatalogEntry[]; adapters: AdapterEntry[] }
 
 /** 选校页渲染用的行（内置 + 远端 + 已下载 合成后的结果） */
 export interface DownloadedMeta {
@@ -108,6 +123,12 @@ export function catalogUrl(file: string, base?: string): string {
   return b.replace(/\/+$/, '') + '/catalog/' + file;
 }
 
+/** 规则包地址：`/adapters/<file>`（Net.md 3.3 的目录约定） */
+export function adapterUrl(file: string, base?: string): string {
+  const b = base || shareBase();
+  return b.replace(/\/+$/, '') + '/adapters/' + file;
+}
+
 // ---------------- 纯函数：结构与域名校验 ----------------
 
 /** 下发网址的唯一白名单规则：https + 非 IP/localhost */
@@ -140,6 +161,20 @@ export function parseCatalogEntry(x: any): CatalogEntry | null {
   };
 }
 
+export function parseAdapterEntry(x: any): AdapterEntry | null {
+  if (!x || typeof x !== 'object') return null;
+  const id = String(x.id || '');
+  if (!/^[a-z][a-z0-9-]{2,31}$/.test(id)) return null;
+  if (x.kind !== 'timetable' && x.kind !== 'exam') return null;
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(String(x.file || ''))) return null;
+  if (!/^[0-9a-f]{64}$/i.test(String(x.sha256 || ''))) return null;
+  if (!(Number(x.version) >= 1)) return null;
+  return {
+    id, kind: x.kind, version: Number(x.version), file: String(x.file),
+    sha256: String(x.sha256).toLowerCase(), size: Number(x.size) || 0, note: String(x.note || '')
+  };
+}
+
 /**
  * 解析清单。**schemaVersion 比 App 支持的更高 → 返回 null**（而不是硬着头皮用）：
  * 新版清单可能有 App 看不懂的字段，装作能用才是真危险。
@@ -157,7 +192,19 @@ export function parseCatalogIndex(json: any): CatalogIndex | null {
     seen.add(e.id);
     schools.push(e);
   }
-  return { schemaVersion: sv, updatedAt: String(json.updatedAt || ''), schools };
+  // 规则包列表：旧版清单里没有这个字段 → 当成空数组（向后兼容）
+  const adapters: AdapterEntry[] = [];
+  if (json.adapters !== undefined) {
+    if (!Array.isArray(json.adapters)) return null;
+    const seenA = new Set<string>();
+    for (const raw of json.adapters) {
+      const a = parseAdapterEntry(raw);
+      if (!a || seenA.has(a.id)) return null;
+      seenA.add(a.id);
+      adapters.push(a);
+    }
+  }
+  return { schemaVersion: sv, updatedAt: String(json.updatedAt || ''), schools, adapters };
 }
 
 /** 档案结构校验（含域名白名单）。返回错误原因，空串 = 通过。 */
@@ -339,6 +386,30 @@ export async function fetchCatalog(pubB64: string, base?: string): Promise<Fetch
 }
 
 export type DownloadResult = { ok: true; profile: SchoolProfile; version: number } | { ok: false; reason: string };
+
+/**
+ * 下载一份解析规则包：sha256 必须与签名清单一致 → 再走 `validateRulePack`（键白名单 + 正则可编译 + 取值）。
+ * 规则包**不含任何可执行代码**，最坏情况只是"读得更多/更少"，这也是 Net.md 2.4 划的红线。
+ */
+export async function downloadAdapterPack(entry: AdapterEntry, base?: string): Promise<{ ok: true; pack: any } | { ok: false; reason: string }> {
+  try {
+    const text: any = await guard('下载解析规则包', fetch(adapterUrl(entry.file, base)).then((r) => r.text()), 8000, null);
+    if (text === null || text === undefined) return { ok: false, reason: '下载超时或断网' };
+    const norm = normalize(String(text));
+    const got = await sha256Hex(norm);
+    if (got !== entry.sha256.toLowerCase()) return { ok: false, reason: '校验和不一致（文件被改过），已拒收' };
+    let json: any;
+    try { json = JSON.parse(norm); } catch { return { ok: false, reason: '规则包不是合法 JSON' }; }
+    const v = validateRulePack(json);
+    if (!v.ok) return { ok: false, reason: '规则包不合格：' + v.error };
+    if (v.pack.adapterId !== entry.id) return { ok: false, reason: '规则包的 adapterId 与清单不一致' };
+    if (v.pack.kind !== entry.kind) return { ok: false, reason: '规则包的 kind 与清单不一致' };
+    if (v.pack.version !== entry.version) return { ok: false, reason: '规则包版本与清单不一致' };
+    return { ok: true, pack: v.pack };
+  } catch (e: any) {
+    return { ok: false, reason: '下载失败：' + ((e && e.message) || e) };
+  }
+}
 
 /** 下载单份档案 → sha256 必须与签过名的清单一致 → 结构/域名校验 */
 export async function downloadSchoolProfile(entry: CatalogEntry, base?: string): Promise<DownloadResult> {

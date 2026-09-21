@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-21 13:18:57",
+  "updatedAt": "2026-09-21 14:32:14",
   "schools": [
     {
       "id": "buct",
@@ -28,5 +28,6 @@
       "sha256": "41b8cf41f87ead083f6e90a2b08d651eed2df41a5e3389fb761fcb041df36589",
       "size": 2989
     }
-  ]
+  ],
+  "adapters": []
 }
