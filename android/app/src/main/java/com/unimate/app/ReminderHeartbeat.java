@@ -1,0 +1,178 @@
+package com.unimate.app;
+
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.os.Build;
+
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
+
+import com.capacitorjs.plugins.localnotifications.LocalNotification;
+import com.capacitorjs.plugins.localnotifications.LocalNotificationManager;
+import com.capacitorjs.plugins.localnotifications.LocalNotificationSchedule;
+import com.capacitorjs.plugins.localnotifications.NotificationStorage;
+import com.capacitorjs.plugins.localnotifications.TimedNotificationPublisher;
+import com.getcapacitor.CapConfig;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+/**
+ * 提醒兜底心跳（v2.30）。
+ *
+ * 为什么需要它：插件的排期完全依赖 AlarmManager。真机上"到点不响、一打开 App 全涌出来"的原因是
+ * 系统把闹钟攒着，等应用被使用时才发放 —— 精确闹钟没授权（Android 12+ 默认不给）、Doze、
+ * 待机桶（App Standby Bucket）/厂商冻结都会这样。
+ *
+ * 这条心跳**不依赖插件的排期**：
+ *   1) 每 15 分钟（近期无排期时拉长到 60 分钟，别白耗电）用 setAndAllowWhileIdle 醒一次；
+ *   2) 扫一遍插件持久化的排期，把"刚过期还没投递"的直接投出去，并取消它对应的那条闹钟；
+ *   3) 只补"过期 30 分钟以内"的：更早的直接丢弃 —— 与 App 侧"错过的提醒不补发"口径一致，
+ *      绝不制造"一打开就一股脑"的轰炸。
+ *
+ * 注意它的边界（写下来免得以后误判）：如果 ROM 把应用**明确冻结/限制**（后台限制、深度睡眠、
+ * 强制停止），系统的闹钟同样不会放行 —— 那种情况只能靠用户在系统里给"精确闹钟 + 电池优化豁免 +
+ * 自启动"三件套（App 的课表页与通知设置里会提示缺哪一项）。心跳覆盖的是 Doze / 待机桶 /
+ * 进程被杀这些更常见的情况。
+ */
+public class ReminderHeartbeat extends BroadcastReceiver {
+
+    /** 只给自己用的动作（manifest 里注册，exported=false） */
+    public static final String ACTION = "com.unimate.app.REMINDER_TICK";
+    private static final int REQUEST_CODE = 20260921;
+    private static final long TICK_MS = 15 * 60 * 1000L;        // 有近期排期：15 分钟一跳
+    private static final long TICK_IDLE_MS = 60 * 60 * 1000L;   // 没有近期排期：一小时一跳（省电）
+    private static final long CATCHUP_MS = 30 * 60 * 1000L;     // 只补 30 分钟内错过的
+    private static final String INTENT_ID_KEY = "LocalNotificationId";
+    private static final String INTENT_OBJ_KEY = "LocalNotficationObject";
+    private static final String INTENT_ACTION_KEY = "LocalNotificationUserAction";
+    private static final String INTENT_REMOVABLE_KEY = "LocalNotificationRepeating";
+
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        try {
+            runOnce(context);
+        } catch (Throwable t) {
+            // 心跳绝不能因为异常把整条链路带崩：下一跳照排
+        }
+        arm(context);
+    }
+
+    /**
+     * 扫一遍插件持久化的排期并补投。返回真正投出去的条数（供自检/日志）。
+     * 投过的条目会从插件存储里删掉，所以 App 打开时不会重复看到。
+     */
+    public static int runOnce(Context context) {
+        NotificationStorage storage = new NotificationStorage(context);
+        CapConfig config = CapConfig.loadDefault(context);
+        NotificationManagerCompat nm = NotificationManagerCompat.from(context);
+        long now = System.currentTimeMillis();
+        int posted = 0;
+
+        List<String> ids = new ArrayList<>(storage.getSavedNotificationIds());
+        for (String idStr : ids) {
+            LocalNotification n = storage.getSavedNotification(idStr);
+            if (n == null || n.getId() == null) continue;
+            LocalNotificationSchedule schedule = n.getSchedule();
+            Date at = schedule == null ? null : schedule.getAt();
+            if (at == null) continue;                       // every / on 型排期不归心跳管
+            long t = at.getTime();
+            if (t > now) continue;                          // 还没到点
+            if (now - t > CATCHUP_MS) {
+                // 过期太久：直接丢弃（不补发），同时把那条闹钟也撤掉
+                cancelPluginAlarm(context, n.getId());
+                storage.deleteNotification(idStr);
+                continue;
+            }
+            if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) continue;
+            if (post(context, nm, config, n)) posted++;
+            cancelPluginAlarm(context, n.getId());          // 避免插件那条闹钟稍后再投一次
+            storage.deleteNotification(idStr);
+        }
+        return posted;
+    }
+
+    /** 用与插件一致的渠道/图标/点击载荷投一条通知 */
+    private static boolean post(Context context, NotificationManagerCompat nm, CapConfig config, LocalNotification n) {
+        try {
+            String channelId = n.getChannelId() != null
+                    ? n.getChannelId()
+                    : LocalNotificationManager.DEFAULT_NOTIFICATION_CHANNEL_ID;
+            Intent open = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+            if (open == null) return false;
+            open.setAction(Intent.ACTION_MAIN);
+            open.addCategory(Intent.CATEGORY_LAUNCHER);
+            open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            // 这三个 extra 就是插件点通知时读的那几个：App 侧据此切页并弹出对应课程/记事
+            open.putExtra(INTENT_ID_KEY, n.getId());
+            open.putExtra(INTENT_ACTION_KEY, "tap");
+            try {
+                if (n.getSource() != null) open.putExtra(INTENT_OBJ_KEY, n.getSource().toString());
+            } catch (Throwable ignored) { }
+            open.putExtra(INTENT_REMOVABLE_KEY, true);
+
+            int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) piFlags |= PendingIntent.FLAG_IMMUTABLE;
+            PendingIntent content = PendingIntent.getActivity(context, n.getId(), open, piFlags);
+
+            NotificationCompat.Builder b = new NotificationCompat.Builder(context, channelId)
+                    .setContentTitle(n.getTitle())
+                    .setContentText(n.getBody())
+                    .setAutoCancel(true)
+                    .setOnlyAlertOnce(true)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setSmallIcon(R.drawable.ic_stat_icon)
+                    .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                    .setContentIntent(content);
+            nm.notify(n.getId(), b.build());
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 撤掉插件给这条通知排的闹钟（PendingIntent 匹配只看组件+请求码，所以能精确撤掉） */
+    private static void cancelPluginAlarm(Context context, int id) {
+        try {
+            AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) return;
+            Intent i = new Intent(context, TimedNotificationPublisher.class);
+            i.putExtra(INTENT_ID_KEY, id);
+            int flags = PendingIntent.FLAG_CANCEL_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
+            PendingIntent pi = PendingIntent.getBroadcast(context, id, i, flags);
+            am.cancel(pi);
+        } catch (Throwable ignored) { }
+    }
+
+    /** 排下一跳。近期有排期就 15 分钟一跳，否则一小时一跳（省电）。 */
+    public static void arm(Context context) {
+        try {
+            AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) return;
+            long now = System.currentTimeMillis();
+            long nearest = Long.MAX_VALUE;
+            NotificationStorage storage = new NotificationStorage(context);
+            for (String idStr : storage.getSavedNotificationIds()) {
+                LocalNotification n = storage.getSavedNotification(idStr);
+                if (n == null || n.getSchedule() == null || n.getSchedule().getAt() == null) continue;
+                long t = n.getSchedule().getAt().getTime();
+                if (t > now && t < nearest) nearest = t;
+            }
+            long delay = (nearest - now <= 45 * 60 * 1000L) ? TICK_MS : TICK_IDLE_MS;
+            Intent i = new Intent(context, ReminderHeartbeat.class).setAction(ACTION);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
+            PendingIntent pi = PendingIntent.getBroadcast(context, REQUEST_CODE, i, flags);
+            try {
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, now + delay, pi);
+            } catch (Throwable t) {
+                am.set(AlarmManager.RTC_WAKEUP, now + delay, pi);
+            }
+        } catch (Throwable ignored) { }
+    }
+}

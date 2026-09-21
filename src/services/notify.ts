@@ -170,13 +170,25 @@ export function staleIds(plan: Array<{ id: number; at: number }>, scheduledIds: 
  * 冷启动清理（取代原来的"全清"）：**只清过期与来路不明的**，未来的排期原样留着。
  * 清出来的那份账本也一起收敛，免得越积越多。
  */
-export async function cleanupStaleOnBoot(): Promise<number> {
+export interface CleanupReport {
+  /** 取消掉的过期/来路不明的排期条数 */
+  cancelled: number;
+  /**
+   * 其中"**本该响过、但系统一直没投递**"的条数。
+   * 判据：账本里有计划时刻（说明是我们排的）、计划时刻已过 90 秒以上、可它**还留在**系统排期里
+   * —— 正常投递过的话插件早把它删了。这个数字就是"系统在延迟闹钟"的硬证据。
+   */
+  missed: number;
+}
+
+export async function cleanupStaleOnBoot(): Promise<CleanupReport> {
   const [plan, ids] = await Promise.all([loadPlan(), safeScheduled()]);
   const stale = staleIds(plan, ids, Date.now());
   await cancelIds(stale);
   const kept = ids.filter((id) => stale.indexOf(id) < 0);
   await savePlan(plan.filter((e) => kept.indexOf(e.id) >= 0));
-  return stale.length;
+  const planned = new Set(plan.map((e) => e.id));
+  return { cancelled: stale.length, missed: stale.filter((id) => planned.has(id)).length };
 }
 
 export interface ScheduleStats { total: number; classReminders: number; todoReminders: number; testReminders: number; nextFireAt: string }

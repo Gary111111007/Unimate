@@ -42,6 +42,21 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- 提醒兜底心跳（v2.30）：不依赖插件的排期，自己每 15 分钟醒一次，
+             把"刚过期还没投递"的通知补投出去（系统把闹钟攒着时的兜底）。
+             开机也重排一次，否则重启后心跳就断了。 -->
+        <receiver
+            android:name=".ReminderHeartbeat"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.unimate.app.REMINDER_TICK" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- Permissions -->

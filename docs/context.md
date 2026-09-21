@@ -1,4 +1,4 @@
-# 项目上下文交接（压缩版 · 2026-09-21，v2.29）
+# 项目上下文交接（压缩版 · 2026-09-21，v2.30）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
@@ -11,21 +11,24 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 项 | 值 |
 | --- | --- |
 | 仓库 | `E:\Gary\北京化工大学\北化app\Work` |
-| 最新提交 | 本次 v2.29（P2.5 解析适配器热更新；前几个：`95c704f` v2.28 提醒排期、`1404130` v2.26 纯 JS 验签、`74ae606` v2.25 档案热更新） |
+| 最新提交 | 本次 v2.30（提醒兜底心跳；前几个：`edd4678` v2.29 P2.5、`95c704f` v2.28 提醒排期、`1404130` v2.26 纯 JS 验签） |
 | 上一个提交 | `45e5e32` — 实际是 v2.15~v2.19（提交信息误写 v2.14，已在 PRD §14.1 登记真实口径，历史不重写） |
 | 未提交（本轮） | 无 —— 纯 JS 验签 + 重新签名的下发包一起提交（v2.26） |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages，免备案） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.29，SHA `DFC2326D…`；v2.28 `60B902DF…`、v2.27 `AC746B42…`） |
+| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.30，SHA `15520571…`；v2.29 `DFC2326D…`、v2.28 `60B902DF…`） |
 | 提醒口径 | 地平线 7 天；只清"过期 90 秒以上 + 账本里没有的"排期（`notify/plan.json`）；**错过的提醒不补发** |
+| 提醒兜底 | v2.30 起有原生心跳（每 15 分钟，近期无排期时 60 分钟）：补投"过期 30 分钟内"的；通知设置里会显示"本该响过但系统没投递"的条数 |
 | 演示站状态 | **仍是 v2.23 的包**（线上 `index-UMPn5m76.js`），`/catalog/` 不存在 → App 会提示"站点上还没有下发清单"，属正常降级 |
 | 签名私钥 | `keys\school-signing.key`（**未入库**，丢了要重新 keygen 并改公钥 + 重出包） |
 
 ## 3. 下一步（按优先级）
 
 1. **部署演示站（v2.24~v2.26 都还没上线）**：本机没有 Cloudflare 凭据，`npx wrangler pages deploy` 报缺少 `CLOUDFLARE_API_TOKEN`。要么 `npx wrangler login` 后再 `npx wrangler pages deploy dist --project-name unimate3`，要么在 Cloudflare 项目页（Workers & Pages → unimate3 → Create new deployment）把 `dist` 里的内容整个拖上去。**注意这次要多核对一步**：站点根下要有 `catalog/index.json` / `index.json.sig` / `<schoolId>.json`，否则 App 选校页会一直提示"站点上没有清单或签名文件"。
-2. **真机复验 v2.28**（AGENTS.md 要求页面级功能必须真机验证）：
-   ① **提醒**：装上后看课表页有没有"提醒可能不准时"那行提示——有就按它去开（精确闹钟/电池优化）；然后设一条 2 分钟后的测试提醒锁屏等它响。
-   **若提示条没出现却仍漏响** → 上原生兜底心跳（AGENTS.md 预留的最后手段，见 PRD 11.36 C）。
+2. **真机复验 v2.30**（AGENTS.md 要求页面级功能必须真机验证）：
+   ① **提醒**：装上后设一条 2 分钟后的测试提醒、**锁屏等它响**（v2.30 起有原生兜底心跳：即使系统把插件的闹钟攒着，15 分钟内也会补投）。
+   再到「我的 → 通知设置」看那行"上次启动清理：… 其中 **N 条本该响过、但系统一直没投递**"——**N > 0 就是系统在延迟闹钟的硬证据**，
+   按提示去开「精确闹钟授权 + 电池优化豁免」；若开了仍只在一打开时收到提醒，说明该 ROM 把应用明确冻结，
+   还要按 App 给出的机型路径放行"自启动 / 后台运行"。
    ② 档案热更新 AC-70~74；③ 天气 AC-64~69。
 3. ~~北二外待核实项~~ —— 产品负责人 2026-09-21 明确「不用管了」。
 4. ~~P2.5 解析适配器热更新~~ —— **v2.29 已完成**（规则层 + 与档案共用签名清单 + 改版演练测试 + `docs/adapters.md`）。
@@ -41,7 +44,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 ## 5. 常用命令
 
 ```powershell
-npm run test:notify       # 单跑某个套件（共 19 个：test:login/parser/exam/school/share/weather/schoolpack/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 613 条断言）
+npm run test:notify       # 单跑某个套件（共 20 个：test:login/parser/exam/school/share/weather/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 680 条断言）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1   # 唯一正确出包方式（沙箱内跑不通，需在沙箱外）
 npx wrangler pages deploy dist --project-name unimate3                       # 部署演示站

@@ -306,6 +306,11 @@ async function copyInterests(): Promise<void> {
           <div v-if="!wire.ok" class="small muted" style="margin-top: 4px">{{ wire.hint }}（样本 {{ wire.sample }}）</div>
 
           <div class="row" style="justify-content: space-between; margin-top: 4px"><span class="small">最近一次重建结果</span><span class="small">{{ schedMsg || '—' }}</span></div>
+          <!-- 冷启动清理结果（v2.30）：missed 就是"系统把闹钟攒着没投递"的硬证据 -->
+          <div v-if="db.notifyCleanup.at" class="small muted" style="margin-top: 6px">
+            上次启动清理：取消 {{ db.notifyCleanup.cancelled }} 条过期排期<template v-if="db.notifyCleanup.missed">，其中 <b>{{ db.notifyCleanup.missed }} 条本该响过、但系统一直没投递</b>（这就是"到点不响、一打开才补发"的直接证据）</template>。
+            <template v-if="db.notifyCleanup.missed">建议按上面的「精确闹钟授权」「电池优化豁免」两项去开；App 侧另有 15 分钟兜底心跳会自动补投（最多晚 15 分钟）。</template>
+          </div>
           <div class="row" style="gap: 8px; margin-top: 10px">
             <button class="btn sm grow" @click="test(1)">测试提醒（1 分钟）</button>
             <button class="btn sm grey grow" @click="test(2)">2 分钟</button>

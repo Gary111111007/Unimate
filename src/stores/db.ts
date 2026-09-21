@@ -87,6 +87,11 @@ const screen = ref<'school' | 'login' | 'app'>('login');
    */
   const focus = ref<{ kind: 'course' | 'note'; id: string; week?: number } | null>(null);
   const storage = ref<{ ok: boolean; detail: string }>({ ok: true, detail: '未检测' });
+  /**
+   * 上次冷启动清理的结果（v2.30）。`missed` = "本该响过、但系统一直没投递"的条数 ——
+   * 这是判断"系统在延迟闹钟"的硬证据，通知设置面板直接显示它。
+   */
+  const notifyCleanup = ref<{ cancelled: number; missed: number; at: number }>({ cancelled: 0, missed: 0, at: 0 });
 
   // ---------------- 学校档案热更新（Net.md P2 / PRD 5.14） ----------------
   /**
@@ -194,7 +199,10 @@ const screen = ref<'school' | 'login' | 'app'>('login');
        *    那一条（还差几秒/刚过几秒）会被静默吞掉。现在只清"过期超过 90 秒"的
        *    与"账本里没有的"，未来的排期原样保留（见 services/notify.ts 的 staleIds）。
        */
-      try { await guard('清理过期排期', cleanupStaleOnBoot(), 4000, undefined); } catch { /* 预览环境忽略 */ }
+      try {
+        const rep = await guard('清理过期排期', cleanupStaleOnBoot(), 4000, { cancelled: 0, missed: 0 });
+        notifyCleanup.value = { cancelled: rep.cancelled, missed: rep.missed, at: Date.now() };
+      } catch { /* 预览环境忽略 */ }
       const lastAccount = manifest.lastAccountId;
       const acc = lastAccount ? accounts.value.find((a) => a.id === lastAccount) : null;
       if (acc) {
@@ -842,6 +850,7 @@ function hourTotal(kind: HourKind): number {
   return {
     booted, screen, profile, accounts, session, interests, timetables, courses, notes, records, hours, materials, settings, focus,
     activeTab, activeSheet, toast, toastSeq, busy, lastError, storage, activeTimetable, currentWeek, confirmReq, confirm, answerConfirm,
+    notifyCleanup,
     boot, selectSchool, applyProfile, changeSchool, addInterest, ensureDemoAccount, register, login, logout, switchSchool,
     loadUserData, saveData, seedDemo, resetDemo, notify,
     newTimetable, addCourse, removeCourse, addNote, addRecord, addHour, removeHour, addMaterial, removeMaterial, materialsOf, hourTotal, blockScore, totalScore, coursesOn, persistManifest,

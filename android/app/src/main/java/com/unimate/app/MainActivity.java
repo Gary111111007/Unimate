@@ -9,6 +9,11 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(JwWebViewPlugin.class);
         super.onCreate(savedInstanceState);
+        /*
+         * 提醒兜底心跳（v2.30）：应用一启动就把它排上。
+         * 不这么做的话，只有在"系统真的按点放行了插件那条闹钟"之后心跳才会存在 —— 那是鸡生蛋问题。
+         */
+        try { ReminderHeartbeat.arm(this); } catch (Throwable ignored) { }
     }
 
     /**

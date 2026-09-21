@@ -147,6 +147,42 @@ console.log('');
 }
 
 /*
+ * 9. 兜底心跳（v2.30）：系统把闹钟攒着时的最后一道保险
+ *
+ * 真机第三轮反馈仍然是"到点不响、一打开才提醒" —— 说明系统压根没按时投递插件的排期。
+ * 心跳不依赖插件排期：每 15 分钟（近期无排期时 60 分钟）自己醒一次，扫插件持久化的排期，
+ * 把"刚过期还没投递"的补投出去；只补 30 分钟以内的，更早的直接丢弃（不制造轰炸）。
+ */
+console.log('');
+{
+  const fs = fsMod;
+  const hbPath = pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'ReminderHeartbeat.java');
+  ok('兜底心跳的原生文件存在', fs.existsSync(hbPath), hbPath);
+  if (fs.existsSync(hbPath)) {
+    const hb = fs.readFileSync(hbPath, 'utf8');
+    ok('心跳用 setAndAllowWhileIdle（Doze 里也能被放行）', /setAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP/.test(hb), '');
+    ok('心跳自己重排下一跳（Android 不允许精确重复闹钟）', /static void arm\(Context context\)/.test(hb) && /arm\(context\);\s*\}\s*$|arm\(context\);/.test(hb), '');
+    ok('有近期排期才 15 分钟一跳，否则 60 分钟（省电）', /TICK_IDLE_MS = 60 \* 60 \* 1000L/.test(hb) && /nearest - now <= 45 \* 60 \* 1000L/.test(hb), '');
+    ok('只补 30 分钟内错过的（更早的直接丢弃，避免一股脑）', /CATCHUP_MS = 30 \* 60 \* 1000L/.test(hb) && /now - t > CATCHUP_MS/.test(hb), '');
+    ok('补投后取消插件那条闹钟（避免重复投递）', /cancelPluginAlarm\(context, n\.getId\(\)\)/.test(hb), '');
+    ok('补投后从插件存储里删掉（避免下次重复）', /storage\.deleteNotification\(idStr\)/.test(hb), '');
+    ok('点击载荷与插件一致（能切到对应课程/记事）',
+      /LocalNotificationId/.test(hb) && /LocalNotficationObject/.test(hb) && /LocalNotificationUserAction/.test(hb), '');
+    ok('心跳不自己造通知文案（沿用排期里的标题/内容）', /n\.getTitle\(\)/.test(hb) && /n\.getBody\(\)/.test(hb), '');
+    ok('通知不可用时直接跳过（不崩）', /areNotificationsEnabled\(\)/.test(hb), '');
+  }
+  const manifest = fs.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
+  ok('manifest 注册了心跳，且 exported=false', /ReminderHeartbeat[\s\S]{0,200}android:exported="false"/.test(manifest), '');
+  ok('manifest 里有自定义 tick 动作', /com\.unimate\.app\.REMINDER_TICK/.test(manifest), '');
+  ok('开机广播也重排心跳（否则重启后心跳断了）', /BOOT_COMPLETED[\s\S]{0,120}QUICKBOOT_POWERON/.test(manifest), '');
+  const activity = fs.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'MainActivity.java'), 'utf8');
+  ok('App 启动时就把心跳排上（否则是鸡生蛋问题）', /ReminderHeartbeat\.arm\(this\)/.test(activity), '');
+  // 自检数字：missed = 账本里有计划、但系统没投递
+  ok('清理结果区分"取消数"与"系统没投递数"', /missed: stale\.filter\(\(id\) => planned\.has\(id\)\)\.length/.test(notifySrc), '');
+  ok('通知设置面板显示这个数字（证据要看得见）', /db\.notifyCleanup\.missed/.test(fs.readFileSync(pathMod.join(root, 'src', 'views', 'MeView.vue'), 'utf8')), '');
+}
+
+/*
  * 8. 让用户看得见根因（真机上"到点不响"就是这两项没就绪）
  */
 {
