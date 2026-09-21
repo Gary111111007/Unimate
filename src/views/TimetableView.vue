@@ -555,19 +555,35 @@ function goToday(): void { week.value = db.currentWeek; }
  * 数据编码进链接的 # 片段（**不上传服务器**），二维码在本机生成；
  * 课表内容太多、二维码放不下时自动降级为"只给链接"。
  */
-const shareLink = computed(() => {
-  const tt = db.activeTimetable;
-  if (!tt) return '';
-  const courses = db.courses.filter((c) => c.timetableId === tt.id)
-    .map((c) => ({ name: c.name, day: c.day, startPeriod: c.startPeriod, endPeriod: c.endPeriod, weeks: c.weeks, room: c.room || '' }));
-  if (!courses.length) return '';
-  return buildShareUrl(encodeShare({
-    name: tt.name, semesterStart: tt.semesterStartMonday, totalWeeks: tt.totalWeeks, courses
-  }));
-});
-/** 二维码画大一点（260px）：课表内容多时模块很密，画小了手机扫不出来 */
+const shareLink = ref('');
+const shareBusy = ref(false);
+const showFullLink = ref(false);
+/** 二维码画大一点（320px）：课表内容多时模块很密，画小了手机扫不出来 */
 const shareQr = computed(() => (shareLink.value && canEncodeQr(shareLink.value) ? qrSvg(shareLink.value, 320) : ''));
-function openShare(): void { showMenu.value = false; showShare.value = true; }
+async function openShare(): Promise<void> {
+  showMenu.value = false; showShare.value = true; showFullLink.value = false;
+  shareLink.value = ''; shareBusy.value = true;
+  try {
+    const tt = db.activeTimetable;
+    if (!tt) return;
+    const courses = db.courses.filter((c) => c.timetableId === tt.id)
+      .map((c) => ({ name: c.name, day: c.day, startPeriod: c.startPeriod, endPeriod: c.endPeriod, weeks: c.weeks, room: c.room || '' }));
+    if (!courses.length) return;
+    // encodeShare 是异步的（走 gzip 压缩让二维码更稀疏），所以这里必须 await，不能塞进 computed
+    shareLink.value = buildShareUrl(await encodeShare({
+      name: tt.name, semesterStart: tt.semesterStartMonday, totalWeeks: tt.totalWeeks, courses
+    }));
+  } finally { shareBusy.value = false; }
+}
+/** 系统分享（@capacitor/share）：直接发微信/QQ；桌面预览或未装插件时退回复制链接 */
+async function shareOut(): Promise<void> {
+  const link = shareLink.value;
+  if (!link) return;
+  try {
+    const { Share } = await import('@capacitor/share');
+    await Share.share({ title: '我的课表 · Unimate', text: '点开就能看我的课表：', url: link, dialogTitle: '分享课表' });
+  } catch { await copyShareLink(); }
+}
 async function copyShareLink(): Promise<void> {
   const link = shareLink.value;
   if (!link) { db.notify('这张课表还是空的，没有可分享的内容'); return; }
@@ -718,22 +734,33 @@ function toggleWeek(w: number): void {
       <div class="row"><div class="title grow">分享这张课表</div><button class="btn sm ghost" @click="showShare = false">关闭</button></div>
       <div class="hairline"></div>
       <template v-if="shareLink">
-        <div v-if="shareQr" class="qrbox" v-html="shareQr"></div>
-        <div v-else class="small warn" style="margin-bottom: 8px">
+        <!-- 二维码：白卡片居中，四周留白（静默区），不在深色底上直接贴码 -->
+        <div v-if="shareQr" class="qrwrap">
+          <div class="qrcard" v-html="shareQr"></div>
+          <div class="small muted center" style="margin-top: 8px">用微信/相机扫码即可打开只读课表</div>
+        </div>
+        <div v-else class="small warn center" style="margin-bottom: 10px">
           这张课表内容较多，二维码放不下 —— 用下面的链接分享（一样能打开）。
         </div>
-        <div class="small muted" style="line-height: 1.7">
-          同学扫这个码（或点链接）就能看到你的课表只读页，页面在 <b>{{ shareHost() }}</b> 上。<br />
-          链接里<b>只含课程名、教室、时间与周次，不含教师姓名</b>；<b>不会上传到任何服务器</b>——
-          数据就在链接的 # 部分，浏览器不会把它发给服务器。发给谁，谁就能看到，请按需分享。<br />
-          课表内容多时码会比较密：扫不动就点「复制分享链接」直接发链接。
+
+        <!-- 只显示域名，完整链接折叠起来，不再铺一屏 -->
+        <div class="hostrow">
+          <span class="small muted">页面在</span>
+          <b class="small">{{ shareHost() }}</b>
+          <button class="btn sm ghost" style="margin-left: auto" @click="showFullLink = !showFullLink">{{ showFullLink ? '收起链接' : '显示完整链接' }}</button>
         </div>
+        <div v-if="showFullLink" class="linkbox">{{ shareLink }}</div>
+
         <div class="row" style="gap: 8px; margin-top: 12px">
-          <button class="btn grow" @click="copyShareLink()">复制分享链接</button>
-          <button class="btn ghost grow" @click="showShare = false">关闭</button>
+          <button class="btn grow" @click="copyShareLink()">复制链接</button>
+          <button class="btn grey grow" @click="shareOut()">发给同学</button>
         </div>
-        <div class="linkbox">{{ shareLink }}</div>
+        <div class="tiny muted" style="margin-top: 10px; line-height: 1.6">
+          链接里只含课程名、教室、时间与周次（<b>不含教师姓名</b>），也不会传到服务器 —— 数据就在链接的 # 部分。
+          发给谁，谁就能看到。
+        </div>
       </template>
+      <div v-else-if="shareBusy" class="empty"><div class="big">⏳</div>正在生成分享链接…</div>
       <div v-else class="empty">这张课表还是空的，先导入或添加课程再来分享。</div>
     </div>
   </div>
@@ -898,10 +925,14 @@ function toggleWeek(w: number): void {
 .kv b { text-align: right; word-break: break-all; }
 .sw { width: 30px; height: 30px; border-radius: 9px; border: 2px solid transparent; }
 .sw.on { border-color: #14181F; }
-/* 分享面板：二维码居中、链接可选中（长按复制） */
-.qrbox { display: flex; justify-content: center; margin: 4px 0 12px; }
-.qrbox :deep(svg) { border-radius: 12px; border: 1px solid var(--line); background: #fff; }
-.linkbox { margin-top: 10px; padding: 10px; border-radius: 10px; background: var(--soft); color: var(--muted); font-size: 11px; line-height: 1.6; word-break: break-all; user-select: text; -webkit-user-select: text; }
+/* 分享面板：二维码放白卡片里居中（深色底上直接贴码容易扫不出/显得脏），
+   完整链接默认折叠，只露域名 —— 不再铺一屏 base64。 */
+.qrwrap { display: flex; flex-direction: column; align-items: center; margin: 6px 0 14px; }
+.qrcard { background: #fff; border-radius: 14px; padding: 12px; box-shadow: 0 2px 10px rgba(0, 0, 0, .12); line-height: 0; }
+.qrcard :deep(svg) { display: block; border-radius: 6px; }
+.hostrow { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 10px; background: var(--soft); }
+.linkbox { margin-top: 8px; padding: 10px; border-radius: 10px; background: var(--soft); color: var(--muted); font-size: 10.5px; line-height: 1.55; word-break: break-all; max-height: 96px; overflow: auto; user-select: text; -webkit-user-select: text; }
+.tiny { font-size: 10.5px; }
 /* 周次滑动切换动画 */
 .grid { transition: none; }
 .wk-r-enter-active, .wk-r-leave-active, .wk-l-enter-active, .wk-l-leave-active { transition: transform .2s ease, opacity .2s ease; }
