@@ -39,20 +39,20 @@ ok('解除时会 clearTimeout', script.includes('clearTimeout(watchdog)'));
 const dbSrc = readFileSync(join(root, 'src', 'stores', 'db.ts'), 'utf8');
 const bootBody = (dbSrc.match(/async function boot\(\): Promise<void> \{([\s\S]*?)\n  \}\n/) || [, ''])[1];
 ok('取到 boot 函数体', bootBody.length > 100, bootBody.length + ' 字符');
-const naked = bootBody.split('\n').filter((l) => /\bawait\s+(probeStorage|readJson|finishLogin|cancelAllScheduledOnBoot)\s*\(/.test(l) && !l.includes('guard('));
+const naked = bootBody.split('\n').filter((l) => /\bawait\s+(probeStorage|readJson|finishLogin|cleanupStaleOnBoot)\s*\(/.test(l) && !l.includes('guard('));
 ok('boot 里没有未包超时的原生调用', naked.length === 0, naked.map((x) => x.trim()).join(' | '));
 
 /*
  * 【v2.14 真机事故】提醒"重启后一条都不响"。
- * 原因是 boot() 把 cancelAllScheduledOnBoot() 写在 finishLogin() 之后：
- * finishLogin → loadUserData → rescheduleAll 刚把未来两周的提醒排进系统，
- * 紧接着的清理步骤就把它们**全部取消**了。必须是"先清（开机恢复的过期排期）后建"。
+ * 原因是 boot() 把清理写在 finishLogin() 之后：finishLogin → loadUserData → rescheduleAll
+ * 刚把未来的提醒排进系统，紧接着的清理就把它们全取消了。必须是"先清（过期排期）后建"。
+ * v2.28 把"全清"改成"只清过期与来路不明的"（cleanupStaleOnBoot），顺序不变。
  */
-const cancelAt = bootBody.indexOf('cancelAllScheduledOnBoot');
+const cancelAt = bootBody.indexOf('cleanupStaleOnBoot');
 const loginAt = bootBody.indexOf('finishLogin(');
-ok('冷启动先清空遗留排期、再重建（顺序反了等于把刚排好的提醒全删掉）',
+ok('冷启动先清理过期排期、再重建（顺序反了等于把刚排好的提醒全删掉）',
   cancelAt >= 0 && loginAt >= 0 && cancelAt < loginAt,
-  'cancelAllScheduledOnBoot@' + cancelAt + ' finishLogin@' + loginAt);
+  'cleanupStaleOnBoot@' + cancelAt + ' finishLogin@' + loginAt);
 
 console.log('');
 console.log('Boot Test: ' + passed + ' passed, ' + failed + ' failed');

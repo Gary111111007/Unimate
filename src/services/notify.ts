@@ -1,15 +1,31 @@
 // 本地通知（PRD 5.10）。所有调用都包 try/catch：桌面预览与未授权时静默降级，
 // 但会把结果返回给界面显示，避免"提醒没响也不知道为什么"。
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { ref } from 'vue';
 import { guard } from './guard.ts';
 import { WIRE_DATE_RE, wireAt } from './notifyWire.ts';
+import { readJson, writeJson } from './io.ts';
+import { JwWebView, isNativeWebView, type PowerStatus } from './jwwebview.ts';
 import type { Course, NoteItem, Settings, Timetable } from '../types.ts';
 
 const CLASS_ID_BASE = 100000;
 const NOTE_ID_BASE = 200000;
 const TEST_ID = 900;
 const DEMO_ID = 999;
-const HORIZON_DAYS = 14;
+/*
+ * 排期地平线。
+ * 原来是 14 天：App 每次打开都会重建，14 天只是让系统里堆着几十条排期；
+ * 一旦手机被 ROM 冻结/进 Doze，这些"过期未投递"的排期会在下次开机/解锁时被插件的恢复广播
+ * 改写成"15 秒后"一起补发（真机反馈的"一打开全涌出来"）。
+ * 改成 7 天：一周内必然会打开一次 App（课表天天看），同时把系统侧堆积减半。
+ */
+const HORIZON_DAYS = 7;
+/**
+ * 清理时的宽限窗口：计划时刻过去还不到 90 秒的排期**不动**。
+ * 因为用户很可能正好在提醒时刻前后打开 App（"到点了到底有没有课"），
+ * 旧实现的全清+重建会把这一条静默吞掉 —— 这正是"到点不提示"的一种成因。
+ */
+const GRACE_MS = 90 * 1000;
 /*
  * 【v2.14 修正，真机反馈"提醒还是不响"的根因之二】
  * 这个常量同时是渠道 id 的后缀。升到 v3 是因为：
@@ -31,7 +47,7 @@ const CHANNEL_SOUND = 'unimate_notify';
  *   两端口径一致，所以直接传 Date 就是正确的绝对时刻。
  *   历史教训：v2.7 曾以为原生把 'Z' 当字面量按本地时区解，改成"本地字段拼串 + 假 Z"，
  *   结果每条提醒被整体推到 **+8 小时** 才触发 —— 表现就是"到点了不弹，隔很久一起弹"。
- *   真正会造成错时/补弹的是"开机恢复广播"（见文件末尾 cancelAllScheduledOnBoot）。
+ *   真正会造成错时/补弹的是"开机恢复广播"（见文件末尾 cleanupStaleOnBoot 与排期账本）。
  */
 function atTime(d: Date): Date { return d; }
 
@@ -107,6 +123,62 @@ async function cancelIds(ids: number[]): Promise<void> {
   try { await guard('取消排期', LocalNotifications.cancel({ notifications: ids.map((id) => ({ id })) }), 3000, undefined); } catch { /* noop */ }
 }
 
+// ---------------- 排期账本：区分"本来就该响"与"系统改写的补发" ----------------
+
+/**
+ * 我们自己的排期账本（`notify/plan.json`）：记下"排了哪些 id、计划什么时候响"。
+ *
+ * 为什么要自己记账：插件的开机恢复广播会把**已过期**的排期改写成"now + 15 秒"，
+ * 改写之后光看插件里的 `at` 已经分不出"这条本来就是未来的"还是"这条早该响、被补发的"。
+ * 有账本才能只清该清的，而不是"全清再重建"（那会吞掉用户正在等的那一条）。
+ */
+interface PlanEntry { id: number; at: number; kind: 'c' | 'n' }
+const PLAN_PATH = 'notify/plan.json';
+
+async function savePlan(entries: PlanEntry[]): Promise<void> {
+  try { await writeJson(PLAN_PATH, { savedAt: Date.now(), entries }); } catch { /* 写不了不影响排期本身 */ }
+}
+
+export async function loadPlan(): Promise<PlanEntry[]> {
+  try {
+    const j: any = await readJson(PLAN_PATH, null);
+    return j && Array.isArray(j.entries)
+      ? j.entries.filter((e: any) => e && typeof e.id === 'number' && typeof e.at === 'number')
+      : [];
+  } catch { return []; }
+}
+
+/**
+ * 该清掉哪些排期（纯函数，单测直接覆盖）：
+ *  - 计划时刻已经过去超过 grace 的（含被恢复广播改写成"15 秒后"的那些）；
+ *  - 账本里根本没有的（老版本残留 / 别的来源），一律不可信 → 清掉；
+ *  - 测试/演示提醒（id 900/999）不归这里管。
+ */
+export function staleIds(plan: Array<{ id: number; at: number }>, scheduledIds: number[], now: number, graceMs: number = GRACE_MS): number[] {
+  const planned = new Map(plan.map((e) => [e.id, e.at]));
+  const out: number[] = [];
+  for (const id of scheduledIds) {
+    if (id === TEST_ID || id === DEMO_ID) continue;
+    const at = planned.get(id);
+    if (at === undefined) { out.push(id); continue; }
+    if (at < now - graceMs) out.push(id);
+  }
+  return out;
+}
+
+/**
+ * 冷启动清理（取代原来的"全清"）：**只清过期与来路不明的**，未来的排期原样留着。
+ * 清出来的那份账本也一起收敛，免得越积越多。
+ */
+export async function cleanupStaleOnBoot(): Promise<number> {
+  const [plan, ids] = await Promise.all([loadPlan(), safeScheduled()]);
+  const stale = staleIds(plan, ids, Date.now());
+  await cancelIds(stale);
+  const kept = ids.filter((id) => stale.indexOf(id) < 0);
+  await savePlan(plan.filter((e) => kept.indexOf(e.id) >= 0));
+  return stale.length;
+}
+
 export interface ScheduleStats { total: number; classReminders: number; todoReminders: number; testReminders: number; nextFireAt: string }
 
 // 口径修正：TEST_ID/DEMO_ID 的 id 小于 CLASS_ID_BASE，旧代码用 id>=CLASS_ID_BASE 过滤，
@@ -141,9 +213,21 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
   try {
     result.permission = await permissionState();
     await ensureChannels();
-    await cancelIds((await safeScheduled()).filter((id) => id !== TEST_ID && id !== DEMO_ID));
+    /*
+     * 清理旧排期时**放过"计划时刻刚过去还没响"的那些**（见 GRACE_MS）：
+     * 用户常常正好在提醒时刻打开 App，旧写法"全清再重建"会把这一条静默吞掉。
+     */
+    const planBefore = await loadPlan();
+    const plannedAt = new Map(planBefore.map((e) => [e.id, e.at]));
+    const existing = await safeScheduled();
     const tt = timetables.find((t) => t.id === settings.lastActiveTimetableId) || timetables[0];
-    if (!tt) { result.error = '还没有课表'; return result; }
+    if (!tt) {
+      // 没有课表：把不再需要的排期（除测试/演示）清掉即可
+      await cancelIds(existing.filter((id) => id !== TEST_ID && id !== DEMO_ID));
+      await savePlan([]);
+      result.error = '还没有课表';
+      return result;
+    }
 
     const times = new Map(settings.periodTimes.map((p) => [p.period, p]));
     const now = Date.now();
@@ -199,7 +283,18 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
       }
     }
 
-    if (!list.length) return result;
+    // 即将重建的 id 集合：这些不动（下面 schedule 同 id 会覆盖）
+    const keepIds = new Set(list.map((x) => x.id));
+    const now2 = Date.now();
+    await cancelIds(existing.filter((id) => {
+      if (id === TEST_ID || id === DEMO_ID) return false;
+      if (keepIds.has(id)) return false;
+      const at = plannedAt.get(id);
+      if (at !== undefined && at >= now2 - GRACE_MS) return false;   // 刚过点、可能正在响 → 留着
+      return true;
+    }));
+
+    if (!list.length) { await savePlan([]); return result; }
     if (result.permission !== 'granted' && result.permission !== 'unsupported') {
       result.error = '系统通知权限未开启（当前：' + result.permission + '）';
       return result;
@@ -207,6 +302,8 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
     // 单次排期上限，避免 Android 一次性注册过多闹钟
     await guard('批量排期', LocalNotifications.schedule({ notifications: list.slice(0, 64) }), 8000, undefined);
     result.scheduled = Math.min(list.length, 64);
+    // 记账：只记真正排进去的那些（多的那部分下次打开时会因为"账本里没有"被清掉）
+    await savePlan(list.slice(0, 64).map((x) => ({ id: x.id, at: (x.schedule.at as Date).getTime(), kind: x.extra.k })));
     return result;
   } catch (e: any) {
     result.error = (e && (e.message || String(e))) || '未知错误';
@@ -253,15 +350,6 @@ export async function scheduleDemoPing(): Promise<boolean> {
   } catch { return false; }
 }
 
-/**
- * 冷启动清理：Capacitor 的恢复广播（BOOT_COMPLETED / QUICKBOOT_POWERON）会把所有
- * 已过期的排期改写成"15 秒后立即发送"。启动时先清空遗留排期，再由 rescheduleAll
- * 只重建未来时间点的通知，避免开机后一堆过期提醒一次性涌出。
- */
-export async function cancelAllScheduledOnBoot(): Promise<void> {
-  await cancelIds(await safeScheduled());
-}
-
 /** Android 12+ 精确闹钟授权状态。未授权时提醒会被系统延后（只有原生环境才有意义）。 */
 export async function exactAlarmState(): Promise<string> {
   const anyLocal = LocalNotifications as any;
@@ -274,4 +362,94 @@ export async function requestExactAlarmSetting(): Promise<string> {
   const anyLocal = LocalNotifications as any;
   if (typeof anyLocal.changeExactNotificationSetting !== 'function') return 'unsupported';
   try { return (await anyLocal.changeExactNotificationSetting()).exact_alarm; } catch { return 'unknown'; }
+}
+
+// ---------------- 提醒可用性自检（真机复现"到点不响"的根因就在这两项上） ----------------
+
+/**
+ * 提醒在后台能不能准时响，取决于两件系统开关（AGENTS.md 里的"三件套"前两项；
+ * 第三项厂商自启动只能靠用户手动，原生侧给出按厂商的路径文案）：
+ *   1) **精确闹钟**（Android 12+ 默认不给）：不给 → 插件退化成"不精确闹钟" →
+ *      到点不响、等手机/应用活跃时一起补发（真机反馈的"一打开全涌出来"）；
+ *   2) **电池优化豁免**：不豁免 → 国产 ROM 冻结后台，排期根本投递不到。
+ * 这一层只做"查状态"，不主动跳系统设置（产品负责人明确要求过不要自动跳）。
+ */
+export interface ReminderReadiness {
+  native: boolean;
+  exactAlarm: boolean;
+  batteryOk: boolean;
+  rom: string;
+  hint: string;
+  /** 需要修哪一项（'' = 都没问题，不用打扰用户） */
+  canFix: '' | 'exact' | 'battery';
+}
+
+export async function reminderReadiness(): Promise<ReminderReadiness> {
+  if (!isNativeWebView()) {
+    return { native: false, exactAlarm: true, batteryOk: true, rom: '', hint: '', canFix: '' };
+  }
+  let exactAlarm = true;
+  let batteryOk = true;
+  let rom = '';
+  let hint = '';
+  try {
+    const st = await guard('查精确闹钟', exactAlarmState(), 2500, 'unknown');
+    // 'unsupported' = Android 12 以下没有这项限制；'unknown' 才当没就绪
+    exactAlarm = st === 'granted' || st === 'unsupported';
+  } catch { /* 查不到就不吓唬用户 */ }
+  try {
+    const ps: PowerStatus = await guard('查电池优化', JwWebView.powerStatus(), 2500, null as any);
+    if (ps && ps.ok) {
+      batteryOk = !!ps.ignoring;
+      rom = ps.rom || '';
+      hint = ps.hint || '';
+      if (ps.exactAlarm === false) exactAlarm = false;
+    }
+  } catch { /* 同上 */ }
+  return { native: true, exactAlarm, batteryOk, rom, hint, canFix: !exactAlarm ? 'exact' : (!batteryOk ? 'battery' : '') };
+}
+
+/** 厂商 / 机型 / 电池优化状态（通知设置面板显示用；桌面预览返回 ok:false） */
+export async function powerStatus(): Promise<PowerStatus> {
+  try {
+    const r: PowerStatus = await guard('查电池优化', JwWebView.powerStatus(), 2500, null as any);
+    return r || { ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: '超时' };
+  } catch (e: any) {
+    return { ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: (e && e.message) || String(e) };
+  }
+}
+
+/** 最近一次自检结果（课表页那行提示用）：只做展示，不阻塞任何流程 */
+export const reminderRisk = ref<ReminderReadiness | null>(null);
+
+export async function refreshReminderRisk(): Promise<ReminderReadiness> {
+  const r = await reminderReadiness();
+  reminderRisk.value = r;
+  return r;
+}
+
+/** 申请电池优化豁免（先试系统一键弹窗，退回设置列表页） */
+export async function requestIgnoreBattery(): Promise<string> {
+  try {
+    const r = await guard('申请电池优化豁免', JwWebView.requestIgnoreBattery(), 10000, { ok: false, mode: '', error: '超时' } as any);
+    return r && r.ok ? '已打开系统设置，选「允许」后回来即可' : ('打不开系统页：' + ((r && r.error) || '未知原因'));
+  } catch (e: any) {
+    return '打不开系统页：' + ((e && e.message) || e);
+  }
+}
+
+/** 打开系统的"闹钟和提醒"授权页 */
+export async function openExactAlarmSettings(): Promise<string> {
+  try {
+    const r: any = await guard('打开精确闹钟设置', JwWebView.openExactAlarmSettings(), 6000, { ok: false, error: '超时' });
+    return r && r.ok ? '已打开系统设置，打开「允许设置闹钟和提醒」后回来即可' : ('打不开系统页：' + ((r && r.error) || '未知原因'));
+  } catch (e: any) {
+    return '打不开系统页：' + ((e && e.message) || e);
+  }
+}
+
+/** 一键去修"提醒可能不准时"：按当前缺哪一项决定跳哪个系统页（课表页提示条用） */
+export async function fixReminderSetting(target?: '' | 'exact' | 'battery'): Promise<string> {
+  const t = target || (reminderRisk.value ? reminderRisk.value.canFix : 'exact');
+  return t === 'battery' ? requestIgnoreBattery() : openExactAlarmSettings();
 }

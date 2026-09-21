@@ -4,6 +4,7 @@
 import {
   NATIVE_PARSE_TZ, NATIVE_PATTERN, WIRE_DATE_RE, fakeLocalAt, wireAt
 } from '../src/services/notifyWire.ts';
+import { staleIds } from '../src/services/notify.ts';
 
 let pass = 0;
 const fails: string[] = [];
@@ -107,6 +108,57 @@ ok('排期把定位信息写进通知 extra', notifySrc.includes("extra: { k: 'c
 const pluginsSrc = fsMod.readFileSync(pathMod.join(root, 'src', 'plugins.ts'), 'utf8');
 ok('注册了通知点击监听', pluginsSrc.includes('localNotificationActionPerformed'), '');
 ok('点击监听会切到对应页面并落 focus', pluginsSrc.includes("db.focus = { kind: 'course'") && pluginsSrc.includes("db.focus = { kind: 'note'"), '');
+
+/*
+ * 7. 排期清理口径（v2.28，真机反馈"到点不响、一打开全涌出来"）
+ *
+ * 三个事实决定了这段逻辑：
+ *  a) 插件 setExactIfPossible()：精确闹钟没授权时退化成"不精确闹钟"→ 到点不响、等活跃时一起补发；
+ *  b) 插件 LocalNotificationRestoreReceiver：开机广播把**已过期**的排期改写成"now + 15 秒"→ 一股脑补发；
+ *  c) 旧实现"全清再重建"会把用户正在等的那一条（正好到点）静默吞掉。
+ */
+console.log('');
+{
+  const now = 1_800_000_000_000;      // 固定时间，避免用 Date.now() 让断言飘
+  const plan = [
+    { id: 101, at: now + 60_000 },     // 一分钟后
+    { id: 102, at: now - 10_000 },     // 刚过点 10 秒（宽限期内）
+    { id: 103, at: now - 600_000 }     // 十分钟前就该响
+  ];
+  const scheduled = [101, 102, 103, 104, 900, 999];   // 104 = 账本里没有的孤儿；900/999 = 测试/演示提醒
+  const out = staleIds(plan, scheduled, now, 90_000);
+  ok('未来的排期不动', out.indexOf(101) < 0, JSON.stringify(out));
+  ok('刚过点 10 秒的也不动（用户很可能正在看这一条）', out.indexOf(102) < 0, JSON.stringify(out));
+  ok('过期十分钟的才清', out.indexOf(103) >= 0, JSON.stringify(out));
+  ok('账本里没有的孤儿清掉（老版本残留 / 恢复广播造的）', out.indexOf(104) >= 0, JSON.stringify(out));
+  ok('测试/演示提醒不归它管', out.indexOf(900) < 0 && out.indexOf(999) < 0, JSON.stringify(out));
+  ok('宽限期可调：0 宽限时刚过点的也清', staleIds(plan, scheduled, now, 0).indexOf(102) >= 0, '');
+  ok('空账本 = 全清（老版本升级上来的第一次）', staleIds([], [1, 2, 3], now).length === 3, '');
+
+  // 排期地平线：不再排太远（14 天 → 7 天），减少系统侧堆积与"过期补发"的规模
+  const horizon = notifySrc.match(/const HORIZON_DAYS = (\d+)/);
+  ok('排期地平线是 7 天', !!horizon && horizon[1] === '7', String(horizon && horizon[1]));
+  ok('用了新账本机制（排期时写、启动时按账本清）',
+    /await savePlan\(list\.slice\(0, 64\)/.test(notifySrc) && /export async function cleanupStaleOnBoot/.test(notifySrc), '');
+  ok('不再"全清再重建"（旧函数已删）', !/cancelAllScheduledOnBoot/.test(notifySrc), '');
+  // 排期前必须拦掉过去时间：插件对过去的 at 是直接 return（不排也不报错），
+  // 我们若依赖它就会以为排上了
+  ok('课表/待办排期前都挡掉过去时间', (notifySrc.match(/if \(fire < now \|\| fire > horizon\) continue;/g) || []).length >= 2, '');
+}
+
+/*
+ * 8. 让用户看得见根因（真机上"到点不响"就是这两项没就绪）
+ */
+{
+  const tt = fsMod.readFileSync(pathMod.join(root, 'src', 'views', 'TimetableView.vue'), 'utf8');
+  const me = fsMod.readFileSync(pathMod.join(root, 'src', 'views', 'MeView.vue'), 'utf8');
+  const app = fsMod.readFileSync(pathMod.join(root, 'src', 'App.vue'), 'utf8');
+  ok('课表页有提醒可用性提示条（含一键去修）', /riskbar/.test(tt) && /fixReminderSetting/.test(tt), '');
+  ok('提示条只在真的没就绪时出现（canFix 非空）', /v-if="risk && risk\.canFix/.test(tt), '');
+  ok('不主动跳系统设置：只有用户点了才跳', /@click="fixRisk\(\)"/.test(tt) && !/onMounted\(\(\) => \{ void fixReminderSetting/.test(tt), '');
+  ok('启动时只查状态（refreshReminderRisk）', /refreshReminderRisk/.test(app), '');
+  ok('通知设置面板显示电池优化与机型路径', /电池优化豁免/.test(me) && /power\.rom/.test(me) && /requestIgnoreBattery/.test(me), '');
+}
 
 console.log('\n结果：' + pass + ' 通过 / ' + fails.length + ' 失败');
 for (const f of fails) console.log('  ✗ ' + f);

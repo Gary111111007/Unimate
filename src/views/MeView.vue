@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
-import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck } from '../services/notify.ts';
+import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
 import { applyTheme, type ThemeMode } from '../services/theme.ts';
 import { FONT_LEVELS, applyTextZoom } from '../services/display.ts';
@@ -22,6 +22,8 @@ const stats = ref({ total: 0, classReminders: 0, todoReminders: 0, testReminders
 const schedMsg = ref('');
 const exact = ref('unknown');
 const wire = ref({ ok: true, sample: '', hint: '' });
+/** 电池优化 / 厂商信息（查不到就显示"未检测"） */
+const power = ref({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: '' });
 /** 打开「天气」面板时的开关与城市：用它判断"保存时用户是不是明确改过"（改过就允许立刻拉一次） */
 const wxOpened = ref({ enabled: false, city: '' });
 
@@ -88,6 +90,13 @@ async function askExact(): Promise<void> {
   db.notify(exact.value === 'granted' ? '精确闹钟已授权，提醒会按时到点触发' : '返回后请重新打开通知设置查看状态');
 }
 
+/** 去开"允许后台运行"（电池优化豁免） */
+async function fixReminder(): Promise<void> {
+  const msg = await requestIgnoreBattery();
+  await refreshNotifyState();
+  db.notify(msg);
+}
+
 /**
  * 天气（Net.md P0）。
  * 开关状态直接写在设置里（和别的面板一样），只有点「保存设置」才落盘；
@@ -117,6 +126,7 @@ async function saveWeather(): Promise<void> {
 async function refreshNotifyState(): Promise<void> {
   perm.value = await permissionState();
   exact.value = await exactAlarmState();
+  power.value = await powerStatus();
   wire.value = wireSelfCheck();
   stats.value = await scheduleStats();
   sched.value = stats.value.total;
@@ -283,7 +293,11 @@ async function copyInterests(): Promise<void> {
           <div class="row" style="justify-content: space-between; margin-top: 10px"><span class="grow small">精确闹钟授权</span><span class="pill" :class="exact === 'granted' ? 'live' : 'danger'">{{ exact === 'granted' ? '已授权' : (exact === 'unsupported' ? '系统无需此授权' : '未授权') }}</span></div>
           <button v-if="exact !== 'granted' && exact !== 'unsupported'" class="btn block sm grey" style="margin-top: 8px" @click="askExact">去授权精确闹钟</button>
           <div v-if="exact !== 'granted' && exact !== 'unsupported'" class="small muted" style="margin-top: 6px">未授权时系统会把提醒并入省电批处理：后台基本不响，等你打开 App 才一次性补发。这就是"不打开不提醒、一打开全涌出"的成因。</div>
-          <div class="small muted" style="margin-top: 8px">提醒依赖三件事：系统通知权限、精确闹钟授权、以及厂商后台保留策略。前两项在下面直接开；后者各品牌入口不同，本产品按你的要求不再主动跳转系统设置。</div>
+          <!-- 电池优化（v2.28）：不做这一步，国产 ROM 会把后台冻住，排期根本投递不到 -->
+          <div class="row" style="justify-content: space-between; margin-top: 10px"><span class="grow small">电池优化豁免</span><span class="pill" :class="power.ignoring ? 'live' : 'danger'">{{ power.ok ? (power.ignoring ? '已豁免' : '未豁免') : '未检测' }}</span></div>
+          <button v-if="power.ok && !power.ignoring" class="btn block sm grey" style="margin-top: 8px" @click="fixReminder()">去允许后台运行</button>
+          <div v-if="power.rom" class="small muted" style="margin-top: 6px">机型：{{ power.rom }}{{ power.hint ? ' · ' + power.hint : '' }}</div>
+          <div class="small muted" style="margin-top: 8px">提醒依赖三件事：系统通知权限、精确闹钟授权、以及厂商后台保留策略（电池优化豁免 / 自启动）。前两项在下面直接开；第三项各品牌入口不同，本页只给路径，不主动跳系统设置。</div>
         </div>
         <div class="card" style="box-shadow: none; background: var(--soft); margin-top: 10px">
           <div class="row" style="justify-content: space-between"><span class="small">系统已排期提醒</span><b class="small">{{ sched }} 条</b></div>

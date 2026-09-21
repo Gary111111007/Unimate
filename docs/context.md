@@ -1,4 +1,4 @@
-# 项目上下文交接（压缩版 · 2026-09-21，v2.27）
+# 项目上下文交接（压缩版 · 2026-09-21，v2.28）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
@@ -11,18 +11,22 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 项 | 值 |
 | --- | --- |
 | 仓库 | `E:\Gary\北京化工大学\北化app\Work` |
-| 最新提交 | 本次 v2.27（区分"没部署/签名不对"；上一个 `1404130` — v2.26 纯 JS 验签，再上一个 `74ae606` — v2.25 档案热更新） |
+| 最新提交 | 本次 v2.28（提醒排期重做；前几个：`1404130` v2.26 纯 JS 验签、`74ae606` v2.25 档案热更新、`9ada557` v2.24 天气接线） |
 | 上一个提交 | `45e5e32` — 实际是 v2.15~v2.19（提交信息误写 v2.14，已在 PRD §14.1 登记真实口径，历史不重写） |
 | 未提交（本轮） | 无 —— 纯 JS 验签 + 重新签名的下发包一起提交（v2.26） |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages，免备案） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.27，SHA `AC746B42…`；v2.26 是 `D3EFDEBD…`） |
+| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.28，SHA `60B902DF…`；v2.27 `AC746B42…`、v2.26 `D3EFDEBD…`） |
+| 提醒口径 | 地平线 7 天；只清"过期 90 秒以上 + 账本里没有的"排期（`notify/plan.json`）；**错过的提醒不补发** |
 | 演示站状态 | **仍是 v2.23 的包**（线上 `index-UMPn5m76.js`），`/catalog/` 不存在 → App 会提示"站点上还没有下发清单"，属正常降级 |
 | 签名私钥 | `keys\school-signing.key`（**未入库**，丢了要重新 keygen 并改公钥 + 重出包） |
 
 ## 3. 下一步（按优先级）
 
 1. **部署演示站（v2.24~v2.26 都还没上线）**：本机没有 Cloudflare 凭据，`npx wrangler pages deploy` 报缺少 `CLOUDFLARE_API_TOKEN`。要么 `npx wrangler login` 后再 `npx wrangler pages deploy dist --project-name unimate3`，要么在 Cloudflare 项目页（Workers & Pages → unimate3 → Create new deployment）把 `dist` 里的内容整个拖上去。**注意这次要多核对一步**：站点根下要有 `catalog/index.json` / `index.json.sig` / `<schoolId>.json`，否则 App 选校页会一直提示"站点上没有清单或签名文件"。
-2. **真机复验 v2.26**（AGENTS.md 要求页面级功能必须真机验证）：① 档案热更新 AC-70~74——重点看选校页状态行**不再**出现"WebCrypto 用不了"；断网打开只显示内置名单不报错；联网点「检查更新」能看到远端清单；下载后重启仍可用；用改坏的清单/档案试一次必须被拒收。② 天气 AC-64~69：关着时课表页没有那一行、也没有任何对外请求；打开 → 定位授权 → 出现那一行；拒绝定位 → 手填城市仍能出；飞行模式不卡不报错。
+2. **真机复验 v2.28**（AGENTS.md 要求页面级功能必须真机验证）：
+   ① **提醒**：装上后看课表页有没有"提醒可能不准时"那行提示——有就按它去开（精确闹钟/电池优化）；然后设一条 2 分钟后的测试提醒锁屏等它响。
+   **若提示条没出现却仍漏响** → 上原生兜底心跳（AGENTS.md 预留的最后手段，见 PRD 11.36 C）。
+   ② 档案热更新 AC-70~74；③ 天气 AC-64~69。
 3. ~~北二外待核实项~~ —— 产品负责人 2026-09-21 明确「不用管了」。
 4. 联网路线图（`Net.md`）：~~P0 天气~~、~~P2 学校档案热更新~~（都已实现）→ P2.5 解析适配器热更新（声明式规则包）→ P3 跨机同步（端到端加密）→ P5 AI 助手（Key 只在服务端）。
 
@@ -36,7 +40,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 ## 5. 常用命令
 
 ```powershell
-npm run test:schoolpack   # 单跑某个套件（共 19 个：test:login/parser/exam/school/share/weather/schoolpack/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 594 条断言）
+npm run test:notify       # 单跑某个套件（共 19 个：test:login/parser/exam/school/share/weather/schoolpack/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 613 条断言）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1   # 唯一正确出包方式（沙箱内跑不通，需在沙箱外）
 npx wrangler pages deploy dist --project-name unimate3                       # 部署演示站
@@ -59,6 +63,9 @@ curl.exe -sS https://unimate3.pages.dev/ | Select-String 'index-.*\.js'      # �
 | 登录页写着"不联网、不上传" | 有了天气就不成立；文档与界面口径要跟着实现走（AGENTS.md 第 7 条） |
 | **真机报"WebCrypto 用不了验签"**（v2.25 的坑，v2.26 修） | 安卓 WebView 的平台密码学实现差异会让整个热更新在部分机型上不可用 → **改用纯 JS 验签**（`@noble/ed25519` + `@noble/hashes`），算法回到规范写的 Ed25519，从此不依赖 WebCrypto |
 | **把"还没部署"报成"签名不对"**（v2.26 的坑，v2.27 修） | 静态托管对未知路径会回落成首页（200 + text/html），App 拿 HTML 去验签必然失败 → `fetchCatalog()` 现在同时看 HTTP 状态与 content-type，四种情况分别给文案；**只有"两个文件都在但验不过"才是可能被投毒的告警** |
+| 插件 `setExactIfPossible()` 在"闹钟和提醒"未授权时退化成**不精确闹钟**（v2.28 修） | Android 12+ 默认不给该权限 → 到点不响、等手机/应用活跃时批量补发。现在课表页会提示并给一键入口（只查状态、不自动跳设置） |
+| 插件的开机恢复广播把**已过期**排期改写成"now+15 秒"（v2.28 修） | 这是"一打开全一股脑"的来源之一 → 我们用 `notify/plan.json` 记账，只清"过期 90 秒以上 + 账本里没有的"，未来的排期不动 |
+| 冷启动"全清再重建"会吞掉正好到点的那一条（v2.28 修） | 用户常常就在提醒时刻前后打开 App 看有没有课 → 改成按账本精确清理；顺序仍是"先清后建"（boot 测试锁死） |
 | 顺带的发现：明文 http 下 `crypto.subtle` 根本不存在（仅安全上下文才有） | 用局域网 IP（`http://192.168.x.x`）调试时，浏览器里连 SHA-256 都算不了 —— 这也是"别把关键能力押在平台 API 上"的又一例证 |
 | `build-apk.ps1` 行尾是**混着的**（老行 `CR CR LF`，新加的行纯 LF） | 改它只能用 node 按字节插入、并**沿用相邻行的行尾**，别统一行尾 —— 否则 diff 里上百行假变更 |
 | 私钥差点进了仓库 | `keys/` 已写进 `.gitignore`；出包反查里也要确认 APK 里**没有** `BEGIN PRIVATE KEY` |

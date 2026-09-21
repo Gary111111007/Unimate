@@ -11,7 +11,7 @@ import { uuid, nowStamp, dateStamp } from '../services/id.ts';
 import { readJson, writeJson, readText, writeText, remove, probeStorage } from '../services/io.ts';
 import { randomSalt, sha256Text } from '../services/crypto.ts';
 import { buildDemoBisuCourses, buildDemoNotes, buildDemoRecords, buildDemoTimetable } from '../services/demo.ts';
-import { rescheduleAll, scheduleDemoPing, cancelAllScheduledOnBoot } from '../services/notify.ts';
+import { rescheduleAll, scheduleDemoPing, cleanupStaleOnBoot } from '../services/notify.ts';
 import { guard, traceReset } from '../services/guard.ts';
 import { applyTextZoom } from '../services/display.ts';
 import { fetchWeather, firstFulfilled, geocode, shouldRequestWeather } from '../services/weather.ts';
@@ -169,13 +169,16 @@ const screen = ref<'school' | 'login' | 'app'>('login');
         }
       } catch { /* 缓存读不到：就当今天还没检查过，到时重新拉 */ }
       /*
-       * 【v2.14 修正，真机反馈"提醒还是不响"的根因之一】
-       * Android 开机恢复广播（BOOT_COMPLETED）会把所有过期排期改写成"15 秒后立即发送"，
-       * 所以冷启动必须先清空遗留排期、再由下面的 finishLogin → loadUserData → rescheduleAll 重建。
-       * 旧顺序把这一步写在 finishLogin 之后：提醒刚排好就被 cancelAllScheduledOnBoot 全部取消，
-       * 结果是"每次重启后一条提醒都不会响，除非用户在 App 里再改点什么触发一次重建"。
+       * 【v2.14 / v2.28 两次修正，真机反馈"提醒还是不响"的根因】
+       * Android 开机恢复广播（BOOT_COMPLETED / QUICKBOOT_POWERON）会把所有**已过期**的排期
+       * 改写成"15 秒后立即发送"（插件 LocalNotificationRestoreReceiver 的行为），
+       * 所以冷启动要先清理这些过期排期，再由下面的 finishLogin → loadUserData → rescheduleAll 重建。
+       *  - v2.14 的教训：这一步写在 finishLogin **之后**，等于把刚排好的提醒全删了；
+       *  - v2.28 的教训：原来的"全清"太狠 —— 用户正好在提醒时刻前后打开 App 时，
+       *    那一条（还差几秒/刚过几秒）会被静默吞掉。现在只清"过期超过 90 秒"的
+       *    与"账本里没有的"，未来的排期原样保留（见 services/notify.ts 的 staleIds）。
        */
-      try { await guard('清理遗留排期', cancelAllScheduledOnBoot(), 4000, undefined); } catch { /* 预览环境忽略 */ }
+      try { await guard('清理过期排期', cleanupStaleOnBoot(), 4000, undefined); } catch { /* 预览环境忽略 */ }
       const lastAccount = manifest.lastAccountId;
       const acc = lastAccount ? accounts.value.find((a) => a.id === lastAccount) : null;
       if (acc) {

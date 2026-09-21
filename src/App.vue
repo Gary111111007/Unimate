@@ -5,7 +5,7 @@ import SchoolPicker from './screens/SchoolPicker.vue';
 import Login from './screens/Login.vue';
 import Main from './screens/Main.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
-import { ensurePermission, permissionState } from './services/notify.ts';
+import { ensurePermission, permissionState, refreshReminderRisk } from './services/notify.ts';
 import { bootTrace } from './services/guard.ts';
 import { applyTextZoom } from './services/display.ts';
 import ShareView from './views/ShareView.vue';
@@ -79,6 +79,13 @@ async function postBootPermissions(): Promise<void> {
     const state = await permissionState();
     if (state !== 'granted' && state !== 'unsupported') await ensurePermission();
   } catch { }
+  /*
+   * 提醒自检（v2.28）：只**查状态**、不主动跳系统设置。
+   * 精确闹钟未授权时插件会退化成"不精确闹钟"（到点不响、等应用活跃时一起补发），
+   * 电池优化没豁免时国产 ROM 会冻结后台 —— 这两项是"到点不响"的根因，
+   * 查完把结论放进 reminderRisk，课表页据此显示一行提示 + 一键去修。
+   */
+  try { await refreshReminderRisk(); } catch { /* 查不到就算了，不打扰 */ }
 }
 onMounted(async () => {
   const t0 = Date.now();

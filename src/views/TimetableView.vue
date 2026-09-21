@@ -11,6 +11,7 @@ import { textZoomFactor } from '../services/display.ts';
 import { buildShareUrl, encodeShare, shareHost } from '../services/share.ts';
 import { canEncodeQr, qrSvg } from '../services/qr.ts';
 import { agoText, weatherText, weatherTip } from '../services/weather.ts';
+import { fixReminderSetting, refreshReminderRisk, reminderRisk } from '../services/notify.ts';
 import ImportPanel from './ImportPanel.vue';
 import SettingsPanel from '../components/SettingsPanel.vue';
 
@@ -552,6 +553,26 @@ onUnmounted(() => {
 function goToday(): void { week.value = db.currentWeek; }
 
 /**
+ * 提醒可用性提示条（v2.28）。
+ *
+ * 真机反馈"到点不响、一打开全涌出来"的根因是两项系统开关没就绪：
+ *  - **精确闹钟**（Android 12+ 默认不给）→ 插件退化成"不精确闹钟"：到点不响，等手机/应用活跃时一起补发；
+ *  - **电池优化豁免**没开 → 国产 ROM 冻结后台，排期根本投递不到。
+ * 这两项没法由 App 自己开（也不许自动跳系统设置），所以这里只在**真的没就绪**时显示一行，
+ * 用户点一下才去系统页 —— 不打扰，但也不会让人"不知道为什么不准时"。
+ */
+const riskDismissed = ref(false);
+const risk = computed(() => reminderRisk.value);
+const riskText = computed(() => (!risk.value ? '' : risk.value.canFix === 'exact'
+  ? '提醒可能不准时：系统还没允许「闹钟和提醒」'
+  : '提醒可能不准时：系统还在限制后台运行'));
+async function fixRisk(): Promise<void> {
+  db.notify(await fixReminderSetting());
+  setTimeout(() => { void refreshReminderRisk(); }, 1500);   // 从系统页回来后再查一次
+}
+onMounted(() => { void refreshReminderRisk(); });
+
+/**
  * 天气（Net.md P0 / PRD 5.13）。
  * 只在开关打开、并且本机已经有数据（或正在更新）时才渲染这一行 —— 关着的时候页面上
  * 不多一块空卡片，也**一次请求都不发**（判断全在 store 的 `ensureWeather` 里）。
@@ -657,6 +678,13 @@ function toggleWeek(w: number): void {
         <span class="wxu">{{ wxAge }}更新</span>
         <span v-if="wxTip" class="wxu wxtip">☔ {{ wxTip }}</span>
         <span class="wxr">↻</span>
+      </div>
+      <!-- 提醒可用性（v2.28）：只在精确闹钟/电池优化真的没就绪时出现；点一下才去系统设置，不自动跳 -->
+      <div v-if="risk && risk.canFix && !riskDismissed" class="riskbar">
+        <span class="rkico">⏰</span>
+        <span class="rktxt">{{ riskText }}</span>
+        <button class="btn sm" @click="fixRisk()">去开启</button>
+        <button class="rke" aria-label="本次不再提示" @click="riskDismissed = true">×</button>
       </div>
       <!-- 真机反馈：这块原来是三行大卡片，把课表整个顶到屏幕外。压成一条，点整条看详情。 -->
       <div v-if="nextClass" class="nextbar" @click="detail = nextClass">
@@ -914,6 +942,11 @@ function toggleWeek(w: number): void {
 .wxu { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wxtip { color: var(--warn); flex: none; }
 .wxr { margin-left: auto; font-size: 12px; color: var(--muted); flex: none; }
+/* 提醒可用性提示条：只在与"提醒会不会准"有关的问题上出现（精确闹钟/电池优化未就绪） */
+.riskbar { display: flex; align-items: center; gap: 8px; margin: 0 0 7px; padding: 6px 10px; border-radius: 11px; background: var(--tint); border: 1px solid var(--brand); }
+.rkico { font-size: 14px; flex: none; }
+.rktxt { flex: 1; min-width: 0; font-size: 12px; color: var(--strong); line-height: 1.35; }
+.rke { flex: none; width: 22px; height: 22px; border-radius: 50%; color: var(--muted); font-size: 14px; line-height: 1; }
 .nextbar { display: flex; align-items: center; gap: 9px; background: var(--card); border-radius: 11px; padding: 7px 10px; margin: 0 0 7px; box-shadow: var(--shadow); }
 .ndot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .ngrow { flex: 1; min-width: 0; }
