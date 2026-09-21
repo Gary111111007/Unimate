@@ -200,10 +200,21 @@ async function copyInterests(): Promise<void> {
     </div>
 
     <div class="card" style="margin-top: 10px">
-      <div class="row" style="justify-content: space-between">
-        <span class="small muted">第二课堂累计自评</span><span class="bold">{{ db.totalScore() }} / {{ TOTAL_FULL_SCORE }}</span>
-      </div>
-      <div class="small muted" style="margin-top: 4px">{{ sub }}</div>
+      <!-- 有二课的学校（北化）显示自评总分；没有二课的学校（北二外）只显示两本时长台账，
+           不把 0/600 这种无意义的数字摆出来 -->
+      <template v-if="db.profile?.secondClass.enabled">
+        <div class="row" style="justify-content: space-between">
+          <span class="small muted">第二课堂累计自评</span><span class="bold">{{ db.totalScore() }} / {{ TOTAL_FULL_SCORE }}</span>
+        </div>
+        <div class="small muted" style="margin-top: 4px">{{ sub }}</div>
+      </template>
+      <template v-else>
+        <div class="row" style="justify-content: space-between">
+          <span class="small muted">活动材料累计</span>
+          <span class="bold">志愿 {{ db.hourTotal('volunteer') }} 小时 · 劳育 {{ db.hourTotal('labor') }} 小时</span>
+        </div>
+        <div class="small muted" style="margin-top: 4px">{{ db.profile?.secondClass.label || '活动材料' }}：本校未核实专属活动规则，不套用第二课堂分值表</div>
+      </template>
     </div>
 
     <div class="list" style="margin-top: 10px">

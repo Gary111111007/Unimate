@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useDb } from '../stores/db.ts';
+import { isNativeWebView } from '../services/jwwebview.ts';
 
 const db = useDb();
+/**
+ * 公网演示站（v2.22）：浏览器里打开时给一句明确交代 ——
+ * 数据只在这台设备的浏览器里、不上传；想要通知/相机等完整能力请装 APK。
+ * 评审/同学第一次打开不用猜"这是不是真能用的版本"。
+ */
+const isWeb = !isNativeWebView();
 const mode = ref<'login' | 'register'>('login');
 const username = ref('');
 const password = ref('');
@@ -35,6 +42,10 @@ async function useDemo(): Promise<void> {
     </div>
 
     <div class="body">
+      <div v-if="isWeb" class="demobar">
+        <b>演示站</b>：数据只存在你这台设备的浏览器里，不上传、不采集。<br />
+        装 APK（或点下方演示账号）可体验完整功能，含课前提醒、拍照水印等。
+      </div>
       <div class="logo">U</div>
       <div class="title">登录 Unimate</div>
       <div class="muted small center">登录后选择你的高校；课表 / 待办提醒 / 第二课堂 / 校园在线，一个 App 搞定</div>
@@ -63,6 +74,7 @@ async function useDemo(): Promise<void> {
 .top { padding: calc(12px + var(--safe-t)) 14px 12px; background: var(--card); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
 .schoolname { font-weight: 600; }
 .body { flex: 1; padding: 26px 16px; }
+.demobar { background: var(--tint); color: var(--brand); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; line-height: 1.7; margin-bottom: 16px; }
 .logo { width: 60px; height: 60px; margin: 0 auto 10px; border-radius: 18px; background: linear-gradient(135deg, #2E5AAC, #4E7BD6); color: #fff; font-size: 34px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
 .title { text-align: center; font-size: 20px; font-weight: 700; }
 .form { margin-top: 22px; }

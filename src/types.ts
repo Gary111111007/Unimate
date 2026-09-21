@@ -186,7 +186,12 @@ export interface SchoolProfile {
     timetableAdapter: string;
   };
   campuses: string[];
-  secondClass: { enabled: boolean; label: string; blocks: SecondClassBlockDef[]; rulePack: string };
+  /**
+   * 第二课堂。enabled=false 的学校（如北京第二外国语学院）不套用北化的手册分值表：
+   * 第二栏改名为 label（"活动材料"），只保留"志愿时长 / 劳育时长"两块台账，
+   * 并显示 notice 说明为什么不套用。
+   */
+  secondClass: { enabled: boolean; label: string; blocks: SecondClassBlockDef[]; rulePack: string; notice?: string };
   watermark: { schoolBadgeText: string };
   dataDir: string;
 }

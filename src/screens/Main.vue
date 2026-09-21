@@ -8,16 +8,21 @@ import OnlineView from '../views/OnlineView.vue';
 import MeView from '../views/MeView.vue';
 
 const db = useDb();
-// 第 3 项显示名由高校档案决定（北化 = 北化在线）
+/**
+ * 第 2、3 项显示名都由高校档案决定：
+ *  - 第 2 项：有二课的学校显示 "第二课堂"；没有二课的学校（如北二外）显示 "活动材料"
+ *    （该档案 secondClass.enabled = false，只保留志愿时长 / 劳育时长两块台账）。
+ *  - 第 3 项：北化 = "北化通"，北二外 = "校园服务"。
+ */
 const TABS = computed(() => [
   { label: '课表', icon: '🗓' },
-  { label: '第二课堂', icon: '🏅' },
+  { label: db.profile?.secondClass.label || '第二课堂', icon: db.profile?.secondClass.enabled ? '🏅' : '📌' },
   { label: db.profile?.tabs.online || '校园在线', icon: '📚' },
   { label: '我的', icon: '👤' }
 ]);
 const titles = computed(() => {
   if (db.activeTab === 0) return (db.profile?.shortName || '') + ' · 课表';
-  if (db.activeTab === 1) return '第二课堂';
+  if (db.activeTab === 1) return db.profile?.secondClass.label || '第二课堂';
   if (db.activeTab === 2) return db.profile?.tabs.online || '校园在线';
   return '我的';
 });

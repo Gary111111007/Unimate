@@ -8,8 +8,24 @@ import ConfirmDialog from './components/ConfirmDialog.vue';
 import { ensurePermission, permissionState } from './services/notify.ts';
 import { bootTrace } from './services/guard.ts';
 import { applyTextZoom } from './services/display.ts';
+import ShareView from './views/ShareView.vue';
+import { decodeTimetable, payloadFromHash, type SharedTimetable } from './services/share.ts';
 
 const db = useDb();
+/**
+ * 只读分享页（v2.22）：链接形如 `https://<站点>/#s=<payload>`。
+ * 命中时**完全不进登录/主界面**，只渲染这张课表 —— 评委/同学点链接就该直接看到课表，
+ * 而不是先被要求登录。
+ */
+const shared = ref<SharedTimetable | null>(null);
+const shareError = ref(false);
+try {
+  const p = payloadFromHash(location.hash);
+  if (p) {
+    shared.value = decodeTimetable(p);
+    if (!shared.value) shareError.value = true; // 链接有了但解不开（可能被扫码截断或版本不兼容）
+  }
+} catch { shared.value = null; shareError.value = true; }
 const showErr = ref(false);
 const splashDone = ref(false);
 const quick = ref(false);
@@ -92,7 +108,21 @@ onMounted(async () => {
 </script>
 
 <template>
-  <transition name="splash">
+  <!-- 分享链接进来时直接看课表：不显示开屏、不进登录页 -->
+  <ShareView v-if="shared" :data="shared" />
+  <!-- 链接存在但解码失败：给扫码的人看清楚"为什么没显示课表"，而不是掉进登录页 -->
+  <div v-else-if="shareError" class="screen" style="display:flex;align-items:center;justify-content:center;padding:24px">
+    <div class="card" style="max-width:360px;text-align:center;padding:28px 24px">
+      <div style="font-size:40px;margin-bottom:12px">🔗</div>
+      <div class="bold" style="margin-bottom:8px">分享链接无法打开</div>
+      <div class="small muted" style="line-height:1.8">
+        这条链接可能不完整（二维码没扫全）或来自旧版本。
+        请让分享的同学重新生成一个二维码，或直接把链接复制粘贴到浏览器地址栏。
+      </div>
+    </div>
+  </div>
+
+  <transition v-else name="splash">
     <div v-if="!splashDone || !db.booted" class="splash" :class="{ quick }">
       <div class="mark">U</div>
       <div class="word">Unimate</div>
@@ -113,7 +143,7 @@ onMounted(async () => {
     </div>
   </transition>
 
-  <template v-if="splashDone && db.booted">
+  <template v-if="!shared && splashDone && db.booted">
     <SchoolPicker v-if="db.screen === 'school'" />
     <Login v-else-if="db.screen === 'login'" />
     <Main v-else />

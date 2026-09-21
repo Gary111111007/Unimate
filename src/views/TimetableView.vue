@@ -8,6 +8,8 @@ import { writeBinaryBase64, remove } from '../services/io.ts';
 import { JwWebView } from '../services/jwwebview.ts';
 import { anchorFromLegacy, anchorFromPos, clampToBox, posFromAnchor, toolBox } from '../services/toolbox.ts';
 import { textZoomFactor } from '../services/display.ts';
+import { buildShareUrl, encodeShare, shareHost } from '../services/share.ts';
+import { canEncodeQr, qrSvg } from '../services/qr.ts';
 import ImportPanel from './ImportPanel.vue';
 import SettingsPanel from '../components/SettingsPanel.vue';
 
@@ -18,6 +20,7 @@ const showWeekPicker = ref(false);
 const showImport = ref(false);
 const showMenu = ref(false);
 const showSettings = ref(false);
+const showShare = ref(false);
 const detail = ref<Block | null>(null);
 const editing = ref<Course | null>(null);
 const isNew = ref(false);
@@ -546,6 +549,32 @@ onUnmounted(() => {
 });
 
 function goToday(): void { week.value = db.currentWeek; }
+
+/**
+ * 分享整张课表（PRD 5.12）。
+ * 数据编码进链接的 # 片段（**不上传服务器**），二维码在本机生成；
+ * 课表内容太多、二维码放不下时自动降级为"只给链接"。
+ */
+const shareLink = computed(() => {
+  const tt = db.activeTimetable;
+  if (!tt) return '';
+  const courses = db.courses.filter((c) => c.timetableId === tt.id)
+    .map((c) => ({ name: c.name, day: c.day, startPeriod: c.startPeriod, endPeriod: c.endPeriod, weeks: c.weeks, room: c.room || '' }));
+  if (!courses.length) return '';
+  return buildShareUrl(encodeShare({
+    name: tt.name, semesterStart: tt.semesterStartMonday, totalWeeks: tt.totalWeeks, courses
+  }));
+});
+/** 二维码画大一点（260px）：课表内容多时模块很密，画小了手机扫不出来 */
+const shareQr = computed(() => (shareLink.value && canEncodeQr(shareLink.value) ? qrSvg(shareLink.value, 320) : ''));
+function openShare(): void { showMenu.value = false; showShare.value = true; }
+async function copyShareLink(): Promise<void> {
+  const link = shareLink.value;
+  if (!link) { db.notify('这张课表还是空的，没有可分享的内容'); return; }
+  try { await navigator.clipboard.writeText(link); db.notify('分享链接已复制'); }
+  catch { db.notify('复制失败，请长按下面的链接手动复制'); }
+}
+
 /** 打开导入面板（工具箱第一项 / 空态主按钮都走这里） */
 function openImport(): void {
   showImport.value = true;
@@ -653,6 +682,11 @@ function toggleWeek(w: number): void {
           <span class="grow"><b>更改课表信息</b><br /><span class="small muted">课表名称 / 学期第一周周一 / 总周数 / 节次时间</span></span>
           <span>›</span>
         </div>
+        <div class="li" @click="openShare()">
+          <span class="ico2">📤</span>
+          <span class="grow"><b>分享这张课表</b><br /><span class="small muted">生成二维码 / 链接；数据在链接里，不上传服务器</span></span>
+          <span>›</span>
+        </div>
         <div class="li" @click="openNew"><span class="ico2">＋</span><span class="grow">手动添加课程</span><span>›</span></div>
         <div class="li" @click="createTimetable">
           <span class="ico2">🗂</span>
@@ -675,6 +709,32 @@ function toggleWeek(w: number): void {
       <div class="row"><div class="title grow">更改课表信息</div><button class="btn sm ghost" @click="showSettings = false">关闭</button></div>
       <div class="hairline"></div>
       <SettingsPanel />
+    </div>
+  </div>
+
+  <!-- 分享：二维码 + 链接。数据全在链接里，不上传服务器 -->
+  <div v-if="showShare" class="mask" @click.self="showShare = false">
+    <div class="sheet">
+      <div class="row"><div class="title grow">分享这张课表</div><button class="btn sm ghost" @click="showShare = false">关闭</button></div>
+      <div class="hairline"></div>
+      <template v-if="shareLink">
+        <div v-if="shareQr" class="qrbox" v-html="shareQr"></div>
+        <div v-else class="small warn" style="margin-bottom: 8px">
+          这张课表内容较多，二维码放不下 —— 用下面的链接分享（一样能打开）。
+        </div>
+        <div class="small muted" style="line-height: 1.7">
+          同学扫这个码（或点链接）就能看到你的课表只读页，页面在 <b>{{ shareHost() }}</b> 上。<br />
+          链接里<b>只含课程名、教室、时间与周次，不含教师姓名</b>；<b>不会上传到任何服务器</b>——
+          数据就在链接的 # 部分，浏览器不会把它发给服务器。发给谁，谁就能看到，请按需分享。<br />
+          课表内容多时码会比较密：扫不动就点「复制分享链接」直接发链接。
+        </div>
+        <div class="row" style="gap: 8px; margin-top: 12px">
+          <button class="btn grow" @click="copyShareLink()">复制分享链接</button>
+          <button class="btn ghost grow" @click="showShare = false">关闭</button>
+        </div>
+        <div class="linkbox">{{ shareLink }}</div>
+      </template>
+      <div v-else class="empty">这张课表还是空的，先导入或添加课程再来分享。</div>
     </div>
   </div>
 
@@ -838,6 +898,10 @@ function toggleWeek(w: number): void {
 .kv b { text-align: right; word-break: break-all; }
 .sw { width: 30px; height: 30px; border-radius: 9px; border: 2px solid transparent; }
 .sw.on { border-color: #14181F; }
+/* 分享面板：二维码居中、链接可选中（长按复制） */
+.qrbox { display: flex; justify-content: center; margin: 4px 0 12px; }
+.qrbox :deep(svg) { border-radius: 12px; border: 1px solid var(--line); background: #fff; }
+.linkbox { margin-top: 10px; padding: 10px; border-radius: 10px; background: var(--soft); color: var(--muted); font-size: 11px; line-height: 1.6; word-break: break-all; user-select: text; -webkit-user-select: text; }
 /* 周次滑动切换动画 */
 .grid { transition: none; }
 .wk-r-enter-active, .wk-r-leave-active, .wk-l-enter-active, .wk-l-leave-active { transition: transform .2s ease, opacity .2s ease; }

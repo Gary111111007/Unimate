@@ -9,7 +9,7 @@ import { DEFAULT_PERIOD_TIMES, courseColorIndex } from '../catalog/periods.ts';
 import { uuid, nowStamp, dateStamp } from '../services/id.ts';
 import { readJson, writeJson, readText, writeText, remove, probeStorage } from '../services/io.ts';
 import { randomSalt, sha256Text } from '../services/crypto.ts';
-import { buildDemoNotes, buildDemoRecords, buildDemoTimetable } from '../services/demo.ts';
+import { buildDemoBisuCourses, buildDemoNotes, buildDemoRecords, buildDemoTimetable } from '../services/demo.ts';
 import { rescheduleAll, scheduleDemoPing, cancelAllScheduledOnBoot } from '../services/notify.ts';
 import { guard, traceReset } from '../services/guard.ts';
 import { applyTextZoom } from '../services/display.ts';
@@ -376,17 +376,29 @@ function answerConfirm(ok: boolean): void {
 
   async function seedDemo(): Promise<void> {
     const p = profile.value!;
-    const tt = buildDemoTimetable(p.academic.semesterLabel, p.academic.semesterStartMonday, p.academic.totalWeeks);
+    const tt = buildDemoTimetable(p.name, p.academic.semesterLabel, p.academic.semesterStartMonday, p.academic.totalWeeks);
     timetables.value = [tt];
     settings.value.lastActiveTimetableId = tt.id;
     try {
-      const html = await fetch('sample-timetable.html').then((r) => r.text());
-      const mod = await import('../services/parser/jwglxtBuct.ts');
-      const parsed = mod.parseJwglxtTimetable(html);
-      courses.value = parsed.courses.map((c) => ({ ...c, id: uuid(), timetableId: tt.id, colorIndex: courseColorIndex(c.name) }));
+      if (p.schoolId === 'bisu') {
+        // 北二外没有打包的脱敏教务页面样本，演示课表用内置的一份（课程/教室取自产品负责人给的截图）
+        courses.value = buildDemoBisuCourses().map((c) => ({
+          ...c, id: uuid(), timetableId: tt.id, colorIndex: courseColorIndex(String(c.name || ''))
+        })) as Course[];
+      } else {
+        const html = await fetch('sample-timetable.html').then((r) => r.text());
+        const mod = await import('../services/parser/jwglxtBuct.ts');
+        const parsed = mod.parseJwglxtTimetable(html);
+        courses.value = parsed.courses.map((c) => ({ ...c, id: uuid(), timetableId: tt.id, colorIndex: courseColorIndex(c.name) }));
+      }
     } catch { courses.value = []; }
-    notes.value = buildDemoNotes();
-    try { records.value = await buildDemoRecords(base()); } catch (e) { fail('生成示例照片', e); records.value = []; }
+    notes.value = buildDemoNotes(p.secondClass.enabled);
+    // 没有第二课堂的学校不生成二课记录（否则会凭空出现一堆"板块分数"）
+    if (p.secondClass.enabled) {
+      try { records.value = await buildDemoRecords(base()); } catch (e) { fail('生成示例照片', e); records.value = []; }
+    } else {
+      records.value = [];
+    }
     try { await saveData(); } catch (e) { fail('保存演示数据', e); }
     try { await scheduleDemoPing(); } catch { /* 通知不可用时忽略 */ }
     notify('演示数据已就绪：' + courses.value.length + ' 条上课安排、' + notes.value.length + ' 条记事、' + records.value.length + ' 条二课记录');

@@ -66,9 +66,9 @@ async function submitInterest(): Promise<void> {
         <div class="badge" :style="{ background: '#2E5AAC' }">{{ s.shortName.slice(0, 1) }}</div>
         <div class="grow">
           <div class="bold">{{ s.name }}</div>
-          <div class="small muted">{{ s.province }} · 教务课表 · 第二课堂 · 校园在线</div>
+          <div class="small muted">{{ s.province }} · 教务课表 · {{ s.schoolId === 'buct' ? '第二课堂' : '活动材料（无二课）' }} · 校园服务</div>
         </div>
-        <span class="pill live">首个落地高校 · 已可使用</span>
+        <span class="pill live">{{ s.order === 0 ? '首个落地高校 · 已可使用' : '已可使用' }}</span>
       </div>
 
       <div v-if="!live.length" class="empty"><div class="big">🔍</div>没有匹配的高校</div>

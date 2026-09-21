@@ -1,17 +1,47 @@
 // 演示模式数据（PRD 5.8 / AC-28）。示例学生统一为"智小汇"，教师为代号，不含真实姓名。
-import type { NoteItem, SecondClassRecord, Timetable } from '../types.ts';
+import type { Course, NoteItem, SecondClassRecord, Timetable } from '../types.ts';
 import { uuid, nowStamp, dateStamp } from './id.ts';
 import { writeBinaryBase64, writeJson } from './io.ts';
 
-export function buildDemoTimetable(semesterLabel: string, startMonday: string, totalWeeks: number): Timetable {
+export function buildDemoTimetable(schoolName: string, semesterLabel: string, startMonday: string, totalWeeks: number): Timetable {
   return {
-    id: uuid(), name: '北京化工大学 2026-2027-1', semesterLabel,
+    id: uuid(), name: schoolName + ' 2026-2027-1', semesterLabel,
     semesterStartMonday: startMonday, totalWeeks, periodCount: 12,
     isActive: true, source: 'jwglxt', createdAt: nowStamp(), updatedAt: nowStamp()
   };
 }
 
-export function buildDemoNotes(): NoteItem[] {
+/**
+ * 北二外演示课表（第二所落地高校的演示数据）。
+ * 课程名/教室/星期/节次逐条取自产品负责人提供的 BISU 课表截图；
+ * **教师留空**（截图里没有教师信息，不编造），周次按 1-16 周（截图上标"非本周"的两门给 3-16 周）。
+ * 纯演示数据，不含任何真实姓名。
+ */
+export function buildDemoBisuCourses(): Partial<Course>[] {
+  const weeks = (a: number, b: number): number[] => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  const mk = (name: string, day: number, startPeriod: number, endPeriod: number, room: string, from = 1, to = 16): Partial<Course> => ({
+    name, lessonType: 'lecture', teacher: '', campus: '', room, day, startPeriod, endPeriod,
+    weeksRaw: from + (to > from ? '-' + to : '') + '周', weeks: weeks(from, to),
+    credit: null, weeklyHours: null, totalHours: null, examMode: '', courseCode: '',
+    classNames: '', hoursDetail: '', source: 'jwglxt', pendingFilter: false, editedFields: [], remark: ''
+  });
+  return [
+    mk('综合英语(Ⅰ)', 3, 1, 2, '求知楼410'),
+    mk('习近平新时代中国特色社会主义思想概论', 2, 3, 5, '求是楼403'),
+    mk('红色旅游', 1, 3, 5, '人文楼135', 3, 16),
+    mk('宏观经济学', 4, 3, 5, '人文楼229'),
+    mk('会计学原理', 5, 3, 5, '求是楼503'),
+    mk('AI辅助英语翻译', 3, 6, 7, '人文楼615'),
+    mk('AI辅助英语阅读与写作', 4, 6, 7, '知行楼414'),
+    mk('女啦啦操', 5, 6, 7, '南健身房'),
+    mk('遗产旅游', 1, 8, 10, '知行楼306', 3, 16),
+    mk('文化遗产保护与利用', 3, 8, 10, '知行楼308'),
+    mk('旅游大数据', 4, 8, 10, '求是楼808'),
+    mk('概率论与数理统计', 1, 11, 12, '求是楼403')
+  ];
+}
+
+export function buildDemoNotes(hasErke = true): NoteItem[] {
   const mk = (title: string, content: string, minutesFromNow: number | null, alarms: number[], done = false): NoteItem => {
     const at = minutesFromNow === null ? '' : nowStamp(new Date(Date.now() + minutesFromNow * 60000));
     return { id: uuid(), sheet: 'sheet2', title, content, remindAt: at, alarms, repeat: 'none', done, doneAt: done ? nowStamp() : null, colorIndex: 3, linkedCourseId: null, createdAt: nowStamp(), updatedAt: nowStamp(), deletedAt: null };
@@ -19,7 +49,9 @@ export function buildDemoNotes(): NoteItem[] {
   return [
     mk('现场演示通知', '2 分钟后 Uni 会弹一条本地通知，点击可直达这条记录', 2, [0]),
     mk('高数作业：第 3 章 1-10 题', '学习委员周四晚课前收', 60 * 20, [0, 15, 60]),
-    mk('第二课堂材料补交', '把上周志愿服务的照片重新填报（板块：劳）', 60 * 50, [0, 60]),
+    hasErke
+      ? mk('第二课堂材料补交', '把上周志愿服务的照片重新填报（板块：劳）', 60 * 50, [0, 60])
+      : mk('活动材料补交', '把上周志愿服务的照片补进"志愿时长"台账', 60 * 50, [0, 60]),
     mk('电路原理实验预习报告', '实验楼A-203，提前 10 分钟到', 60 * 26, [15]),
     mk('已办：注册本学期选课', '教务系统已完成，无欠费', null, [], true)
   ];

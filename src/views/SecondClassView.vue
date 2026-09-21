@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { watch } from 'vue';
 import RuleTables from './RuleTables.vue';
 import HoursPanel from '../components/HoursPanel.vue';
 import { exportRecordZip, exportAllZip, savePhotoToDevice, shareFile } from '../services/export.ts';
@@ -17,8 +18,16 @@ import type { BlockKey, PhotoEvidence, SecondClassRecord } from '../types.ts';
 
 const db = useDb();
 const active = ref<BlockKey | 'all'>('all');
-/** 三个 sheet：二课填报记「分」，志愿与劳育各记「小时」，口径互相独立。 */
-const sheet = ref<'erke' | 'vol' | 'labor'>('erke');
+/**
+ * 本校有没有第二课堂（由高校档案决定）。
+ * 北二外这类"没有二课"的学校：第二栏改名「活动材料」，只留志愿时长 / 劳育时长两块台账，
+ * 绝不套用北化的手册分值表 —— 界面必须说清楚为什么（见下方 notice 卡片）。
+ */
+const hasErke = computed(() => db.profile?.secondClass.enabled !== false);
+/** 三个 sheet：二课填报记「分」，志愿与劳育各记「小时」，口径互相独立。没有二课的学校默认落在"志愿时长"。 */
+const sheet = ref<'erke' | 'vol' | 'labor'>(hasErke.value ? 'erke' : 'vol');
+// 切换学校后如果当前停在二课 sheet 而新学校没有二课，自动落到"志愿时长"，避免出现空白页
+watch(hasErke, (on) => { if (!on && sheet.value === 'erke') sheet.value = 'vol'; });
 const showForm = ref(false);
 const detail = ref<SecondClassRecord | null>(null);
 const busy = ref('');
@@ -360,7 +369,7 @@ const total = computed(() => db.totalScore());
   <div class="scroll">
 
     <div class="modes3">
-      <button :class="{ on: sheet === 'erke' }" @click="sheet = 'erke'">🏅 二课填报</button>
+      <button v-if="hasErke" :class="{ on: sheet === 'erke' }" @click="sheet = 'erke'">🏅 二课填报</button>
       <button :class="{ on: sheet === 'vol' }" @click="sheet = 'vol'">🤝 志愿时长</button>
       <button :class="{ on: sheet === 'labor' }" @click="sheet = 'labor'">🧹 劳育时长</button>
     </div>
@@ -368,7 +377,13 @@ const total = computed(() => db.totalScore());
     <HoursPanel v-if="sheet === 'vol'" kind="volunteer" label="志愿时长" />
     <HoursPanel v-if="sheet === 'labor'" kind="labor" label="劳育时长" />
 
-    <template v-if="sheet === 'erke'">
+    <!-- 没有第二课堂的学校：说明为什么不套用分值表，别让用户以为数据丢了或被"简化"了 -->
+    <div v-if="!hasErke" class="card norule">
+      <div class="bold">本校专属活动规则尚未核实</div>
+      <div class="small muted" style="margin-top: 6px">{{ db.profile?.secondClass.notice }}</div>
+    </div>
+
+    <template v-if="sheet === 'erke' && hasErke">
     <div class="card sum">
       <div><div class="big-num">{{ total }}</div><div class="small muted">合计自评 / {{ TOTAL_FULL_SCORE }}</div></div>
       <div class="grow bars">
@@ -470,7 +485,7 @@ const total = computed(() => db.totalScore());
   <RuleTables v-if="showRules" @close="showRules = false" />
   <ImageViewer v-if="viewer" :items="viewer.items" :start="viewer.index" @close="viewer = null" />
 
-  <button v-if="sheet === 'erke'" class="fab" @click="openForm">填报<br />活动</button>
+  <button v-if="sheet === 'erke' && hasErke" class="fab" @click="openForm">填报<br />活动</button>
 
   <div v-if="busy" class="busy">{{ busy }}</div>
 
@@ -621,6 +636,8 @@ const total = computed(() => db.totalScore());
 .modes3 { display: flex; gap: 6px; margin-bottom: 12px; }
 .modes3 button { flex: 1; padding: 9px 4px; border-radius: 11px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 12.5px; }
 .modes3 button.on { background: var(--brand); color: #fff; border-color: var(--brand); font-weight: 700; }
+/* 没有第二课堂的学校：这条说明替代了原来的分值表与填报入口 */
+.norule { background: var(--soft); box-shadow: none; line-height: 1.7; }
 .big-num { font-size: 30px; font-weight: 800; color: var(--brand); line-height: 1.1; }
 .bars { display: flex; flex-direction: column; gap: 5px; }
 .brow { display: flex; align-items: center; gap: 8px; }
