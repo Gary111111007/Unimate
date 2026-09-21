@@ -49,13 +49,14 @@ npm run build                                                       # public/cat
 ## 4. 客户端怎么把关的
 
 1. 打开「选择高校」页 → 检查清单，**每天最多成功一次**（失败后 5 分钟退避）；
-2. 清单必须能通过 **ECDSA P-256 / SHA-256** 验签（公钥在 APK 里），否则整份丢掉并提示；
+2. 清单必须能通过 **Ed25519** 验签（公钥在 APK 里，客户端用**纯 JS** 验，不依赖 WebCrypto），否则整份丢掉并提示；
 3. 下载档案后先算 **sha256**，必须与签名过的清单一致；再做结构与域名校验；
 4. 通过后写本机 `catalog/downloaded-schools.json`，重启仍在；选校页底部可「删除 → 回到内置」；
 5. 拉不到 / 验签失败 / 不支持验签 → 一律退回 APK 内置的 53 所名单，功能照常。
 
-> **必须跑在安全上下文**：WebCrypto（`crypto.subtle`）只在 https 或 localhost 下存在。
-> APK 里页面地址是 `https://localhost`（安全）✓。若哪天改成明文 http 域名打开，验签会直接降级为"不支持"并拒收 —— 这是刻意的。
+> **验签不依赖平台密码学**：第一版用 WebCrypto 实现，真机上直接报"当前系统的 WebCrypto 用不了验签"（安卓 WebView 实现差异），
+> 因此改成 `@noble/ed25519`（纯 JS，无二级依赖）+ `@noble/hashes` 算 sha256。
+> 好处是行为可预测：**任何机型都只有两种结局——验签通过，或者拒收**，不存在"这台机器不支持所以永远没有热更新"。
 
 ## 5. 怎么验证（每次改完都跑）
 
@@ -70,7 +71,7 @@ npm run test:schoolpack     # 103 条：发布包自检（验签/sha256/白名�
 | 现象 | 原因 | 怎么办 |
 | --- | --- | --- |
 | 选校页写着"签名校验失败，已拒收" | 站点上的 `index.json` 与 `index.json.sig` 不配对（改了清单没重签，或上传了旧的 sig） | 重跑 `make-school-pack.mjs`，把 `public/catalog` 一起传上去 |
-| 写着"当前系统的 WebCrypto 用不了 ECDSA 验签" | 页面不在安全上下文（明文 http 打开），或 WebView 太旧 | APK 内是 `https://localhost`，正常不会出现；浏览器里用 `https`/`localhost` 调试 |
+| 写着"签名校验失败：这份清单不是官方发布的" | 站点上的 `index.json` 与 `.sig` 不配对，或换过密钥没重出包 | 重跑 `make-school-pack.mjs`；换过密钥就还要重出 APK（旧包只认旧公钥） |
 | 写着"站点上没有清单或签名文件" | 只传了档案没传清单，或路径不是 `/catalog/` | 站点根目录下要有 `catalog/index.json`、`index.json.sig`、`<id>.json` |
 | 明明改过档案，App 里还是"已可使用"没有「可更新」 | `profileVersion` 没 +1（或等于内置版本） | 把 `profileVersion` +1 再签一次 |
 | 脚本报"公钥与私钥不配对，别上传" | `schoolKey.ts` 里是另一把钥匙的公钥 | 重新 `keygen` 并把新公钥贴进去（或找回对应的私钥） |

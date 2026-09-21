@@ -15,12 +15,11 @@
  *  3) 档案里的域名只允许 **https**：签约渠道下发的是"App 会打开的网址"，http / IP / 奇怪 scheme
  *     就是现成的钓鱼入口。
  *
- * 签名方案：**ECDSA P-256 + SHA-256（ES256）**；签名 = 64 字节 r||s（IEEE P1363），公钥 = 65 字节未压缩点。
- * 为什么不用 Net.md 初稿里写的 Ed25519：Ed25519 的 WebCrypto 要 Chrome 113+（2023-05），
- * 国产 ROM 的 WebView 普遍更旧 —— 实测本项目应用内浏览器就直接抛 NotSupportedError，
- * 那样手机上会"永远没有热更新"。ECDSA P-256 从 Chrome 37（2014）起就有，任何 Android 7+ 的 WebView 都能验。
+ * 签名方案：**Ed25519**（Net.md 2.3 原本的写法）：签名 64 字节、公钥 32 字节。
+ * 客户端**用纯 JS 验签**（@noble/ed25519），不依赖 WebCrypto —— 因为实测安卓 WebView 的实现差异
+ * 会让平台密码学在部分机型上整体不可用（真机截图："当前系统的 WebCrypto 用不了 ECDSA 验签"）。
  */
-import { createHash, createPublicKey, createVerify, generateKeyPairSync, sign as nodeSign } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, sign as nodeSign, verify as nodeVerify } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -126,10 +125,10 @@ function keygen() {
     console.error('已经存在 ' + keyFile + '，不覆盖（要换密钥就先把旧文件挪走）。');
     process.exit(1);
   }
-  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   writeText(keyFile, privateKey.export({ type: 'pkcs8', format: 'pem' }));
-  // SPKI 末尾 65 字节 = 未压缩点（04||X||Y），WebCrypto 用 'raw' 直接导入它就是 P-256 公钥
-  const rawPub = publicKey.export({ type: 'spki', format: 'der' }).subarray(-65);
+  // SPKI 末尾 32 字节 = Ed25519 原始公钥（客户端就是拿这 32 字节验签）
+  const rawPub = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
   const pubB64 = Buffer.from(rawPub).toString('base64url');
   console.log('私钥已写入：' + keyFile + '（已 gitignore，别外发）');
   console.log('公钥（base64url，贴进 ' + keySource + '）：');
@@ -168,9 +167,8 @@ function signPack() {
     schools: entries
   };
   const indexText = jsonText(index);
-  // ECDSA 必须指定摘要；用 IEEE P1363 原始 r||s（64 字节）而不是默认的 DER —— WebCrypto 端要的就是这种
-  const sig = nodeSign('sha256', Buffer.from(indexText, 'utf8'),
-    { key: readFileSync(keyFile, 'utf8'), dsaEncoding: 'ieee-p1363' });
+  // Ed25519 是"无摘要"签名算法（内部自带哈希），Node 侧直接传 null 作为 digest
+  const sig = nodeSign(null, Buffer.from(indexText, 'utf8'), readFileSync(keyFile, 'utf8'));
   const sigText = Buffer.from(sig).toString('base64url') + '\n';
 
   for (const pair of outFiles) writeText(join(outDir, pair[0]), pair[1]);
@@ -182,14 +180,12 @@ function signPack() {
   if (!pub) {
     console.log('提示：' + keySource + ' 里还没写公钥，先 keygen 再贴进去。');
   } else {
-    const derived = Buffer.from(createPublicKey(readFileSync(keyFile, 'utf8')).export({ type: 'spki', format: 'der' }).subarray(-65)).toString('base64url');
+    const derived = Buffer.from(createPublicKey(readFileSync(keyFile, 'utf8')).export({ type: 'spki', format: 'der' }).subarray(-32)).toString('base64url');
     if (derived !== pub) {
       console.error('*** 自检失败：' + keySource + ' 里的公钥不是这把私钥对应的那个，别上传！ ***');
       process.exit(1);
     }
-    const verifier = createVerify('sha256');
-    verifier.update(Buffer.from(indexText, 'utf8'));
-    const ok = verifier.verify({ key: readFileSync(keyFile, 'utf8'), dsaEncoding: 'ieee-p1363' }, Buffer.from(sigText.trim(), 'base64url'));
+    const ok = nodeVerify(null, Buffer.from(indexText, 'utf8'), readFileSync(keyFile, 'utf8'), Buffer.from(sigText.trim(), 'base64url'));
     console.log('自检（公钥配对 + 签名可验）：' + (ok ? '通过' : '*** 失败，别上传！ ***'));
     if (!ok) process.exit(1);
   }

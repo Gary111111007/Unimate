@@ -17,6 +17,21 @@
 import { guard } from './guard.ts';
 import { shareBase } from './share.ts';
 import type { SchoolProfile } from '../types.ts';
+import { verify as edVerify, etc as edEtc } from '@noble/ed25519';
+import { sha512 } from '@noble/hashes/sha512';
+import { sha256 } from '@noble/hashes/sha256';
+
+/*
+ * 【为什么验签是纯 JS 实现，而不是用平台自带的 WebCrypto】
+ * 规范（Net.md 2.3）要求"公钥内置 + 验签失败即拒收"。第一版用 WebCrypto 的 ECDSA 实现，
+ * 结果**真机（2026-09-21，产品负责人手机）直接显示"当前系统的 WebCrypto 用不了 ECDSA 验签"**：
+ * 安卓 WebView 的实现差异（`importKey('raw', …)` 这类较晚才支持的用法）会让功能在部分机型上整体不可用。
+ * 隔离实验还证明：明文 http 下 `crypto.subtle` 根本不存在（WebCrypto 只在安全上下文可用）。
+ * 结论：**不要把安身立命的能力押在平台密码学上** —— 改用 @noble/ed25519（纯 JS、无二级依赖、社区审计），
+ * 算法回到规范原本写的 Ed25519，SHA-256/512 也用 @noble/hashes 纯 JS 算。
+ * 这样在任何 WebView 上行为完全一致：能验就是能验，验不过就是拒收，不存在"这台机器不支持"的第三种结局。
+ */
+edEtc.sha512Sync = (...m: Uint8Array[]): Uint8Array => sha512(edEtc.concatBytes(...m));
 
 /** 清单格式版本：App 只认自己支持的版本，更高的一律拒收（提示升级 App） */
 export const CATALOG_SCHEMA = 1;
@@ -238,15 +253,7 @@ export function mergeSchoolRows(
   return rows.sort((a, b) => a.order - b.order || a.schoolId.localeCompare(b.schoolId));
 }
 
-// ---------------- 验签（WebCrypto ECDSA P-256；平台不支持就拒收） ----------------
-/*
- * 为什么不是 Net.md 初稿里写的 Ed25519？
- * 实测（2026-09-21，本项目应用内浏览器/Chromium）：`crypto.subtle.generateKey({name:'Ed25519'})`
- * 直接抛 NotSupportedError —— Ed25519 要 Chrome 113+（2023-05）才有，而国产 ROM 的 WebView
- * 更新普遍滞后，手机上很可能直接"永远没有热更新"。而 **ECDSA P-256（ES256）从 Chrome 37（2014）
- * 起就在 WebCrypto 里**，任何 Android 7+ 的 WebView 都有。
- * 签名方案换掉，防投毒这件事本身没变：仍然是"非对称签名 + 公钥内置 + 验签失败即拒收"。
- */
+// ---------------- 验签（Ed25519，纯 JS 实现） ----------------
 
 function b64urlToBytes(s: string): Uint8Array {
   const t = String(s || '').trim().replace(/-/g, '+').replace(/_/g, '/');
@@ -257,36 +264,30 @@ function b64urlToBytes(s: string): Uint8Array {
   return out;
 }
 
-export type VerifyResult = 'ok' | 'bad-signature' | 'unsupported';
+export type VerifyResult = 'ok' | 'bad-signature';
 
 /**
- * 用硬编码公钥验签（ECDSA P-256 / SHA-256，签名是 64 字节 r||s 的 IEEE P1363 格式）。
- * 注意：**没有任何"跳过验签"的开关** —— 拿不到 WebCrypto 就直接 'unsupported'，
- * 调用方据此拒收（老 WebView 上就是"没有热更新"，而不是"不验签也装上"）。
+ * 用硬编码公钥验签（Ed25519：公钥 32 字节、签名 64 字节），纯 JS 计算，**不依赖 WebCrypto**。
+ * 注意：**没有任何"跳过验签"的开关** —— 任何解析/验签异常都当 'bad-signature' 处理，
+ * 调用方据此拒收（检验不了就不装）。
  */
 export async function verifySignature(bytes: Uint8Array, sigB64: string, pubB64: string): Promise<VerifyResult> {
-  const subtle = (globalThis as any).crypto && (globalThis as any).crypto.subtle;
-  if (!subtle || typeof subtle.importKey !== 'function') return 'unsupported';
   try {
     const pub = b64urlToBytes(pubB64);
     const sig = b64urlToBytes(sigB64);
-    // 长度先卡死：公钥必须是 65 字节未压缩点（04||X||Y），签名必须是 64 字节；长度不对没必要进 WebCrypto
-    if (pub.length !== 65 || pub[0] !== 4) return 'bad-signature';
+    // 长度先卡死：Ed25519 公钥必须 32 字节、签名必须 64 字节
+    if (pub.length !== 32) return 'bad-signature';
     if (sig.length !== 64) return 'bad-signature';
-    const key = await subtle.importKey('raw', pub, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
-    const ok = await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, sig, bytes);
-    return ok ? 'ok' : 'bad-signature';
+    return edVerify(sig, bytes, pub) ? 'ok' : 'bad-signature';
   } catch {
-    return 'unsupported';
+    return 'bad-signature';
   }
 }
 
-/** 只用于"档案 sha256 与签名清单一致"这一层；没有 WebCrypto 就返回空串（调用方当失败处理） */
+/** 只用于"档案 sha256 与签名清单一致"这一层（纯 JS，任何环境结果都一样） */
 export async function sha256Hex(text: string): Promise<string> {
-  const subtle = (globalThis as any).crypto && (globalThis as any).crypto.subtle;
-  if (!subtle || typeof subtle.digest !== 'function') return '';
-  const buf = await subtle.digest('SHA-256', new TextEncoder().encode(text).buffer as ArrayBuffer);
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const out = sha256(new TextEncoder().encode(text));
+  return [...out].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** 文件里的 BOM/CRLF 会改变字节 → 验签与 sha256 之前先归一化 */
@@ -310,7 +311,6 @@ export async function fetchCatalog(pubB64: string, base?: string): Promise<Fetch
     const sigText = String(res[1] || '').trim();
     if (!indexText || !sigText) return { ok: false, reason: '站点上没有清单或签名文件' };
     const v = await verifySignature(new TextEncoder().encode(indexText), sigText, pubB64);
-    if (v === 'unsupported') return { ok: false, reason: '当前系统的 WebCrypto 用不了 ECDSA 验签，已跳过（不会安装任何下发档案）' };
     if (v !== 'ok') return { ok: false, reason: '签名校验失败：这份清单不是官方发布的，已拒收' };
     let json: any;
     try { json = JSON.parse(indexText); } catch { return { ok: false, reason: '清单不是合法 JSON' }; }
@@ -331,7 +331,6 @@ export async function downloadSchoolProfile(entry: CatalogEntry, base?: string):
     if (text === null || text === undefined) return { ok: false, reason: '下载超时或断网' };
     const norm = normalize(String(text));
     const got = await sha256Hex(norm);
-    if (!got) return { ok: false, reason: '当前系统算不了 SHA-256，出于安全已放弃安装' };
     if (got !== entry.sha256.toLowerCase()) return { ok: false, reason: '校验和不一致（文件被改过），已拒收' };
     let json: any;
     try { json = JSON.parse(norm); } catch { return { ok: false, reason: '档案不是合法 JSON' }; }

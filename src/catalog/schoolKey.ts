@@ -9,9 +9,9 @@
  *  - 换密钥 = 重新 keygen + 改这一行 + 重新出包；**旧 APK 不会认新私钥的签名**（这是特性，不是 bug）；
  *  - 真上线时把私钥放 CI secrets（见 `docs/school-pack.md`）。
  *
- * 算法是 **ECDSA P-256 + SHA-256（ES256）**，公钥是 65 字节未压缩点（04||X||Y），签名 64 字节 r||s。
- * 为什么不是 Ed25519：它的 WebCrypto 要 Chrome 113+（2023-05），国产 ROM 的 WebView 普遍更旧，
- * 实测本项目的应用内浏览器就直接 `NotSupportedError` —— 那用户会"永远没有热更新"。
- * ECDSA P-256 从 Chrome 37（2014）起就支持，防投毒这件事完全一样：非对称签名 + 公钥内置 + 验签失败即拒收。
+ * 算法是 **Ed25519**（Net.md 2.3 原本的写法）：公钥 32 字节、签名 64 字节。
+ * 客户端**用纯 JS 验签**（@noble/ed25519），**不依赖 WebCrypto** —— 第一版用平台密码学实现，
+ * 真机上直接报"当前系统的 WebCrypto 用不了"（安卓 WebView 实现差异）。平台做不到的事，
+ * 就用纯 JS 自己做，这样在任何机型上行为一致：能验就是能验，验不过就是拒收。
  */
-export const SCHOOL_CATALOG_PUBKEY = 'BIDfBSJSe7L_slOhYdB8IMQQt4TAdyYqF6vPhpKr7bjmH31TbV9MIR3za5OynkRYNLWm4xWnRyaDqMlQAUqhvw0';
+export const SCHOOL_CATALOG_PUBKEY = 'tPgrAT79KTA-vOQ8TRSwsI5VE72qK9tWT_WuyniIlj8';

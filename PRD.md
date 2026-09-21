@@ -1,9 +1,9 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v2.25 ｜ 日期 2026-09-21 ｜ 状态：已实现并出包，待真机验收（P2 学校档案热更新：验签下载 + 选校页徽标 + 删回内置）
+> 版本 v2.26 ｜ 日期 2026-09-21 ｜ 状态：已实现并出包，待真机复验（P2 学校档案热更新：纯 JS 验签，修掉真机"WebCrypto 用不了"）
 > 口径变更：本版起"App 自己发起的联网请求只有天气一处"作废 —— 现在是**两处**：天气（默认关闭）与
 > 高校档案更新（打开「选择高校」页时每天最多一次，只下载公开配置、不上传任何信息，见 5.14、11.35）。
-> 签名算法由 Net.md 初稿的 Ed25519 **改为 ECDSA P-256**（理由与实测证据见 11.35 A 节）。
+> 签名算法是 `Net.md` 原定的 **Ed25519**；但客户端**用纯 JS 验签、不依赖平台 WebCrypto**（真机逼出来的一次返工，见 11.35 A 节）。
 > 范围：第一版 = 完全本地运行的 Android App + 可安装 APK（不依赖自建服务器）
 > 来源：由《要求.docx》已确认内容整理，并补充基于真实教务课表页面样本（个人课表查询.html）推导出的解析规范与可检查的验收标准。
 > 标注【待确认 Qx】的条目需产品负责人拍板后才进入开发（见第 12 节）。
@@ -706,13 +706,13 @@
 | 项目 | 内容 |
 | --- | --- |
 | 远端结构 | `catalog/index.json`：`{ schemaVersion, updatedAt, schools: [{ id, name, shortName, province, status, letter, order, version, file, sha256, size }] }`（**多带 letter/order 用来分组排序**，App 不猜拼音）<br>`catalog/<schoolId>.json`：一份完整高校档案 |
-| 签名 | **ECDSA P-256 / SHA-256（ES256）**：签名 64 字节 `r‖s`（IEEE P1363），公钥 65 字节未压缩点，硬编码在 `src/catalog/schoolKey.ts`。清单是签名对象；档案的完整性由"签名过的清单里的 sha256"保证 |
+| 签名 | **Ed25519**：签名 64 字节、公钥 32 字节，公钥硬编码在 `src/catalog/schoolKey.ts`；签名与 sha256 都用**纯 JS**（`@noble/ed25519` + `@noble/hashes`）算，不依赖任何平台密码学。清单是签名对象；档案的完整性由"签名过的清单里的 sha256"保证 |
 | 校验链 | ① 清单验签 → ② 档案 sha256 与清单一致 → ③ 档案结构（schoolId/dataDir/节次表/profileVersion）→ ④ **域名白名单：只允许 https 且非 IP/localhost** → 才写入本机 |
 | 限频 | 打开「选择高校」页时检查：**成功过一次就 24 小时内不再查**；失败后 5 分钟退避（成败都记时间，重启不清零）；「检查更新」按钮可强制 |
 | 状态徽标 | 内置已落地=`已可使用`；远端版本更高=`可更新`；远端独有且未下载=`可下载`；已下载=`已下载 · 已可使用`；其余=`开发中` |
 | 安装与回滚 | 下载后写入本机 `catalog/downloaded-schools.json`（全局，不属于某个账号，重启仍可用）；选校页底部可「删除」回到 APK 内置版本，**删除走二次确认**；正在使用且内置没有的高校不允许直接删（要先切走） |
 | 降级 | 断网/404/验签失败/平台不支持验签 → 一律退回内置 53 所名单，功能照常；失败原因在选校页可见（不静默） |
-| 安全前提 | 页面必须处在**安全上下文**（WebCrypto 只在 https/localhost 存在）。APK 内是 `https://localhost`；明文 http 打开时验签不可用 → 客户端**拒收**而不是跳过验签 |
+| 安全前提 | 不依赖安全上下文/WebCrypto（v2.26 起）：安卓 WebView 的实现差异曾让"平台验签"整机不可用，现在纯 JS 计算，任何机型行为一致 |
 | 隐私 | 只从本项目站点下载公开配置；**不上传任何信息**（不带设备号/账号/课表） |
 ---
 
@@ -2122,35 +2122,46 @@ touch 事件会**冒泡**，且两处都写了 `shiftMonth(dx < 0 ? 1 : -1)`，�
 背景：产品定位是"可复制到不同高校的框架"，而**新增一所高校过去必须重新出包**。
 Net.md 的 P2 就是兑现这一点：静态站上放带签名的档案，App 验签后下载安装。
 
-#### A. 签名算法：从 Ed25519 改成 ECDSA P-256（有实测证据）
+#### A. 签名与验签：算法是 Ed25519，实现**不依赖平台密码学**（真机驱动的一次返工）
 
-Net.md 初稿写的是 Ed25519。实现时先按 Ed25519 做，结果应用内浏览器直接给出
-**"当前系统不支持 Ed25519 验签，已跳过（不会安装任何下发档案）"**。随后做了隔离实验（临时探针页，测完即删）：
+`Net.md` 初稿写的是 Ed25519。第一版客户端用**平台自带 WebCrypto** 实现验签，v2.25 出包后，产品负责人真机一试，
+选校页直接显示：
+
+> 当前系统的 WebCrypto 用不了 ECDSA 验签，已跳过（不会安装任何下发档案）
+
+也就是说：安全闸门确实把"来历不明的档案"挡住了，但**这台机器上的热更新整体不可用**（功能等于白做）。
+排查过程（`capacitor.config.ts` 里 `androidScheme: 'https'`，页面是 `https://localhost`，本来就是安全上下文；
+真机也没装旧 WebView）说明问题在**安卓 WebView 对 WebCrypto 的实现差异**上：
+`importKey('raw', …)` 这类较晚才支持的用法在部分机型上直接抛异常。
+
+顺带做的隔离实验（临时探针页，测完即删）还证明另一件事：
 
 | 来源 | isSecureContext | crypto.subtle | SHA-256 | Ed25519 | ECDSA P-256 |
 | --- | --- | --- | --- | --- | --- |
 | `http://192.168.5.9:5201`（局域网 IP） | false | **不存在** | — | — | — |
-| `http://localhost:5201` | true | 存在 | ok | **ok** | ok（raw 导入 65B、签名 64B、验签 ok） |
+| `http://localhost:5201` | true | 存在 | ok | ok | ok |
 
-结论两条：
+**结论：不要把安身立命的能力押在平台密码学上。** v2.26 改成：
 
-1. **非安全上下文没有 WebCrypto** —— 这是浏览器规则，不是 bug。APK 里页面是 `https://localhost`（安全），
-   所以真机没问题；但我在局域网 IP 上做的第一轮验证其实是在"没有 WebCrypto"的环境里跑的。
-2. **Ed25519 要 Chrome 113+（2023-05）**，而国产 ROM 的 WebView 版本无法保证（评分标准里"真机碎片化"就是这么来的）。
-   ECDSA P-256 从 Chrome 37（2014）起就在 WebCrypto 里，**任何 Android 7+ 的 WebView 都能验**。
+- 算法回到规范原本写的 **Ed25519**（公钥 32 字节、签名 64 字节）；
+- 验签用 `@noble/ed25519`（纯 JS、无二级依赖、社区审计），sha256 用 `@noble/hashes` —— **整个校验链一次 WebCrypto 都不碰**；
+- 于是任何 WebView 上行为完全一致：**验签通过，或者拒收**，没有"这台机器不支持"的第三种结局。
 
-于是改用 **ECDSA P-256 / SHA-256（ES256）**：签名 64 字节 `r‖s`（用 `dsaEncoding:'ieee-p1363'` 而不是默认 DER），
-公钥 65 字节未压缩点。**防投毒这件事一点没变**：仍然是非对称签名 + 公钥硬编码 + 验签失败即拒收；
-`verifySignature()` 里长度不对（公钥≠65B / 签名≠64B）直接判失败，**没有任何"跳过验签"的开关**。
+安全性质一点没变：非对称签名 + 公钥硬编码 + 验签失败即拒收；`verifySignature()` 里长度不对
+（公钥≠32B / 签名≠64B）直接判失败，**没有任何"跳过验签"的开关**（异常也一律当"验不过"处理）。
+
+> 修复验证：在**没有 WebCrypto 的环境**（`http://192.168.x.x`，探针确认 `crypto.subtle` 不存在）里跑完整链路 ——
+> "远端有 2 份可下发档案" → 点「可更新」→ 下载 → 校验和通过 → 徽标变「已下载 · 已可使用」全部正常。
+> 这正是真机缺的那个能力，所以本次修复是"在能复现故障的环境里验过"的。
 
 #### B. 一处"看起来是 bug、其实是设计"的行为
 
-拿不到 WebCrypto 时客户端**主动拒收**（而不是"降级为不验签"）。真机不会遇到（`https://localhost` 是安全上下文），
-但这条规则必须写死在代码里：宁可没有热更新，也不要安装一份来历不明的档案。
+验签异常（长度不对、base64 坏、算法不匹配）一律判**验不过并拒收**，而不是"降级为不验签"：
+宁可没有热更新，也不要安装一份来历不明的档案。
 
 #### C. 实现
 
-- `scripts/make-school-pack.mjs`：`keygen`（生成 P-256 密钥对，私钥写 `keys/school-signing.key`，**已 gitignore**）
+- `scripts/make-school-pack.mjs`：`keygen`（生成 Ed25519 密钥对，私钥写 `keys/school-signing.key`，**已 gitignore**）
   / `export`（把内置 TS 档案导成 `catalog/*.json`，单一真相）/ `sign`（生成 `public/catalog/index.json` + `.sig`）
   / `pack`（= export + sign，默认）。签名后**自检**：私钥推导出的公钥必须与 `schoolKey.ts` 里那串一致，且签名必须验得过，
   否则直接非零退出 —— 防止"签了个寂寞"。
@@ -2168,12 +2179,13 @@ Net.md 初稿写的是 Ed25519。实现时先按 Ed25519 做，结果应用内�
   `profileVersion` 改成 2 再签）→ 行上出现「可更新」→ 点它下载 → 徽标变「已下载 · 已可使用」→ **刷新页面仍在** →
   底部「删除」弹二次确认 → 确认后回到内置版本、又变回「可更新」。全程只发本项目站点的请求，没有上传任何东西。
 - **测试**：新增 `tests/schoolPack.test.ts` **103 条断言**，四层覆盖：① 真发布包自检（用**APK 里那把公钥**验签、
-  逐份 sha256、域名白名单、篡改一个字节必拒、换 Ed25519/别人的 P-256 公钥必拒）；② 纯函数（24h/5min 限频、
+  逐份 sha256、域名白名单、篡改一个字节必拒、换别人的公钥或别的算法必拒）；② 纯函数（24h/5min 限频、
   https 白名单挡 http/IP/javascript/file、清单解析挡 schemaVersion 更高/重复 id/路径穿越）；③ 服务层行为（临时密钥 + 内存站点：
   验签、下载、校验和、结构）；④ store 接线（拒收不写缓存、失败后不重复请求、`force` 可重试、已下载优先、选择/持久化/删除、
   使用中不许删）。**做过变异测试**：把 `verifySignature` 改成恒返回 ok，6 条断言立刻变红。
-- **未验证（必须真机）**：真机上"打开选校页自动检查 → 提示可更新 → 下载 → 重启仍在"这条链路，以及
-  飞行模式下的降级（AC-70）。真机跑的是同一套 WebCrypto 路径，但 WebView 版本只有真机才知道。
+- **未验证（必须真机）**：修好之后（v2.26）真机上"打开选校页自动检查 → 提示可更新 → 下载 → 重启仍在"这条链路，
+  以及飞行模式下的降级（AC-70）。v2.25 的真机结果已经证明"平台密码学"这条路走不通，v2.26 换成纯 JS 后
+  在**没有 WebCrypto 的环境**里验过（见 A 节末），但真机仍需复验一次。
 - **部署提醒**：`public/catalog/*` 要跟 `dist` 一起部署，否则线上 App 会一直"拉取失败"（当前演示站还没上传 v2.25 的 dist）。
 
 ---
@@ -2271,6 +2283,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 本次 v2.22 提交 | 2026-09-21 | v2.22 | 第二所落地高校（北二外·无第二课堂）、课表分享（链接+二维码+只读页）、课表字号补偿、网页版"演示站"提示、`docs/deploy.md`；新增 `share/school` 两个测试套件 | 见下条"未提交项清零" |
 | 本次 v2.24 提交 | 2026-09-21 | v2.24 | **天气接线（P0）**：`src/services/weather.ts`（服务层，上一轮已写）+ 开关/面板/课表页一行卡 + 30 分钟节流 + 手填城市兜底 + 关于页隐私文案；`src/views/MeView.vue`、`src/views/TimetableView.vue`、`src/stores/db.ts`、`src/types.ts`、`src/styles.css`、`src/screens/Login.vue`；新增 `tests/weather.test.ts`（75 条）并登记进 `package.json` 与 `build-apk.ps1`；PRD 补 5.13 / 10.10 / 11.34 | 与上一轮未提交的服务层合并提交（按产品负责人"接线完再提交"的口径） |
 | 本次 v2.25 提交 | 2026-09-21 | v2.25 | **学校档案热更新（P2）**：`scripts/make-school-pack.mjs`（keygen/export/sign）、`src/services/schoolCatalog.ts`、`src/catalog/schoolKey.ts`、`catalog/*.json`（源）、`public/catalog/*`（下发产物）、`src/stores/db.ts`（profileOf/checkCatalog/downloadSchool/removeDownloaded）、`src/screens/SchoolPicker.vue`（徽标/检查更新/已下载管理）、`src/views/MeView.vue` + `src/screens/Login.vue`（隐私文案）、`.gitignore`（keys/）；新增 `tests/schoolPack.test.ts`（103 条）并登记进 `package.json` 与 `build-apk.ps1`；PRD 补 5.14 / 10.11 / 11.35；新增 `docs/school-pack.md` | 签名算法按实测由 Ed25519 改为 ECDSA P-256（见 11.35 A）；私钥 `keys/school-signing.key` **未入库** |
+| 本次 v2.26 提交 | 2026-09-21 | v2.26 | **修真机验收暴露的问题**：v2.25 装到真机后选校页显示"当前系统的 WebCrypto 用不了 ECDSA 验签"（整机热更新不可用）。改为**纯 JS 验签**（`@noble/ed25519` + `@noble/hashes`），算法回到规范原定的 **Ed25519**；随之重新 keygen（新公钥写进 `src/catalog/schoolKey.ts`）、重新签名 `public/catalog/*`。测试相应更新（103 条，含"换算法/换公钥必拒"） | 触发原因、证据与复现环境见 11.35 A；v2.25 的 ECDSA 只存在于该版 APK，历史不重写 |
 
 ### 14.2 依赖与环境变更
 
@@ -2281,7 +2294,8 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-20 | 新增 `android/app/src/main/res/drawable/ic_stat_icon.xml` | 通知小图标，原先引用的资源根本不存在（回退成系统灰图标） |
 | 2026-09-20 | 新增 `android/app/src/main/assets/COPYRIGHT.txt` | 署名第三层（独立于 `assets/public`，不被 cap sync 清掉） |
 | 2026-09-21 | 生成学校档案签名密钥对（`scripts/make-school-pack.mjs keygen`） | **私钥 `keys/school-signing.key` 只在开发机、已 gitignore、未入库**；公钥写进 `src/catalog/schoolKey.ts`。真上线时私钥应放 CI secrets（见 `docs/school-pack.md`） |
-| 2026-09-21 | 无新增 npm 依赖 | 验签用平台自带 WebCrypto（ECDSA P-256），签名侧用 Node 的 `node:crypto` —— 不引入第三方密码学库 |
+| 2026-09-21 | v2.25：无新增 npm 依赖 | 该版验签用平台自带 WebCrypto（当时是 ECDSA P-256），签名侧用 Node 的 `node:crypto` |
+| 2026-09-21 | v2.26：`npm install @noble/ed25519@2 @noble/hashes@1` | **真机证明平台 WebCrypto 不可靠**（截图："当前系统的 WebCrypto 用不了 ECDSA 验签"）→ 验签与 sha256 改为纯 JS。选这两个包的理由：纯 JS 无 WASM/无二级依赖、社区审计、体积小（约 20KB）；签名侧仍用 Node 的 `node:crypto` |
 
 ### 14.3 部署与线上核对
 
@@ -2305,6 +2319,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-21 | `750EE664…` | v2.23：分享重做（只读页改成可滑动课表网格、gzip 压缩让二维码变稀疏、分享面板排版重做） |
 | 2026-09-21 | `115DC82B…` | v2.24：天气接线（开关默认关 · 关着一次请求都不发 · 30 分钟节流 · 课表页一行天气 · 手填城市兜底 · 隐私文案同步）。全套 18 个套件 **491 条**断言全绿；APK 6.62 MB，`apksigner verify` 通过，包名/权限/署名三层反查通过；APK 内 bundle 反查：新串（记得带伞 / 开启天气后会向 Open-Meteo… / 30 分钟最多更新一次 / geocoding-api.open-meteo.com）都在，旧串（清空本账号数据 / 小智）查不到 |
 | 2026-09-21 | `22AA8B17…` | v2.25：学校档案热更新（P2，带 ECDSA P-256 签名下载 + 选校页四态徽标 + 检查更新 + 删回内置 + 隐私文案同步）。全套 19 个套件 **594 条**断言全绿；APK 6.63 MB，`apksigner verify` 通过，完整性校验全项 True；包内反查：**P-256 公钥在、私钥 PEM 一个字节都没有**、`catalog/*.json`（含 `index.json.sig`）都在 `assets/public/catalog/`，新文案（远端有 / 已下载 · 已可使用 / 签名校验失败…已拒收 / 校验和不一致…已拒收）都能在 bundle 里查到 |
+| 2026-09-21 | `D3EFDEBD…` | v2.26：**验签改纯 JS（Ed25519）**，修掉真机"WebCrypto 用不了"导致的整机热更新失效。全套 19 个套件 **594 条**断言全绿；APK 6.96 MB（比 v2.25 大 0.33 MB，就是两个纯 JS 密码学库），`apksigner verify` 与完整性校验全项通过；包内反查：**新 Ed25519 公钥在、旧 P-256 公钥为 0、旧话术"WebCrypto 用不了"为 0、私钥 PEM 为 0**，`catalog/*.json`（含 `.sig`）都在 `assets/public/catalog/` |
 
 > 出包唯一正确方式：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1`（11→17 步全套测试 + 构建 + APK 内容反查；红一条不出包）。
 > 沙箱内跑该脚本会因 Node/Gradle 拿不到用户信息而失败，需在沙箱外执行 —— 这是环境限制，不是工程问题。
@@ -2424,6 +2439,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| v2.26 | 2026-09-21 | **修掉真机验收暴露的问题：学校档案热更新的验签改为纯 JS**（详见 11.35 A）—— v2.25 用平台 WebCrypto 验签，真机上直接显示"当前系统的 WebCrypto 用不了 ECDSA 验签"，**这台机器的热更新整体不可用**（安全闸门挡对了，但功能等于没做）。根因是安卓 WebView 对 WebCrypto 的实现差异（`importKey('raw', …)` 这类较晚才支持的用法），排查同时确认 `capacitor.config.ts` 里 `androidScheme:'https'`、页面本来就是 `https://localhost` 安全上下文。现改为：算法回到规范原定的 **Ed25519**，验签用 `@noble/ed25519`（纯 JS、无二级依赖）+ `@noble/hashes` 算 sha256，**整条校验链一次 WebCrypto 都不碰**；任何机型只有两种结局——验签通过，或拒收。随之重新生成密钥对（新公钥进 `schoolKey.ts`）并重新签名 `public/catalog/*`。**修复已在"没有 WebCrypto"的环境里完整复现并验过**（检查更新 → 可更新 → 下载 → 已下载）。断言 594 条不变（`tests/schoolPack.test.ts` 103 条已按 Ed25519 更新） |
 | v2.25 | 2026-09-21 | **学校档案热更新（`Net.md` P2）**（详见 11.35）—— 兑现"新增一所高校不用发新版 APK"：站点上放 `catalog/index.json`（**带签名**）+ 各校档案，App 打开「选择高校」页时**每天最多成功检查一次**（失败 5 分钟退避，「检查更新」可强制）→ 与内置 53 所合并 → 徽标 `已可使用 / 可更新 / 可下载 / 已下载`；下载走"清单验签 → 档案 sha256 → 结构 + **域名白名单（只允许 https 且非 IP）** → 才落盘"，重启仍可用，底部可「删除 → 回到内置」（二次确认，正用着且内置没有的不许直接删）。**签名算法按实测由 Ed25519 改为 ECDSA P-256 / SHA-256**：Ed25519 的 WebCrypto 要 Chrome 113+，国产 ROM 的 WebView 无法保证；实测还发现**明文 http 下 `crypto.subtle` 根本不存在**，因此客户端多了一条硬规则——拿不到 WebCrypto 或验签不过就**拒收**（宁可不热更新，也不装来历不明的档案）。新增 `scripts/make-school-pack.mjs`（keygen/export/sign + 签完自检）、`src/services/schoolCatalog.ts`、`src/catalog/schoolKey.ts`、`docs/school-pack.md`；私钥只在开发机（已 gitignore）。新增 `tests/schoolPack.test.ts` **103 条断言**（含变异测试）。全套 19 套件 **594 条**；PRD 补 5.14 / 10.11（AC-70~74）/ 11.35 |
 | v2.24 | 2026-09-21 | **天气接线（`Net.md` P0，App 的第一个真联网功能）**（详见 11.34）—— 把上一轮只落了服务层的天气模块接成可用功能：「我的 → 天气」开关（**默认关闭**，关着的时候**一次请求都不发**，`force` 也不能绕过）+ 课表页顶部一行 `27° 晴 · 20°/31°`、`x 分钟前更新`、下雨下雪补「记得带伞」；位置留空用系统定位（网络/卫星**并发**、坐标 24 小时复用）、拒绝授权就手填城市走 geocode（来源记 `manual`，不冒充定位）；**30 分钟最多一次**请求（成功失败都记时间，断网不会退化成反复重试），「打开开关/改城市→保存」立刻拉一次；失败只降级不阻塞（全程 `guard()`）。顺带修三处"文案与实现不符"：登录页"不联网、不上传"改为"App 自己发起的联网请求只有天气且默认关闭"、删掉指向**并不存在**的"清空本账号数据"入口、补 `.btn:disabled` 视觉。新增 `tests/weather.test.ts` **75 条断言**（含用真实 store + 打桩 fetch 的"关着 0 次请求"行为断言，并做过变异测试）。全套 18 套件 **491 条** |
 | v2.22 | 2026-09-20 | **课表分享（链接 + 二维码）+ 演示站标识**（详见 11.33）—— 数据编码进链接 # 片段（**不上传服务器**，浏览器不会把 # 发给服务端）、本机生成二维码（新增 qrcode-generator，SVG 输出）、超长自动降级为只给链接；只读分享页 #s=... 直接渲染、不经登录；工具箱新增「分享这张课表」；网页版登录页加「演示站」说明。断言 363→**401**；APK SHA-256 F21A60BB2924CAFC538A16B86B6A4B19EF1E6BAE08ABD586F6C59A014D960290 |

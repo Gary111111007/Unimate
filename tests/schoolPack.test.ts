@@ -35,9 +35,9 @@ const indexText = read('public/catalog/index.json');
 const sigText = read('public/catalog/index.json.sig').trim();
 ok('清单与签名文件都在', !!indexText && !!sigText);
 ok('签名是 base64url（没有 = 填充）', /^[A-Za-z0-9_-]+$/.test(sigText), sigText.slice(0, 12));
-ok('签名是 64 字节（ECDSA P-256 的 r||s）', Buffer.from(sigText, 'base64url').length === 64, String(Buffer.from(sigText, 'base64url').length));
-ok('公钥是 65 字节未压缩点（04 开头）—— 太长/太短都不是 P-256 公钥',
-  (() => { const p = Buffer.from(SCHOOL_CATALOG_PUBKEY, 'base64url'); return p.length === 65 && p[0] === 4; })(),
+ok('签名是 64 字节（Ed25519）', Buffer.from(sigText, 'base64url').length === 64, String(Buffer.from(sigText, 'base64url').length));
+ok('公钥是 32 字节（Ed25519 原始公钥）',
+  (() => { const p = Buffer.from(SCHOOL_CATALOG_PUBKEY, 'base64url'); return p.length === 32; })(),
   String(Buffer.from(SCHOOL_CATALOG_PUBKEY, 'base64url').length));
 {
   const v = await verifySignature(new TextEncoder().encode(indexText), sigText, SCHOOL_CATALOG_PUBKEY);
@@ -47,13 +47,13 @@ ok('公钥是 65 字节未压缩点（04 开头）—— 太长/太短都不是 
   const other = generateKeyPairSync('ed25519');
   const otherPub = Buffer.from(other.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32)).toString('base64url');
   const forged = await verifySignature(new TextEncoder().encode(indexText), sigText, otherPub);
-  ok('换成 Ed25519 公钥 → 长度就不对，直接拒（算法必须一致）', forged === 'bad-signature', forged);
+  ok('换成别人的 Ed25519 公钥（别人自签的清单）→ 失败', forged === 'bad-signature', forged);
   const otherEc = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const otherEcPub = Buffer.from(otherEc.publicKey.export({ type: 'spki', format: 'der' }).subarray(-65)).toString('base64url');
   const forged2 = await verifySignature(new TextEncoder().encode(indexText), sigText, otherEcPub);
-  ok('换成别人的 P-256 公钥（别人自签的清单）→ 失败', forged2 === 'bad-signature', forged2);
+  ok('换成别的算法/长度的公钥 → 直接拒（算法必须一致）', forged2 === 'bad-signature', forged2);
   const broken = await verifySignature(new TextEncoder().encode(indexText), 'AAAA', SCHOOL_CATALOG_PUBKEY);
-  ok('签名不是合法 base64url → 失败（不抛异常）', broken === 'bad-signature' || broken === 'unsupported', broken);
+  ok('签名不是合法 base64url → 失败（不抛异常）', broken === 'bad-signature', broken);
   const edSig = createHash('sha256').update(indexText).digest('base64url');
   ok('签名长度对不上（拿个哈希冒充签名）→ 失败', (await verifySignature(new TextEncoder().encode(indexText), edSig, SCHOOL_CATALOG_PUBKEY)) !== 'ok');
 }
@@ -179,9 +179,9 @@ console.log('\n--- 合并成选校页的行：内置 / 可更新 / 可下载 / �
 
 // ---------------- C. 服务层行为（临时密钥 + 内存站点） ----------------
 console.log('\n--- 服务层：拉清单 → 验签 → 下载 → 校验和 → 结构 ---');
-const { privateKey: testPriv, publicKey: testPub } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-const testPubB64 = Buffer.from(testPub.export({ type: 'spki', format: 'der' }).subarray(-65)).toString('base64url');
-const signIndex = (text: string) => Buffer.from(nodeSign('sha256', Buffer.from(text, 'utf8'), { key: testPriv, dsaEncoding: 'ieee-p1363' })).toString('base64url') + '\n';
+const { privateKey: testPriv, publicKey: testPub } = generateKeyPairSync('ed25519');
+const testPubB64 = Buffer.from(testPub.export({ type: 'spki', format: 'der' }).subarray(-32)).toString('base64url');
+const signIndex = (text: string) => Buffer.from(nodeSign(null, Buffer.from(text, 'utf8'), testPriv)).toString('base64url') + '\n';
 const fixtureProfile: any = JSON.parse(read('public/catalog/buct.json'));
 Object.assign(fixtureProfile, {
   schoolId: 'testu', dataDir: 'schools/testu', name: '测试大学', shortName: '测试', profileVersion: 1,
