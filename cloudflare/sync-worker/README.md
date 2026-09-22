@@ -1,6 +1,11 @@
 # Unimate P3 同步服务（Cloudflare Worker + R2）
 
-Worker 只为单个密文对象签发 15 分钟的 R2 `GET` / `PUT` URL，备份正文由 App 直接传输到 R2。同步口令、恢复码和数据明文都不会到 Worker。
+Worker 只为单个密文对象签发 15 分钟的 R2 `GET` / `PUT` URL。同步口令、恢复码和数据明文都不会到 Worker。
+
+**v2.41 起正文的默认路径是 Pages 边缘中转**（`cloudflare/pages/_worker.js` 的 `/v1/put`、`/v1/get`）：
+函数自己调本 Worker 拿短链、再代传代取 R2，手机全程只与 `unimate3.pages.dev` 通信。
+原因：真机直传 R2 走不通 —— 桶 CORS 缺 APK 的来源 `https://localhost`，且大陆移动网络到
+`*.r2.cloudflarestorage.com` 的可达性不由我们决定。客户端保留"直传兜底"（老版 Pages 没部署中转端点时按原路走）。
 
 ## 首次部署
 
@@ -14,6 +19,8 @@ Worker 只为单个密文对象签发 15 分钟的 R2 `GET` / `PUT` URL，备份
    - `npx wrangler secret put SYNC_OBJECT_PEPPER`（填至少 32 字节随机串）
 
 4. 执行 `npx wrangler r2 bucket cors set unimate-sync --file cors.json`。
+   （`cors.json` 的 origins 在 v2.41 补上了 `https://localhost` —— 那是 APK 里页面的来源，
+   少了它真机的直传 PUT 会被 WebView 拦掉；走 Pages 中转时用不到，但直传兜底需要。）
 5. 执行 `npm run deploy`，确认地址为 `https://unimate-sync.2025040140.workers.dev`。
 6. 打开 `/health`，应返回 `{"ok":true,"service":"unimate-sync"}`。
 

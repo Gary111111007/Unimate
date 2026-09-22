@@ -2,7 +2,7 @@
   "rules": [
     {
       "allowed": {
-        "origins": ["http://localhost", "https://unimate3.pages.dev"],
+        "origins": ["http://localhost", "https://localhost", "https://unimate3.pages.dev"],
         "methods": ["GET", "PUT"],
         "headers": ["Content-Type"]
       },

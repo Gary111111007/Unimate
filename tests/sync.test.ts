@@ -127,8 +127,10 @@ console.log('\n--- v2.39：同步 API 走 pages.dev（绕开被污染/不可达�
 
   const pagesWorker = read('cloudflare/pages/_worker.js');
   ok('Pages 上有 Advanced Mode 入口 _worker.js', pagesWorker.length > 500, '');
-  ok('只接管 /health 与 /v1/presign，其余交给静态资源',
-    /const API_PATHS = \['\/health', '\/v1\/presign'\]/.test(pagesWorker) && /return env\.ASSETS\.fetch\(request\)/.test(pagesWorker), '');
+  // v2.41 起这条列表多了 /v1/put 与 /v1/get（正文中转），静态资源仍然交给 env.ASSETS
+  ok('只接管同步 API 的几条路径，其余交给静态资源',
+    /const API_PATHS = \['\/health', '\/v1\/presign', '\/v1\/put', '\/v1\/get'\]/.test(pagesWorker)
+    && /return env\.ASSETS\.fetch\(request\)/.test(pagesWorker), '');
   ok('上游仍是真 Worker（边缘转发，Cloudflare 内部解析不受本地污染影响）',
     /const UPSTREAM = 'https:\/\/unimate-sync\.2025040140\.workers\.dev'/.test(pagesWorker), '');
   ok('转发时剥掉 Origin（Worker 侧按服务端到服务端放行）',
@@ -158,6 +160,127 @@ console.log('\n--- v2.39：同步 API 走 pages.dev（绕开被污染/不可达�
   const docs = read('PRD.md') + read('Net.md');
   ok('文档记录了 workers.dev 在大陆被污染/不可达这一事实',
     /workers\.dev/.test(docs) && /69\.171\.228\.74|DNS 污染/.test(docs), '');
+}
+
+/*
+ * v2.41：正文也走 pages.dev 中转。
+ *
+ * 真机证据（截图）：点「建立同步并生成恢复码」成功、恢复码正常显示，再点「确认并上传密文」报
+ * 「上传加密备份失败，请检查网络后重试」—— 该文案来自客户端 `fetchTimed('上传加密备份', …)`，
+ * 也就是**预签名已经成功、失败在直传 R2 那一步**。而 `cloudflare/sync-worker/cors.json` 当时只有
+ * `http://localhost` / `https://unimate3.pages.dev`，缺 APK 的来源 `https://localhost`
+ * （与 v2.39 那次 403 是同一个坑，只是换了张表），WebView 会拦掉直传响应。
+ * 顺带：大陆移动网络能否稳定连到 R2 的 S3 域名也不由我们决定 —— 所以正文也搬到 pages.dev。
+ */
+console.log('\n--- v2.41：密文正文改走 pages.dev 中转（不再让手机直连 R2）---');
+{
+  const pagesWorker = read('cloudflare/pages/_worker.js');
+  ok('Pages worker 接管 /v1/put 与 /v1/get',
+    /API_PATHS = \['\/health', '\/v1\/presign', '\/v1\/put', '\/v1\/get'\]/.test(pagesWorker), '');
+  ok('中转上传：先调上游 /v1/presign（operation=put）再代 PUT',
+    /async function relayPut\(/.test(pagesWorker)
+    && /presignUpstream\(request, syncId, 'put', bytes\.length\)/.test(pagesWorker)
+    && /method: 'PUT'/.test(pagesWorker), '');
+  ok('代 PUT 带 Content-Type（短链是按它签的，必须一致）',
+    /headers: \{ 'Content-Type': SYNC_CONTENT_TYPE \}/.test(pagesWorker)
+    && /SYNC_CONTENT_TYPE = 'application\/vnd\.unimate\.sync\+json'/.test(pagesWorker), '');
+  ok('中转下载：把密文正文原样返回（Content-Type 即同步包类型）',
+    /async function relayGet\(/.test(pagesWorker)
+    && /out\.headers\.set\('Content-Type', SYNC_CONTENT_TYPE\)/.test(pagesWorker), '');
+  ok('对象不存在 → 404，且文案与客户端一致',
+    /jsonError\('这个同步码还没有云端备份', 404, origin\)/.test(pagesWorker), '');
+  ok('中转失败给 502 而不是抛异常（含"边缘连不上 R2"两种情形）',
+    /边缘连不上 R2/.test(pagesWorker) && /jsonError\('同步服务暂时不可达', 502, origin\)/.test(pagesWorker), '');
+  ok('中转有上限，不放宽 Worker 的 30MB',
+    /const MAX_RELAY_BYTES = 30 \* 1024 \* 1024/.test(pagesWorker) && /413/.test(pagesWorker), '');
+  ok('中转透传 CF-Connecting-IP（Worker 按它限频，不透传会挤成一个桶）',
+    /CF-Connecting-IP/.test(pagesWorker), '');
+  ok('Pages worker 里依然没有任何密钥',
+    !/pepper|SECRET|ACCESS_KEY|ACCOUNT_ID/i.test(pagesWorker.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')), '');
+
+  const cloudSrc = read('src/services/cloudSync.ts');
+  ok('客户端正文默认走中转端点 /v1/put 与 /v1/get',
+    /relayUrl\('\/v1\/put', syncId\)/.test(cloudSrc) && /relayUrl\('\/v1\/get', syncId\)/.test(cloudSrc), '');
+  ok('中转不可用时回退直传（老版 Pages 仍能按原路走）',
+    /return relayed !== null \? relayed : directUpload\(syncId, bytes\)/.test(cloudSrc)
+    && /return relayed !== null \? relayed : directDownload\(syncId\)/.test(cloudSrc), '');
+  ok('直传与中转的报错分得开（下次真机截图能直接定位在哪一步）',
+    /直传 R2 上传失败（/.test(cloudSrc) && /经中转上传加密备份/.test(cloudSrc), '');
+  ok('中转失败会把服务端文案/状态码透出来，不再只有一句"请检查网络"',
+    /typeof body\?\.error === 'string' \? body\.error : '上传加密备份失败（' \+ response\.status \+ '）'/.test(cloudSrc), '');
+
+  // 这一条才是本次真机失败的直接原因：桶的 CORS 白名单缺 APK 的来源
+  const bucketCors = read('cloudflare/sync-worker/cors.json');
+  ok('R2 桶 CORS 补上 https://localhost（APK 的页面源，原来只有 http://localhost）',
+    /"https:\/\/localhost"/.test(bucketCors) && /"http:\/\/localhost"/.test(bucketCors), bucketCors);
+  ok('桶 CORS 仍允许站点自身与 Content-Type',
+    /unimate3\.pages\.dev/.test(bucketCors) && /"Content-Type"/.test(bucketCors), '');
+}
+
+/*
+ * v2.41 行为验证：把上游 Worker 与 R2 打桩，真的走一遍中转。
+ * 光有结构断言不够 —— 上一次真机失败的教训就是"看着都对，一跑就炸"。
+ */
+console.log('\n--- v2.41 行为：中转路径真跑一遍（打桩上游 Worker 与 R2）---');
+{
+  const pagesModule: any = await import('../cloudflare/pages/_worker.js');
+  const relay = pagesModule.default;
+  const realFetch = globalThis.fetch;
+  const seen: Array<{ url: string; method: string; headers: any; body: any }> = [];
+  const ticketUrl = 'https://acct.r2.cloudflarestorage.com/unimate-sync/v1/hmac.umig?X-Amz-Expires=900&X-Amz-Signature=stub';
+  const assets = { fetch: () => new Response('<!doctype html>asset', { status: 200, headers: { 'Content-Type': 'text/html' } }) };
+
+  globalThis.fetch = (async (input: any, init: any = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    seen.push({ url, method: init.method || 'GET', headers: init.headers || {}, body: init.body });
+    if (url.includes('/v1/presign')) {
+      return new Response(JSON.stringify({ url: ticketUrl, method: 'PUT', expiresAt: '2026-09-22T12:00:00.000Z', headers: { 'Content-Type': 'application/vnd.unimate.sync+json' } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url === ticketUrl) {
+      // 打桩的"R2"：GET 时回一段密文，PUT 时记下来
+      if ((init.method || 'GET') === 'GET') {
+        return new Response(new Uint8Array([9, 8, 7]), { status: 200, headers: { 'Content-Type': 'application/vnd.unimate.sync+json' } });
+      }
+      return new Response(null, { status: 200 });
+    }
+    return new Response('missing', { status: 404 });
+  }) as any;
+
+  try {
+    const payload = new Uint8Array([1, 2, 3, 4, 5]);
+    const putRes = await relay.fetch(new Request('https://unimate3.pages.dev/v1/put?syncId=' + first.config.syncId, {
+      method: 'POST', headers: { Origin: 'https://localhost', 'Content-Type': 'application/vnd.unimate.sync+json' }, body: payload
+    }), { ASSETS: assets });
+    const putBody: any = await putRes.json();
+    ok('中转上传：APK 的来源 https://localhost 被放行（这正是真机失败的那一格）',
+      putRes.status === 200 && putBody.ok === true && putRes.headers.get('Access-Control-Allow-Origin') === 'https://localhost', JSON.stringify(putBody));
+    const putCall = seen.find((x) => x.url === ticketUrl && x.method === 'PUT');
+    ok('中转上传：真的把密文 PUT 给了 R2，且字节一致',
+      !!putCall && Buffer.from(putCall.body).equals(Buffer.from(payload)), String(putCall && putCall.body?.length));
+    ok('中转上传：代 PUT 的 Content-Type 与短链签名时一致',
+      !!putCall && putCall.headers['Content-Type'] === 'application/vnd.unimate.sync+json', JSON.stringify(putCall?.headers));
+    const presignCall = seen.find((x) => x.url.includes('/v1/presign'));
+    ok('中转上传：调上游预签名时剥掉了 Origin（服务端到服务端放行）',
+      !!presignCall && !presignCall.headers.Origin && /"operation":"put"/.test(String(presignCall.body)), JSON.stringify(presignCall?.headers));
+
+    const getRes = await relay.fetch(new Request('https://unimate3.pages.dev/v1/get?syncId=' + first.config.syncId, {
+      method: 'POST', headers: { Origin: 'https://localhost', 'Content-Type': 'application/json' }, body: '{}'
+    }), { ASSETS: assets });
+    const got = new Uint8Array(await getRes.arrayBuffer());
+    ok('中转下载：正文原样带回，且 Content-Type 是同步包类型（客户端据此区分错误 JSON）',
+      got.length === 3 && got[0] === 9 && (getRes.headers.get('Content-Type') || '').includes('application/vnd.unimate.sync+json'), '');
+
+    const denied = await relay.fetch(new Request('https://unimate3.pages.dev/v1/put?syncId=x', {
+      method: 'POST', headers: { Origin: 'https://evil.example' }, body: new Uint8Array([1])
+    }), { ASSETS: assets });
+    ok('中转上传：非白名单来源 403（不因为要传正文就把门开大）', denied.status === 403, '');
+
+    const unknown = await relay.fetch(new Request('https://unimate3.pages.dev/sample-timetable.html'), { ASSETS: assets });
+    ok('非同步路径仍然交给静态资源', unknown.status === 200 && (await unknown.text()).includes('<!doctype html>'), '');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 }
 
 console.log('\n通过：' + pass + ' 条 P3 同步断言');

@@ -1,6 +1,6 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v2.40 ｜ 日期 2026-09-22 ｜ 状态：北二外云端档案已上线；P3 云端（Pages 同域转发 + 私有 R2）已就绪；**`$ is not a function` 的真因已定位并修好（`guard` 与 import 重名，v2.38 修错了方向）+ 本机链路已通到 R2**，真机复验待产品负责人执行
+> 版本 v2.41 ｜ 日期 2026-09-22 ｜ 状态：北二外云端档案已上线；P3 云端（Pages 同域转发 + 私有 R2）已就绪；`$ is not a function` 真因已修（v2.40，`guard` 与 import 重名）；**v2.41 把密文正文也搬上 pages.dev 中转（真机上传失败的下一道墙：直连 R2）**，真机复验待产品负责人执行
 > 口径变更：App 自己的联网功能现在有**三类**：天气（默认关闭）、高校档案更新，以及用户主动操作的
 > 加密换机同步。同步只上传 AES-256-GCM 密文，口令与恢复码不保存、不上传（见 11.45）。
 > 签名算法是 `Net.md` 原定的 **Ed25519**；但客户端**用纯 JS 验签、不依赖平台 WebCrypto**（真机逼出来的一次返工，见 11.35 A 节）。
@@ -12,7 +12,7 @@
 
 ## 当前接续摘要（新对话先读）
 
-> 这一节只写“现在真正到哪了”。历史设计与取证仍保留在 11.44~11.48。
+> 这一节只写“现在真正到哪了”。历史设计与取证仍保留在 11.44~11.49。
 
 | 项目 | 当前状态 |
 | --- | --- |
@@ -22,15 +22,17 @@
 | `$ is not a function` 真因（v2.40 定案） | **不是 WebCrypto 兼容问题**。v2.34 在 `MeView.vue` 写了 `const guard = ref({...})`（提醒守护状态），与同文件第 8 行 `import { guard } from '../services/guard.ts'`（超时工具）**重名**；SFC 编译把工具改名为 `guard2`（真机压缩后是 `$`），于是 v2.35 新加的 `guard('生成同步备份', …)` 变成调用那个 ref → `$ is not a function`。**v2.38 修错了方向（密码学改造本身没错、只是没修到病根）。** 详见 11.48。 |
 | v2.40 修法 | `MeView.vue` 的 `const guard` → `const guardState`（模板同步改）；新增 `test:order` 的**全仓库"顶层声明与 import 重名"静态扫描**并**变异验证过**（把重名写回去必红），防止这类"构建与单测都不报错、只有真机炸"的事故复发。 |
 | 本机链路到 R2 | **已验证**：预签名 `PUT` → **200/2.1s**；`GET` 取回与上传**逐字节一致**；对象名是 HMAC（不含同步码）；R2 端点解析到 Cloudflare 真段 `172.64.66.1`。**说明服务端与 R2 都没问题**，卡点只在客户端那一行代码。 |
-| 自动化与出包 | **已验证**：`test:sync` **44 条**；全套 **21 套件 768 条**全绿；6 步构建、`apksigner verify`、包内反查通过；APK 内 bundle 与 `dist` **SHA-256 逐字节一致**。 |
-| 待办的唯一主线 | ① **重新拖放 v2.40 上传包**（`_worker.js` 的 CORS 补了"带端口的本机来源"，手机不受影响、但这样网页端也能调试）→ 拖完我用 curl 复核 `/health`；② **覆盖安装 v2.40 APK（不要卸载）** → 首次建立时把"同步码或完整恢复码"清空、输入两遍至少 10 位口令 → 生成并安全保存恢复码 → 确认上传密文 → 第二台设备下载/解密/预览/二次确认恢复。 |
-| 提醒链路 | v2.35 起 `ReminderAlarmReceiver` 接管插件排期并用精确闹钟到点直接投递，守护服务每 15 秒扫一次持久化排期；**这一版（v2.40 APK）里就包含它**，装同一次包即可顺带复验提醒。产品负责人已齐"精确闹钟 + 电池优化豁免"两项（明确不动厂商自启动）。 |
+| 真机上传失败（v2.41 修） | 截图：恢复码正常显示后点「确认并上传密文」报**「上传加密备份失败，请检查网络后重试」**。该文案来自客户端 `fetchTimed('上传加密备份', …)` → **预签名已经成功，卡在直传 R2 这一步**：① 桶的 CORS 白名单 `cors.json` 里只有 `http://localhost` / `https://unimate3.pages.dev`，**缺 APK 的来源 `https://localhost`**（与 v2.39 那次 403 同一个坑，只是换了张表）；② 大陆移动网络能否稳定连到 R2 的 S3 域名本身也不由我们决定。 |
+| v2.41 修法 | **密文正文也走 pages.dev**：Pages `_worker.js` 新增 `/v1/put`、`/v1/get`，由边缘代取 15 分钟短链、代传代取 R2 —— 手机全程只与 `unimate3.pages.dev` 通信（这条域名已实测 200/1.3s）。直传代码保留为**兜底**（老版 Pages 没部署中转端点时按原路走），并顺手把 R2 桶 CORS 的白名单补上 `https://localhost`。详见 11.49。 |
+| 自动化与出包 | **已验证**：`test:sync` **66 条**（含**打桩上游 Worker 与 R2 的行为验证**：中转 PUT 的字节与 Content-Type 都对、GET 正文原样带回、非白名单 403、静态资源仍走 ASSETS）；全套 **21 套件 790 条**全绿；6 步构建、`apksigner verify`、包内反查通过；APK 内 bundle 与 `dist` **SHA-256 逐字节一致**。 |
+| 待办的唯一主线 | ① **重新拖放 v2.41 上传包**（目录本身）→ 拖完我用 curl 复核 `/health` 与新的 `/v1/put` 预检；② **覆盖安装 v2.41 APK（不要卸载）** → 「我的 → 加密换机同步」→ 首次建立时"同步码或完整恢复码"清空、输入两遍 ≥10 位口令 → 生成并安全保存恢复码 → 确认上传密文 → 第二台设备下载/解密/预览/二次确认恢复。 |
+| 提醒链路 | v2.35 起 `ReminderAlarmReceiver` 接管插件排期并用精确闹钟到点直接投递，守护服务每 15 秒扫一次持久化排期；**这一版（v2.41 APK）里就包含它**，装同一次包即可顺带复验提醒。产品负责人已齐"精确闹钟 + 电池优化豁免"两项（明确不动厂商自启动）。 |
 
 当前交付物：
 
-- APK（v2.40，**待产品负责人真机复验**）：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，SHA-256 `B978B64FA316BDF550CFCA3688A184D1E54C5B51C581A1AE83D909FDCF33B71F`。
-- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.40-upload`](artifacts/cloudflare/unimate-cloudflare-v2.40-upload)（根目录含 `_worker.js`，这是同步 API 能在大陆被手机访问的关键）——**待重新上传**（v2.39 已上传并核对通过，见 14.3；v2.40 只改了 CORS 白名单写法）。
-- Pages ZIP 归档：`artifacts/cloudflare/unimate-cloudflare-v2.40.zip`（Pages 网页不直接接受 ZIP，要拖放解压目录）。
+- APK（v2.41，**待产品负责人真机复验**）：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，SHA-256 `5FCDAC5D747D9520AFA710590B82048E224914A76D3DE6F29F6A7B77D6F5ED60`。
+- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.41-upload`](artifacts/cloudflare/unimate-cloudflare-v2.41-upload)（根目录含 `_worker.js`，**同步 API 与密文中转都靠它**）——**待重新上传**（v2.39 已上传并核对通过，见 14.3；v2.40/v2.41 的改动都在这份 `_worker.js` 里）。
+- Pages ZIP 归档：`artifacts/cloudflare/unimate-cloudflare-v2.41.zip`（Pages 网页不直接接受 ZIP，要拖放解压目录）。
 - Worker 已在线，**不要再上传 Worker ZIP，不要把任何 secret 值写进 PRD/聊天/截图**。
 
 ---
@@ -2800,6 +2802,65 @@ v2.36~v2.38 的 Pages 上传包是**手工拷贝**的，出包脚本里查不到
 
 ---
 
+### 11.49 第三十八轮（v2.41，2026-09-22）：真机上传失败的下一道墙 —— 密文正文搬上 pages.dev 中转
+
+v2.40 装到真机后：**「建立同步并生成恢复码」成功了**（`$ is not a function` 已消，恢复码正常显示），但点「确认并上传密文」报
+**「上传加密备份失败，请检查网络后重试」**。这条文案本身就把范围缩到了一步。
+
+#### A. 从截图能直接读出的定位
+
+该文案来自客户端 `fetchTimed('上传加密备份', …)` —— 它包的是**拿到短链之后、直传 R2**的那一次 `fetch`；
+如果卡在预签名，文案会是「连接同步服务失败」或 Worker 返回的错误。所以：
+
+| 步骤 | 状态 |
+| --- | --- |
+| 本机加密、生成恢复码 | **成功**（截图里恢复码完整显示） |
+| `POST https://unimate3.pages.dev/v1/presign` | **成功**（否则报的不是这条文案） |
+| `PUT https://<account>.r2.cloudflarestorage.com/…` | **失败** ← 卡在这里 |
+
+`PUT` 失败的两个可能原因（都真实存在，且都不受我们控制）：
+
+1. **桶的 CORS 白名单缺 APK 的来源**：`cloudflare/sync-worker/cors.json` 当时是
+   `origins: ["http://localhost", "https://unimate3.pages.dev"]` —— 而 APK 里页面源是 **`https://localhost`**
+   （Capacitor `androidScheme: https`）。WebView 发起的跨域 PUT 会被拦掉响应。**这与 v2.39 那次 403 是同一个坑，只是从 Worker 的 `APP_ORIGINS` 换到了 R2 的桶 CORS** ——
+   v2.39 我们只修了前者，漏了后者。
+2. **大陆移动网络到 R2 S3 域名的可达性**：`*.r2.cloudflarestorage.com` 不是我们能保证的链路（同族问题就是 `*.workers.dev` 被 DNS 污染那次）。
+
+#### B. 修法：正文也走 pages.dev，一次消掉两个原因
+
+`cloudflare/pages/_worker.js` 新增两个端点（**仍然不含任何密钥**）：
+
+| 端点 | 行为 |
+| --- | --- |
+| `POST /v1/put?syncId=…` | 请求体就是密文；函数先服务端到服务端调 Worker `/v1/presign`（`operation=put`）拿 15 分钟短链，再**代 PUT** 到 R2，只回 `{ok, expiresAt}` |
+| `POST /v1/get?syncId=…` | 代取短链 → 代 GET → **把密文正文原样返回**（`Content-Type: application/vnd.unimate.sync+json`） |
+
+配套细节：
+
+- 代 PUT 必须带与签名一致的 `Content-Type`（短链是按它签的）；
+- 透传 `CF-Connecting-IP`，否则 Worker 的限频会把所有中转请求算成同一个桶；
+- 中转上限 30 MB（与 Worker 的 `MAX_CIPHER_BYTES` 对齐），不放宽限制；
+- 对象不存在 → 404 + 「这个同步码还没有云端备份」（与客户端文案一致）；边缘连不上 R2 → 502，不抛异常；
+- 客户端**中转优先、直传兜底**：`/v1/put` 返回非 JSON（说明站点还是旧版、请求回落到了静态资源）时才走老的预签名直传，所以这套改动对老部署是兼容的。
+- 顺手把 R2 桶的 `cors.json` 补上 `https://localhost`（直传兜底那条路也修好；需要 `npx wrangler r2 bucket cors set unimate-sync --file cors.json` 才生效）。
+
+#### C. 验证
+
+- **已验证（行为，打桩上游 Worker 与 R2）**：`test:sync` 44 → **66 条**。新增的是**真跑一遍**的行为断言，不只看字符串：
+  `POST /v1/put`（Origin `https://localhost`）→ 200 且回显 `Access-Control-Allow-Origin: https://localhost`；
+  打桩的 R2 收到的**字节与上传完全一致**、`Content-Type` 与签名一致；调上游预签名时**没有** `Origin`（服务端到服务端）；
+  `/v1/get` 把正文原样带回；非白名单来源 403；静态资源仍走 `env.ASSETS`；中转上限与 502 分支都在。
+- **已验证（构建产物）**：全套 **21 套件 790 条**全绿；`npm run build` → `dist/assets/index-VNJXczej.js`；APK 内 `assets/public/assets/index-VNJXczej.js` 与 `dist` **SHA-256 逐字节一致**（`B3BA47C1…`）；
+  包内反查：`/v1/put`、`/v1/get`、`经中转上传加密备份`、`直传 R2 上传失败` 都在，`workers.dev` 与任何 R2/pepper secret 名都不在；`apksigner verify` 与 6 步完整性校验通过。
+- **未验证（真机）**：v2.41 APK 在手机上跑通"上传密文 → 第二台设备下载/解密/预览/二次确认恢复"。**要等产品负责人重拖 Pages 上传包**（中转端点必须先在线上存在）。
+
+#### D. 出包
+
+- APK：`5FCDAC5D…`（6.66 MB）。
+- Pages 上传目录：`artifacts/cloudflare/unimate-cloudflare-v2.41-upload`（15 文件，`_worker.js` 与源文件 SHA-256 一致）。
+
+---
+
 ### 11.4 已安装的 Codex Skill（需求第 8 项，已完成)
 
 | Skill | 位置 | 用途 | 状态 |
@@ -2908,6 +2969,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 本次 v2.38 提交 | 2026-09-22 | v2.38 | **修真机 `$ is not a function`**：P3 口令派生与 AES-GCM 改为 WebCrypto 优先、纯 JS 兜底；输入拷贝为独立 ArrayBuffer，异步调用加超时；密文格式不变；`test:sync` 26→30，新增两路实现的逐字节向量比对 | Worker 健康检查、R2 预签名与 CORS 已线上验证；v2.38 真机上传待复验 |
 | 本次 v2.39 提交 | 2026-09-22 | v2.39 | **同步 API 搬到 pages.dev**（详见 11.47）：新增 `cloudflare/pages/_worker.js`（Pages Advanced Mode，同域提供 `/health` 与 `/v1/presign` 后边缘转发给真 Worker）；客户端 `SYNC_API_BASE` 改用 `https://unimate3.pages.dev`；`wrangler.toml` 白名单补 `https://localhost`；新增 `scripts/make-pages-package.mjs`；`test:sync` 30→43；全套 21 套件 **766 条** | 产品负责人拖放 v2.39 上传包后线上核对全通过（`/health` 200、预检 204、预签名 200、非白名单 403）；`docs/deploy.md` 补上传踩坑。APK `1A335365…` |
 | 本次 v2.40 提交 | 2026-09-22 | v2.40 | **`$ is not a function` 的真因：`guard` 与 import 重名**（详见 11.48）：`MeView.vue` 的 `const guard`（守护状态）改名 `guardState`，模板同步；`tests/order.test.ts` 新增**全仓库"顶层声明与 import 重名"静态扫描**（变异验证过）；`_worker.js` 的 CORS 白名单拆成 `EXACT_ORIGINS` + `LOCAL_ORIGIN` 正则（补上"带端口的本机来源"，修 v2.39 漏格）；`test:sync` 43→44，`test:order` 3→4，全套 **768 条** | v2.38 的"WebCrypto 兼容"结论**作废**（改造本身保留、病根在客户端变量重名）。APK `B978B64F…`；Pages v2.40 上传包**待重传**（只改了 CORS 写法） |
+| 本次 v2.41 提交 | 2026-09-22 | v2.41 | **密文正文搬上 pages.dev 中转**（详见 11.49）：真机点「确认并上传密文」报"上传加密备份失败" —— 预签名成功、卡在**直传 R2**（桶 CORS 缺 `https://localhost`，且大陆到 R2 S3 域名的可达性不受我们控制）。`cloudflare/pages/_worker.js` 新增 `/v1/put`、`/v1/get`：边缘代取 15 分钟短链、代传代取 R2；客户端**中转优先、直传兜底**；桶 `cors.json` 补 `https://localhost`；`test:sync` 44→**66 条**（新增打桩上游 Worker 与 R2 的**行为**验证），全套 **21 套件 790 条** | Pages 上传包**待重传**（中转端点必须先在线上存在）；APK `5FCDAC5D…`；真机上传/双机恢复待复验 |
 
 ### 14.2 依赖与环境变更
 
@@ -2941,6 +3003,8 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-22 | 产品负责人拖放 v2.39 上传包（含根目录 `_worker.js`）到 Pages → Production | **核对通过**：首页引用 `assets/index-DroQga0f.js`（与本次 APK 同一份代码）；`catalog/` 三件套仍 200；**`GET /health` → 200 且回显 `Access-Control-Allow-Origin: https://localhost`**（证明 Pages 的 `_worker.js` 生效并成功转发到 Worker）；`OPTIONS /v1/presign` → 204（Allow-Methods/Headers 正确）；`POST /v1/presign`（Origin 用 APK 的 `https://localhost`）→ 200，返回指向私有 bucket 的 15 分钟 PUT 短链、对象名为 HMAC；非白名单来源 → 403。**同步 API 在大陆域名上已可用** |
 | 2026-09-22 | 上传踩坑 | 第一次拖的是工程目录 → Pages 报"upload exceeds the limit of 1000 files"。正确做法：拖 `artifacts/cloudflare/unimate-cloudflare-<版本>-upload` 这个目录（本次 15 个文件 / 0.64 MB），或在项目根跑 `npx wrangler pages deploy <该目录> --project-name unimate3`。已写进 `docs/deploy.md` 待补 |
 | 2026-09-22 | 生成 v2.40 Pages 上传包（**待产品负责人重传**） | [`unimate-cloudflare-v2.40-upload`](artifacts/cloudflare/unimate-cloudflare-v2.40-upload)（15 文件 / 0.6 MB，根部含 `_worker.js`）；ZIP 归档 SHA-256 `ACCD75A3DDDF373CE8B5780ADF65F765EF4BD0F979824BF0456A7460BE642C53`。相对 v2.39 **只差 `_worker.js` 的 CORS 白名单写法**（`EXACT_ORIGINS` + `LOCAL_ORIGIN` 正则，允许带端口的本机来源）与前端 bundle（`assets/index-CyklgAhP.js`）。手机上原有的同步能力不变；重传是为了让**网页端调试**也能联调 |
+| 2026-09-22 | R2 桶 CORS 补 `https://localhost`（**需要产品负责人在本机执行一次**） | `cloudflare/sync-worker/cors.json` 的 origins 由 `["http://localhost","https://unimate3.pages.dev"]` 改为含 `https://localhost`。命令：`cd cloudflare\sync-worker` → `npx wrangler r2 bucket cors set unimate-sync --file cors.json`。**这是直传兜底那条路的前提**；主路径（pages.dev 中转）不依赖它 |
+| 2026-09-22 | 生成 v2.41 Pages 上传包（**待产品负责人重传**） | [`unimate-cloudflare-v2.41-upload`](artifacts/cloudflare/unimate-cloudflare-v2.41-upload)（15 文件 / 0.6 MB，根部含 `_worker.js`）；`_worker.js` 与仓库源文件 **SHA-256 一致**（`48E878EE…`）；前端 bundle `assets/index-VNJXczej.js` 与 `dist` 逐字节一致。**中转端点 `/v1/put`、`/v1/get` 必须上传后才存在**，否则客户端会回退到直传（也就是这次失败的那条路） |
 
 ### 14.4 出包记录（APK）
 
@@ -2968,6 +3032,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-22 | `3ABC52D4…` | v2.37：**P3 端到端加密换机同步**。全套 **21 套件 749 条**断言全绿；APK 6.66 MB，`apksigner verify` 与 6 步完整性校验通过；包内新串（加密换机同步 / AES-256-GCM / Worker 地址）存在，R2 secret 名、pepper 名、测试 secret 与北二外本地档案痕迹均不存在 |
 | 2026-09-22 | `AB630CD3…` | v2.38：**修 P3 真机加密 `$ is not a function`**。WebCrypto 优先 + 纯 JS 兜底 + 60 秒超时；全套 **21 套件 753 条**全绿；APK 6.66 MB，`apksigner verify` 与 6 步完整性校验通过 |
 | 2026-09-22 | `B978B64F…` | v2.40：**`$ is not a function` 真因 = `guard` 与 import 重名**（v2.38 修错方向）+ CORS 补带端口本机来源。全套 **21 套件 768 条**全绿（`test:order` 4、`test:sync` 44）；APK 6.66 MB，`apksigner verify` 与 6 步完整性校验通过；**包内 bundle 与 `dist` 的 SHA-256 逐字节一致**（`039DFC0C…`）、新串 `https://unimate3.pages.dev` 在、旧串 `workers.dev` 为 0 |
+| 2026-09-22 | `5FCDAC5D…` | v2.41：**密文正文改走 pages.dev 中转**（修真机"上传加密备份失败"：预签名成功、卡在直传 R2）。全套 **21 套件 790 条**全绿（`test:sync` 66，含打桩上游 Worker 与 R2 的行为验证）；APK 6.66 MB，`apksigner verify` 与 6 步完整性校验通过；**包内 bundle 与 `dist` 逐字节一致**（`B3BA47C1…`）；反查新串 `/v1/put`、`/v1/get`、`经中转上传加密备份` 都在，`workers.dev` 与 R2/pepper secret 名均为 0 |
 
 > 出包唯一正确方式：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1`（11→17 步全套测试 + 构建 + APK 内容反查；红一条不出包）。
 > 沙箱内跑该脚本会因 Node/Gradle 拿不到用户信息而失败，需在沙箱外执行 —— 这是环境限制，不是工程问题。
@@ -3087,6 +3152,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| v2.41 | 2026-09-22 | **真机上传失败的下一道墙：密文正文也搬上 pages.dev**（详见 11.49）—— v2.40 装到真机后「建立同步并生成恢复码」已成功（`$ is not a function` 消了），但「确认并上传密文」报「上传加密备份失败，请检查网络后重试」。该文案来自**拿到短链之后直传 R2** 的那次 fetch，所以预签名是好的、卡在直传：① `cloudflare/sync-worker/cors.json` 的 origins 只有 `http://localhost` / `https://unimate3.pages.dev`，**缺 APK 的来源 `https://localhost`**（与 v2.39 同一个坑，只是从 Worker 的 `APP_ORIGINS` 换到了桶 CORS，v2.39 只修了前者）；② 大陆移动网络到 `*.r2.cloudflarestorage.com` 的可达性不受我们控制。改法：Pages `_worker.js` 新增 `POST /v1/put`（代取短链 → 代 PUT）与 `POST /v1/get`（代 GET → 正文原样返回），**手机全程只与 pages.dev 通信**；代 PUT 带与签名一致的 `Content-Type`、透传 `CF-Connecting-IP` 保限频、上限 30 MB、404/502 分支齐全；客户端**中转优先、直传兜底**（老版 Pages 仍可按原路走）；桶 `cors.json` 补 `https://localhost`（直传兜底的前提，需执行一次 `wrangler r2 bucket cors set`）。`test:sync` 44→**66 条**（新增**打桩上游 Worker 与 R2 的行为验证**：字节一致、Content-Type 一致、剥 Origin、403、正文带回、静态资源分流），全套 **21 套件 790 条**全绿；APK `5FCDAC5D…`（包内 bundle 与 `dist` 逐字节一致 `B3BA47C1…`）；**Pages 上传包待重传**；真机上传/双机恢复待复验。 |
 | v2.40 | 2026-09-22 | **`$ is not a function` 的真因终于找到了：不是 WebCrypto，是变量重名**（详见 11.48）—— v2.34 在 `MeView.vue` 写了 `const guard = ref(...)`（提醒守护状态），与同文件的 `import { guard }`（超时工具）撞名；SFC 编译把 import 的那个改名（dev 是 `guard2`、真机压缩后是 `$`），于是 v2.35 新增的 `guard('生成同步备份', …)` 变成"调用一个 ref" → 真机报 `$ is not a function`。**v2.38 的"WebCrypto 兼容"结论作废**（改造本身没坏、保留）。修法：改名 `guardState` + 在 `test:order` 加**全仓库"顶层声明与 import 重名"扫描**并做变异验证（把重名写回去必红）。同时补掉 v2.39 漏掉的一格 CORS：`_worker.js` 白名单原来只写不带端口的 `http://localhost`，网页调试来源 `http://localhost:5204` 会被预检 403，现改为 `EXACT_ORIGINS` + `LOCAL_ORIGIN` 正则。另用**预签名 URL 直打 R2**验证链路（PUT 200/2.1s、GET 逐字节一致、对象名为 HMAC）——证明服务端没问题。`test:order` 3→**4 条**、`test:sync` 43→**44 条**，全套 **21 套件 768 条**全绿；APK `B978B64F…`；Pages v2.40 上传包待重传；真机复验待产品负责人执行。 |
 | ~~v2.38~~ | 2026-09-22 | **【v2.40 更正：这一轮的结论作废】** 原写法："修 Android WebView 首次 P3 加密报 `$ is not a function`"（详见 11.46）。真实原因与 WebCrypto 无关，是 `guard` 变量与 import 重名（见 11.48）；这一版的密码学改造本身没坏、予以保留，但**它并没有修好那个报错**。全套当时 **21 套件 753 条**全绿，APK `AB630CD3…`。 |
 | v2.39 | 2026-09-22 | **修 P3 真机阻断：同步 API 搬到 pages.dev**（详见 11.47）—— 真机验收前独立复核云端发现两个必失败点：① `unimate-sync.2025040140.workers.dev` 在大陆**被 DNS 污染**（实测解析到 69.171.228.74，Meta 地址段；443 连接超时），而 `unimate3.pages.dev` 实测 200/1.3s —— 手机根本连不到 Worker；② Worker 的 `APP_ORIGINS` 只有 `http://localhost`，而 APK 页面源是 **`https://localhost`**（Capacitor androidScheme=https），即便域名通也会被 403。改法：新增 `cloudflare/pages/_worker.js`（Pages Advanced Mode），**同域提供** `/health` 与 `/v1/presign`：做 CORS 白名单（含 `https://localhost`）→ **剥掉 Origin** 后边缘转发给真 Worker（Cloudflare 内部解析不受本地污染影响）→ 其余路径交给 `env.ASSETS`；客户端 `SYNC_API_BASE` 默认改为 `https://unimate3.pages.dev`；新增 `scripts/make-pages-package.mjs` 让 Pages 上传包**可复现**（v2.36~v2.38 的包是手工拷的，脚本里查不到痕迹）。`test:sync` 30→**43 条**，全套 **21 套件 766 条** |

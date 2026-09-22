@@ -27,8 +27,8 @@
 ```powershell
 cd E:\Gary\北京化工大学\北化app\Work
 npm run build
-node scripts\make-pages-package.mjs v2.40          # 生成"可拖放目录"（含同步 API 的 _worker.js）
-npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.40-upload --project-name unimate3
+node scripts\make-pages-package.mjs v2.41          # 生成"可拖放目录"（含同步 API 的 _worker.js）
+npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.41-upload --project-name unimate3
 ```
 
 不想用命令行：回到 Cloudflare 项目页 → **Create new deployment** → 拖 **`artifacts\cloudflare\unimate-cloudflare-<版本>-upload` 这个目录**。
@@ -39,8 +39,8 @@ npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.40-upload -
    `Your upload exceeds the limit of 1000 files`（网页端上限 1000，CLI 上限 20000）。正确目录本次是 **15 个文件 / 0.64 MB**：
    `_worker.js`、`index.html`、`sample-timetable.html`、`assets\*`、`catalog\*`。拖之前可先数一下：
    `(Get-ChildItem -Recurse -File).Count` 应为 15。
-2. **根目录必须有 `_worker.js`**（v2.39 起）：它是 Pages 的 Advanced Mode 入口，同步 API 靠它在大陆可达的 pages.dev 域名上提供
-   （`*.workers.dev` 被 DNS 污染，手机连不上）。
+2. **根目录必须有 `_worker.js`**（v2.39 起）：它是 Pages 的 Advanced Mode 入口，同步 API **与密文正文中转**都靠它在大陆可达的 pages.dev 域名上提供
+   （`*.workers.dev` 被 DNS 污染，手机连不上；`*.r2.cloudflarestorage.com` 也不受我们控制 —— v2.41 起正文改走 `/v1/put`、`/v1/get` 中转）。
 3. **命令行方式传的是"目录"本身**：`npx wrangler pages deploy <目录> --project-name unimate3`，不是目录里的内容。
 
 **同步 API 的 CORS 白名单（v2.40 起）**：`_worker.js` 里 `EXACT_ORIGINS` 放生产来源（`https://unimate3.pages.dev`），本机来源走 `LOCAL_ORIGIN` 正则
@@ -52,6 +52,7 @@ npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.40-upload -
 ## 3. 部署后必须做的验证
 
 - [ ] **`curl.exe -sS https://unimate3.pages.dev/health` 返回 `{"ok":true}`** —— 这一条过了才说明 `_worker.js` 生效、同步 API 可用（v2.39 起必查）；
+- [ ] **`curl.exe -sS -X OPTIONS -H "Origin: https://localhost" -H "Access-Control-Request-Method: POST" https://unimate3.pages.dev/v1/put -i` 返回 204** —— 这一段过了才说明**密文中转端点已上线**（v2.41 起必查；没上线的话 App 只能回退直传 R2，而那条路真机走不通）；
 - [ ] `curl.exe -sS https://unimate3.pages.dev/catalog/index.json` 返回清单 JSON（选校页热更新靠它）；
 - [ ] 手机 **5G** 打开 → 能进；
 - [ ] 手机 **校园网 Wi-Fi** 打开 → 能进；
