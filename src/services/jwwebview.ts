@@ -62,6 +62,10 @@ export interface HeartbeatStatus {
   lastPostedAt: number;
   lastPostedCount: number;
   totalPosted: number;
+  /** 开机清场丢掉了多少条（被插件恢复广播改写成"15 秒后"的那批） */
+  lastDroppedAt: number;
+  lastDroppedCount: number;
+  totalDropped: number;
   /** 下一跳是否还在未来（排上了但被系统撤掉的话这里会是 false） */
   pendingNext: boolean;
   error?: string;
@@ -89,7 +93,7 @@ export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
     powerStatus: async (): Promise<PowerStatus> => ({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '桌面预览环境无法查询电池优化状态，请在手机上查看', error: 'web-unsupported' }),
     requestIgnoreBattery: async () => ({ ok: false, mode: '', error: '桌面预览环境无法调用系统设置' }),
     openExactAlarmSettings: async () => ({ ok: false, error: '桌面预览环境无法调用系统设置' }),
-    heartbeatStatus: async (): Promise<HeartbeatStatus> => ({ ok: false, armed: false, armedAt: 0, nextAt: 0, lastScanAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, pendingNext: false, error: 'web-unsupported' }),
+    heartbeatStatus: async (): Promise<HeartbeatStatus> => ({ ok: false, armed: false, armedAt: 0, nextAt: 0, lastScanAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, lastDroppedAt: 0, lastDroppedCount: 0, totalDropped: 0, pendingNext: false, error: 'web-unsupported' }),
     pendingNotifications: async (): Promise<PendingNotifications> => ({ ok: false, items: [], error: 'web-unsupported' }),
     setTextZoom: async (o: { percent: number }) => ({ ok: false, applied: o && o.percent ? o.percent : 100, error: 'web-unsupported' })
   })

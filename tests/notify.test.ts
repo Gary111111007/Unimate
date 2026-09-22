@@ -167,6 +167,13 @@ console.log('');
     ok('只补 30 分钟内错过的（更早的直接丢弃，避免一股脑）', /CATCHUP_MS = 30 \* 60 \* 1000L/.test(hb) && /now - t > CATCHUP_MS/.test(hb), '');
     ok('补投后取消插件那条闹钟（避免重复投递）', /cancelPluginAlarm\(context, n\.getId\(\)\)/.test(hb), '');
     ok('补投后从插件存储里删掉（避免下次重复）', /storage\.deleteNotification\(idStr\)/.test(hb), '');
+    // v2.33：开机广播必须"清场"而不是"补投"——插件自己的恢复广播会把过期排期改写成 now+15s 一起放出来
+    ok('开机走 dropOverdueOnBoot（清场），不是 runOnce（补投）',
+      /if \(boot\) dropOverdueOnBoot\(context\);/.test(hb) && /Intent\.ACTION_BOOT_COMPLETED\.equals\(action\)/.test(hb), '');
+    ok('清场会连"20 秒内就要响"的也丢掉（那正是被插件改写成 now+15s 的那批）',
+      /long soon = now \+ 20_000L;/.test(hb) && /at\.getTime\(\) > soon\) continue/.test(hb), '');
+    ok('清场丢掉的条数也记账（报告里能看见）', /totalDropped/.test(hb) && /lastDroppedCount/.test(hb), '');
+    ok('自检报告会显示开机清场丢了多少条', /开机清场：累计丢掉/.test(notifySrc), '');
     ok('点击载荷与插件一致（能切到对应课程/记事）',
       /LocalNotificationId/.test(hb) && /LocalNotficationObject/.test(hb) && /LocalNotificationUserAction/.test(hb), '');
     ok('心跳不自己造通知文案（沿用排期里的标题/内容）', /n\.getTitle\(\)/.test(hb) && /n\.getBody\(\)/.test(hb), '');

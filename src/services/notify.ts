@@ -452,7 +452,7 @@ export async function powerStatus(): Promise<PowerStatus> {
 
 /** 兜底心跳状态（v2.31）：给"自检报告"用 */
 export async function heartbeatStatus(): Promise<HeartbeatStatus> {
-  const empty: HeartbeatStatus = { ok: false, armed: false, armedAt: 0, nextAt: 0, lastScanAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, pendingNext: false };
+  const empty: HeartbeatStatus = { ok: false, armed: false, armedAt: 0, nextAt: 0, lastScanAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, lastDroppedAt: 0, lastDroppedCount: 0, totalDropped: 0, pendingNext: false };
   try {
     const r: HeartbeatStatus = await guard('查心跳状态', JwWebView.heartbeatStatus(), 4000, null as any);
     return r && r.ok ? r : empty;
@@ -534,6 +534,10 @@ export async function selfCheckReport(): Promise<string> {
       : '未排（App 启动时应该会排上；若一直未排请反馈）')
       : '查询失败') + '；累计补投 ' + hb.totalPosted + ' 条'
       + (hb.lastPostedCount ? '（上次补投 ' + hb.lastPostedCount + ' 条 @ ' + fmtMs(hb.lastPostedAt) + '）' : ''));
+    if (hb.totalDropped) {
+      lines.push('开机清场：累计丢掉 ' + hb.totalDropped + ' 条过期排期（最近一次 '
+        + hb.lastDroppedCount + ' 条 @ ' + fmtMs(hb.lastDroppedAt) + '）—— 按"错过的提醒不补发"口径直接丢弃，避免一开机一股脑');
+    }
   } catch { lines.push('兜底心跳：查询失败'); }
   /*
    * 结论提示：把"现在最可能的成因"直接写在报告末尾，省得对着数字猜。

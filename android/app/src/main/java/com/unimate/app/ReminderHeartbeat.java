@@ -62,12 +62,59 @@ public class ReminderHeartbeat extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        String action = intent == null ? null : intent.getAction();
+        boolean boot = action != null && (
+                Intent.ACTION_BOOT_COMPLETED.equals(action)
+                || "android.intent.action.LOCKED_BOOT_COMPLETED".equals(action)
+                || "android.intent.action.QUICKBOOT_POWERON".equals(action));
         try {
-            runOnce(context);
+            /*
+             * 开机走"清场"而不是"补投"（v2.33）。
+             *
+             * 插件自己的 LocalNotificationRestoreReceiver 也会收到开机广播，它把所有**已过期**的排期
+             * 改写成"now + 15 秒"再排出去 —— 真机反馈的"一打开/一开机所有提醒一股脑出来"就是它。
+             * 我们的口径是"错过的提醒不补发"，所以开机时：
+             *   · 已过期的 → 直接丢掉（连闹钟一起撤）；
+             *   · 计划时刻在 20 秒内的 → 也丢掉（这正是被插件改写成 now+15s 的那批；正常排期不会刚好卡在开机那一瞬）；
+             * 未来的排期一律不动，交给插件按点投递。
+             */
+            if (boot) dropOverdueOnBoot(context);
+            else runOnce(context);
         } catch (Throwable t) {
             // 心跳绝不能因为异常把整条链路带崩：下一跳照排
         }
         arm(context);
+    }
+
+    /**
+     * 开机清场：丢掉"已过期"以及"20 秒内就要响"的排期（后者是被插件恢复广播改写成 now+15s 的那批）。
+     * 返回丢掉的条数，并记账给 App 看。
+     */
+    public static int dropOverdueOnBoot(Context context) {
+        NotificationStorage storage = new NotificationStorage(context);
+        long now = System.currentTimeMillis();
+        long soon = now + 20_000L;
+        int dropped = 0;
+        for (String idStr : new ArrayList<>(storage.getSavedNotificationIds())) {
+            LocalNotification n = storage.getSavedNotification(idStr);
+            if (n == null || n.getId() == null) continue;
+            LocalNotificationSchedule s = n.getSchedule();
+            Date at = s == null ? null : s.getAt();
+            if (at == null) continue;              // every / on 型排期不归它管
+            if (at.getTime() > soon) continue;     // 未来的不动
+            cancelPluginAlarm(context, n.getId());
+            storage.deleteNotification(idStr);
+            dropped++;
+        }
+        if (dropped > 0) {
+            SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            sp.edit()
+                    .putLong("lastDroppedAt", System.currentTimeMillis())
+                    .putInt("lastDroppedCount", dropped)
+                    .putInt("totalDropped", sp.getInt("totalDropped", 0) + dropped)
+                    .apply();
+        }
+        return dropped;
     }
 
     /**
@@ -131,6 +178,9 @@ public class ReminderHeartbeat extends BroadcastReceiver {
             o.put("lastPostedAt", lastPostedAt);
             o.put("lastPostedCount", sp.getInt("lastPostedCount", 0));
             o.put("totalPosted", sp.getInt("totalPosted", 0));
+            o.put("lastDroppedAt", sp.getLong("lastDroppedAt", 0));
+            o.put("lastDroppedCount", sp.getInt("lastDroppedCount", 0));
+            o.put("totalDropped", sp.getInt("totalDropped", 0));
             o.put("armed", armedAt > 0);
             o.put("pendingNext", nextAt > System.currentTimeMillis());
         } catch (Throwable t) {
