@@ -2,7 +2,14 @@
 import { SYNC_MAX_BYTES } from './syncCrypto.ts';
 
 export const SYNC_CONTENT_TYPE = 'application/vnd.unimate.sync+json';
-export const SYNC_API_BASE = (import.meta.env.VITE_SYNC_API_BASE || 'https://unimate-sync.2025040140.workers.dev').replace(/\/+$/, '');
+/**
+ * 同步 API 的基地址（v2.39 改）。
+ *
+ * 为什么不是 Worker 自己的 `*.workers.dev` 域名：那条域名在大陆**被 DNS 污染**
+ * （实测解析到 69.171.228.74 / 连接超时，见 PRD 11.47），而 `unimate3.pages.dev` 实测 200 / 1.3s。
+ * 现在 API 由 Pages 上的 `_worker.js` 同域提供，它在边缘转发给真正的 Worker —— 手机只与 pages.dev 通信。
+ */
+export const SYNC_API_BASE = (import.meta.env.VITE_SYNC_API_BASE || 'https://unimate3.pages.dev').replace(/\/+$/, '');
 
 interface PresignReply { url: string; method: 'GET' | 'PUT'; expiresAt: string; headers?: Record<string, string> }
 
@@ -58,4 +65,3 @@ export async function syncServiceReady(): Promise<boolean> {
   try { return (await fetchTimed('检查同步服务', SYNC_API_BASE + '/health', { method: 'GET' }, 5000)).ok; }
   catch { return false; }
 }
-

@@ -110,5 +110,52 @@ const ticket: any = await ticketResponse.json();
 ok('Worker 能本地签发 PUT 短链', ticketResponse.status === 200 && ticket.method === 'PUT' && /X-Amz-Signature=/.test(ticket.url));
 ok('预签名 URL 不暴露原同步码', !ticket.url.includes(first.config.syncId));
 
+/*
+ * v2.39：把同步 API 搬到 pages.dev 上（真机阻断修复）
+ *
+ * 实测依据：
+ *  · `unimate-sync.2025040140.workers.dev` 在大陆被 DNS 污染 —— 解析到 69.171.228.74（Meta 段），443 连接超时；
+ *    而 `unimate3.pages.dev` 200 / 1.3s。手机只能走 pages.dev。
+ *  · Worker 的 APP_ORIGINS 原来只有 `http://localhost`，而 APK 页面源是 `https://localhost`，直接打 Worker 会 403。
+ */
+console.log('\n--- v2.39：同步 API 走 pages.dev（绕开被污染/不可达的 workers.dev）---');
+{
+  const cloudSrc = read('src/services/cloudSync.ts');
+  ok('客户端默认 API 基地址是 pages.dev，不是 workers.dev',
+    /SYNC_API_BASE = \(import\.meta\.env\.VITE_SYNC_API_BASE \|\| 'https:\/\/unimate3\.pages\.dev'\)/.test(cloudSrc)
+    && !/SYNC_API_BASE[^\n]*workers\.dev/.test(cloudSrc), '');
+
+  const pagesWorker = read('cloudflare/pages/_worker.js');
+  ok('Pages 上有 Advanced Mode 入口 _worker.js', pagesWorker.length > 500, '');
+  ok('只接管 /health 与 /v1/presign，其余交给静态资源',
+    /const API_PATHS = \['\/health', '\/v1\/presign'\]/.test(pagesWorker) && /return env\.ASSETS\.fetch\(request\)/.test(pagesWorker), '');
+  ok('上游仍是真 Worker（边缘转发，Cloudflare 内部解析不受本地污染影响）',
+    /const UPSTREAM = 'https:\/\/unimate-sync\.2025040140\.workers\.dev'/.test(pagesWorker), '');
+  ok('转发时剥掉 Origin（Worker 侧按服务端到服务端放行）',
+    /headers\.delete\('Origin'\)/.test(pagesWorker), '');
+  ok('CORS 允许 APK 的来源 https://localhost（原来只有 http://localhost，会被 403）',
+    /ALLOWED_ORIGINS = \['https:\/\/localhost', 'http:\/\/localhost', 'https:\/\/unimate3\.pages\.dev'\]/.test(pagesWorker), '');
+  ok('预检返回 204 且带 Allow-Methods/Allow-Headers',
+    /request\.method === 'OPTIONS'\) return new Response\(null, \{ status: 204/.test(pagesWorker)
+    && /Access-Control-Allow-Methods/.test(pagesWorker) && /Access-Control-Allow-Headers/.test(pagesWorker), '');
+  ok('上游不可达时给 502 而不是抛异常', /jsonError\('同步服务暂时不可达', 502/.test(pagesWorker), '');
+  ok('Pages worker 里不含任何密钥（只有转发与 CORS）',
+    !/pepper|SECRET|ACCESS_KEY|ACCOUNT_ID/i.test(pagesWorker.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')), '');
+
+  const wrangler = read('cloudflare/sync-worker/wrangler.toml');
+  ok('Worker 白名单补上 https://localhost（改了要 redeploy，真机走 Pages 转发）',
+    /APP_ORIGINS = "http:\/\/localhost,https:\/\/localhost,https:\/\/unimate3\.pages\.dev"/.test(wrangler), '');
+
+  const packer = read('scripts/make-pages-package.mjs');
+  ok('Pages 打包脚本存在且把 _worker.js 放到上传目录根部',
+    /cpSync\(workerSrc, join\(outDir, '_worker\.js'\)\)/.test(packer), '');
+  ok('Pages 打包脚本可用（不再手工拷目录）',
+    /unimate-cloudflare-' \+ version \+ '-upload'/.test(packer), '');
+
+  const docs = read('PRD.md') + read('Net.md');
+  ok('文档记录了 workers.dev 在大陆被污染/不可达这一事实',
+    /workers\.dev/.test(docs) && /69\.171\.228\.74|DNS 污染/.test(docs), '');
+}
+
 console.log('\n通过：' + pass + ' 条 P3 同步断言');
 if (process.exitCode) process.exit(process.exitCode);

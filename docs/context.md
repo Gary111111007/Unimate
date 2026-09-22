@@ -1,4 +1,4 @@
-# 项目上下文交接（压缩版 · 2026-09-22，v2.34）
+# 项目上下文交接（压缩版 · 2026-09-22，v2.39）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
@@ -11,14 +11,14 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 项 | 值 |
 | --- | --- |
 | 仓库 | `E:\Gary\北京化工大学\北化app\Work` |
-| 最新提交 | 本次 v2.34（提醒守护前台服务，对抗 ROM 后台冻结）；前几个：b8637f4 v2.33 开机清场、38adac9 v2.32 排期原生直读、ff9c7d8 v2.31 自检报告 |
-| 前一个提交 | `95c704f` — v2.28 提醒排期口径（地平线 7 天 + 只清过期 + 错过不补发） |
-| 未提交（本轮） | 无 —— v2.34 前台服务一起提交 |
+| 最新提交 | 本次 v2.39（同步 API 搬到 pages.dev）；`fb857c8` v2.35~v2.38（提醒链路接管 / 北二外云端档案 / P3 加密同步 / WebView 兼容） |
+| 先读哪 | 云端与 P3 的最新状态看 **`PRD.md` 开头的「当前接续摘要」** 与 **`Net.md` 的「当前云端接续摘要」**（本节只保留工程侧的通用交接） |
+| 未提交（本轮） | 无 —— v2.39 一起提交 |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages；**线上仍是 v2.23 的包**，`catalog/` 还没上传） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.34，SHA `4D9B6438…`；v2.33 `FAE3DBE9…`、v2.32 `B23E2EF1…`） |
+| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.39，SHA `1A335365…`；v2.38 `AB630CD3…`、v2.34 `4D9B6438…`） |
 | 提醒口径 | 地平线 7 天；只清"过期 90 秒以上 + 账本里没有的"排期（`notify/plan.json`）；**错过的提醒不补发**；排期读取走**原生直读**（`scheduled()` 在安卓上没实现） |
 | 提醒兜底 | 心跳（有近期排期 10 分钟/否则 60 分钟）+ **提醒守护前台服务（v2.34 默认开）**：一条最低优先级静音常驻通知防 ROM 冻结；开机广播清场（过期/20 秒内要响的丢弃，不补发） |
-| 演示站状态 | **仍是 v2.23 的包**（线上 `index-UMPn5m76.js`），`/catalog/` 不存在 → App 会提示"站点上还没有下发清单"，属正常降级 |
+| 演示站状态 | **需更新到 v2.39**：线上前端仍是 v2.37 的 `index-BODDF0lq.js`，且缺根目录 `_worker.js`（同步 API 靠它）。拖放 `artifacts\cloudflare\unimate-cloudflare-v2.39-upload` 后核对 `/health` |
 | 签名私钥 | `keys\school-signing.key`（**未入库**，丢了要重新 keygen 并改公钥 + 重出包） |
 
 ## 3. 下一步（按优先级）
@@ -45,7 +45,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 ## 5. 常用命令
 
 ```powershell
-npm run test:notify       # 单跑某个套件（共 20 个：test:login/parser/exam/school/share/weather/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 717 条断言）
+npm run test:notify       # 单跑某个套件（共 20 个：test:login/parser/exam/school/share/weather/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 766 条断言）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1   # 唯一正确出包方式（沙箱内跑不通，需在沙箱外）
 npx wrangler pages deploy dist --project-name unimate3                       # 部署演示站
@@ -74,3 +74,7 @@ curl.exe -sS https://unimate3.pages.dev/ | Select-String 'index-.*\.js'      # �
 | 顺带的发现：明文 http 下 `crypto.subtle` 根本不存在（仅安全上下文才有） | 用局域网 IP（`http://192.168.x.x`）调试时，浏览器里连 SHA-256 都算不了 —— 这也是"别把关键能力押在平台 API 上"的又一例证 |
 | `build-apk.ps1` 行尾是**混着的**（老行 `CR CR LF`，新加的行纯 LF） | 改它只能用 node 按字节插入、并**沿用相邻行的行尾**，别统一行尾 —— 否则 diff 里上百行假变更 |
 | 私钥差点进了仓库 | `keys/` 已写进 `.gitignore`；出包反查里也要确认 APK 里**没有** `BEGIN PRIVATE KEY` |
+| **`*.workers.dev` 在大陆被 DNS 污染**（v2.39 踩到） | 实测 `unimate-sync.…workers.dev` 解析到 `69.171.228.74`（Meta 段）且 443 超时，而 `pages.dev` 200/1.3s → **要给手机用的接口必须挂在 pages.dev 上**（Pages Advanced Mode `_worker.js` 同域提供，再边缘转发给 Worker） |
+| **APK 里页面源是 `https://localhost`**，不是 `http://localhost`（v2.39 踩到） | Capacitor `androidScheme: https` → 接口的 CORS 白名单必须写 **https**，否则真机 403「来源不允许」（桌面调试却是通的，最容易漏） |
+| Gradle 守护进程占住输出管道，构建脚本"看起来卡住"（v2.31 / v2.39 各一次） | APK 其实已经产出：看 `artifacts\android\unimate-debug.apk` 的时间戳与指纹，再把 java 进程停掉即可；别当构建失败重跑 |
+| Pages 上传包以前是**手工拷**的（v2.36~v2.38） | 谁都不知道 `_worker.js` 该不该放、放哪儿 → 现在用 `node scripts/make-pages-package.mjs v2.39` 可复现产出（含根部 `_worker.js`） |

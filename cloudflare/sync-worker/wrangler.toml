@@ -4,7 +4,10 @@ compatibility_date = "2026-09-22"
 
 [vars]
 R2_BUCKET_NAME = "unimate-sync"
-APP_ORIGINS = "http://localhost,https://unimate3.pages.dev"
+# 注意：APK 里页面源是 https://localhost（Capacitor androidScheme=https），桌面调试是 http://localhost。
+# 真机目前走 pages.dev 上的 _worker.js 转发（那边剥掉 Origin，按服务端到服务端放行），
+# 所以这一行**改了要 wrangler deploy 才生效**，且不影响真机链路 —— 留着是为了将来直接用 Worker 域名时不再踩坑。
+APP_ORIGINS = "http://localhost,https://localhost,https://unimate3.pages.dev"
 
 [[ratelimits]]
 name = "SYNC_RATE_LIMITER"

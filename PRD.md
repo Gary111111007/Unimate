@@ -22,13 +22,14 @@
 | v2.37 真机结果 | 首次点“建立同步并生成恢复码”时报 `$ is not a function`。它发生在本机加密阶段，尚未上传，与 R2 凭据/CORS 无关。界面上输入的 `aaa` 也不是成因；首次建立时“同步码或恢复码”本就应留空。 |
 | v2.38 修复 | PBKDF2-SHA256 / AES-256-GCM 改为 **WebCrypto 优先 + `@noble/*` 纯 JS 兜底**；独立 ArrayBuffer；60 秒超时；密文格式不变。WebCrypto/纯 JS 交叉向量逐字节一致。 |
 | 自动化与出包 | **已验证**：`test:sync` 30 条；全套 21 套件 753 条全绿；6 步构建、`apksigner verify`、包内反查、客户端敏感信息扫描通过；生产依赖 `npm audit --omit=dev` 为 0 漏洞。 |
-| 待办的唯一主线 | 覆盖安装 v2.38（**不卸载**）→ 首次建立时清空同步码框、输入两遍至少 10 位口令 → 生成并安全保存恢复码 → 确认上传 → 第二台设备下载/解密/预览/二次确认恢复。 |
+| 待办的唯一主线 | **① 先把 Pages 更新到 v2.39**（拖放 `unimate-cloudflare-v2.39-upload` 目录 → Production）—— 不做这一步，手机连不到同步 API（见 11.47 的两个阻断）；② 覆盖安装 v2.39 APK（**不卸载**）→ 首次建立时清空同步码框、输入两遍至少 10 位口令 → 生成并安全保存恢复码 → 确认上传 → 第三台设备（或第二台）下载/解密/预览/二次确认恢复。 |
+| 提醒链路 | v2.35 起 `ReminderAlarmReceiver` 接管插件排期并用精确闹钟到点直接投递，守护服务每 15 秒扫一次持久化排期；**这一版（v2.39 APK）里就包含它**，装同一次包即可顺带复验提醒。 |
 
 当前交付物：
 
-- APK：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，SHA-256 `AB630CD3E4ADD9B11938AC80490D97BADDF97CBD33E073759FE044FC026E0C0D`。
-- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.38-upload`](artifacts/cloudflare/unimate-cloudflare-v2.38-upload)。
-- Pages ZIP 归档：[`artifacts/cloudflare/unimate-cloudflare-v2.38.zip`](artifacts/cloudflare/unimate-cloudflare-v2.38.zip)，SHA-256 `4991DD280C9BB43D7E4C1200AD148D8452DBA37D3BCC6421752BE10B21F5F6CB`。Cloudflare Pages 网页不直接接受该 ZIP，要拖放解压目录。
+- APK（v2.39）：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，SHA-256 `1A33536558F7F9B0A6195F3D3F8BF611095D97F75FCA0B2F5FD8ACDD980DF4C8`。
+- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.39-upload`](artifacts/cloudflare/unimate-cloudflare-v2.39-upload)（根目录含 `_worker.js`，这是同步 API 能在大陆被手机访问的关键）。
+- Pages ZIP 归档：`artifacts/cloudflare/unimate-cloudflare-v2.39.zip`（Pages 网页不直接接受 ZIP，要拖放解压目录）。
 - Worker 已在线，**不要再上传 Worker ZIP，不要把任何 secret 值写进 PRD/聊天/截图**。
 
 ---
@@ -2702,6 +2703,51 @@ v2.34 真机复验仍然是：**锁屏/离开 App 后到点不响，一打开 Ap
 
 ---
 
+---
+
+### 11.47 第三十六轮（v2.39，2026-09-22）：P3 真机阻断 —— 同步 API 搬到 pages.dev
+
+接手上一轮成果时先做独立复核（本地 + 只读云端），结果两条都对上了，但**发现两个"真机必失败"的点**：
+
+| 发现 | 证据 | 后果 |
+| --- | --- | --- |
+| `*.workers.dev` 在大陆**被 DNS 污染** | `nslookup unimate-sync.2025040140.workers.dev` → **69.171.228.74**（Meta 的地址段，不是 Cloudflare）；`curl` 443 **连接超时**（21s）。对照：`www.cloudflare.com` 200/4.2s、`unimate3.pages.dev` 200/**1.3s** | 手机（大陆 5G）连不到 Worker → P3 上传/下载必然失败。这与 PRD §14.3 早先"`*.workers.dev` 在大陆连接超时、已弃用"的记录完全一致 |
+| Worker 的来源白名单缺 APK 的源 | `wrangler.toml` 里 `APP_ORIGINS = "http://localhost,https://unimate3.pages.dev"`；而 `capacitor.config.ts` 是 `androidScheme: 'https'`，APK 里页面源是 **`https://localhost`** | 即便域名可达，Worker 的 `allowedOrigin()` 也会返回 403「来源不允许」 |
+
+#### A. 改法：API 同域搬到 pages.dev，再边缘转发给 Worker
+
+新增 `cloudflare/pages/_worker.js`（Pages **Advanced Mode**，拖放目录时它就在根目录，无需 CLI、无需改 Dashboard 环境变量）：
+
+1. 只接管 `/health` 与 `/v1/presign`，其它路径 `env.ASSETS.fetch(request)` 照常发静态资源；
+2. CORS 白名单 = `https://localhost`（APK）/ `http://localhost`（桌面调试）/ `https://unimate3.pages.dev`（站点自身），
+   预检返回 204 并带 `Allow-Methods`/`Allow-Headers`；非白名单来源 403；
+3. 转发时**剥掉 `Origin`/`Referer`**（Worker 侧看到"无 Origin"按服务端到服务端放行 —— 这也是不用改 Worker 就能修好 403 的原因），
+   上游不可达时返回 502 而不是抛异常；
+4. `_worker.js` **不含任何密钥**：R2 与 pepper 仍然只在 Worker 的 secrets 里（有静态断言盯着）。
+
+客户端 `SYNC_API_BASE` 默认值由 `https://unimate-sync.2025040140.workers.dev` 改为 **`https://unimate3.pages.dev`**
+（仍支持 `VITE_SYNC_API_BASE` 覆盖）。`wrangler.toml` 的白名单也补上了 `https://localhost`，
+并注明"改了要 `wrangler deploy` 才生效，真机走 Pages 转发不依赖它"。
+
+#### B. 顺手补上"只有当事人记得"的步骤
+
+v2.36~v2.38 的 Pages 上传包是**手工拷贝**的，出包脚本里查不到任何痕迹 —— 没人知道 `_worker.js` 该不该放、放哪儿。
+新增 `scripts/make-pages-package.mjs <版本>`：把 `dist/` 复制成上传目录、把 `_worker.js` 放到根部、顺手压一个 ZIP 留档，
+并打印"拖放→Production→核对 `/health`"的要点。（第一版用 `Compress-Archive` 失败于 `CouldNotAutoloadMatchingModule`，改用 Windows 自带 `tar -a` ✓。）
+
+#### C. 验证
+
+- **已验证（本地）**：`test:sync` 30 → **43 条**（新增：客户端基地址是 pages.dev 且不再是 workers.dev；`_worker.js` 存在、
+  只接管两个 API 路径、上游指向真 Worker、剥掉 Origin、CORS 含 `https://localhost`、预检 204、上游失败 502、文件里无密钥；
+  `wrangler.toml` 白名单已补；打包脚本会把 `_worker.js` 放到根部）；全套 **21 套件 766 条**全绿。
+- **已验证（只读云端，改之前）**：Pages 的 `catalog/index.json`、`index.json.sig`、`bisu.json` 均 200，
+  且线上 `bisu.json` 与本地**逐字节一致**（SHA-256 `41B8CF41…`）；线上 `index.json` 是 `buct v1, bisu v1, adapters 0`。
+  线上前端仍指向 v2.37 的 `assets/index-BODDF0lq.js`（即 **Pages 还没上传 v2.38/v2.39**）。
+- **未验证（真机）**：拖放 v2.39 上传包之后 —— ① `https://unimate3.pages.dev/health` 返回 `{"ok":true}`（我会用 curl 复核）；
+  ② 手机上"建立同步 → 生成恢复码 → 上传密文"；③ 第二台设备下载/解密/预览/二次确认恢复。
+
+---
+
 ### 11.4 已安装的 Codex Skill（需求第 8 项，已完成)
 
 | Skill | 位置 | 用途 | 状态 |
@@ -2858,6 +2904,8 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-22 | `B23E2EF1…` | v2.32：**修 `scheduled()` 在安卓空转**（排期改原生直读）+ 心跳 10/60 分钟两档 + 自检报告结论行。全套 **20 套件 699 条**断言全绿；包内反查：`classes12.dex` 含 `pendingNotifications`，前端含「结论：」「上次扫描」「若刚重建过仍是 0」 |
 | 2026-09-22 | `FAE3DBE9…` | v2.33：**开机清场**（丢掉过期与"20 秒内要响"的排期，避免插件恢复广播造成一股脑）。全套 **20 套件 703 条**断言全绿；包内反查：`classes12.dex` 含 `dropOverdueOnBoot`，前端含「开机清场：累计丢掉」 |
 | 2026-09-22 | `4D9B6438…` | v2.34：**提醒守护前台服务**（对抗 ROM 后台冻结）。全套 **20 套件 717 条**断言全绿；包内反查：`classes12.dex` 含 `ReminderGuardService`，`aapt2 dump xmltree` 显示 service 的 `foregroundServiceType=0x40000000`(specialUse) 与 `FOREGROUND_SERVICE`/`FOREGROUND_SERVICE_SPECIAL_USE` 权限，前端含「提醒守护（前台服务）」「静音小通知」 |
+| 2026-09-22 | `AB630CD3…` | v2.35~v2.38（上一轮会话产出、本轮复核并提交 `fb857c8`）：提醒链路接管 + 北二外云端档案 + P3 端到端加密 + WebView 加密兼容。复核：21 套件 **753 条**全绿；APK 指纹与文档一致；线上 Pages 的 `catalog` 三件套 200 且 `bisu.json` 与本地逐字节一致 |
+| 2026-09-22 | `1A335365…` | v2.39：**同步 API 搬到 pages.dev**（修两个真机阻断：workers.dev 被 DNS 污染 + APK 源 `https://localhost` 不在白名单）。21 套件 **766 条**全绿；包内反查：bundle 与 dist 一致、`catalog/` 未入包、**新串 `https://unimate3.pages.dev` 在、旧串 `workers.dev` 为 0**、署名三层在、`apksigner verify` 通过 |
 | 2026-09-22 | `7CC5CFC6…` | v2.35：**原生到点投递 + 前台主动扫描 + 过期防轰炸**。全套 **20 套件 724 条**断言全绿；`assembleDebug`、`apksigner verify` 与完整性校验通过；manifest 反查含 `ReminderAlarmReceiver` / `REMINDER_DELIVER`、`ReminderGuardService` specialUse 与相关权限 |
 | 2026-09-22 | `BF310F41…` | v2.36：**北二外仅云端下载**。全套 **20 套件 723 条**断言全绿；APK 6.65 MB，`apksigner verify` 通过；包内反查 `assets/public/catalog/*` 与 `assets/public/adapters/*` 均为 0，bundle 内 `jwglxt.bisu.edu.cn` / `求知楼410` / `BISU_PROFILE` 均查不到 |
 | 2026-09-22 | `3ABC52D4…` | v2.37：**P3 端到端加密换机同步**。全套 **21 套件 749 条**断言全绿；APK 6.66 MB，`apksigner verify` 与 6 步完整性校验通过；包内新串（加密换机同步 / AES-256-GCM / Worker 地址）存在，R2 secret 名、pepper 名、测试 secret 与北二外本地档案痕迹均不存在 |
@@ -2982,6 +3030,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
 | v2.38 | 2026-09-22 | **修 Android WebView 首次 P3 加密报 `$ is not a function`**（详见 11.46）：PBKDF2/AES-GCM 改为 WebCrypto 优先、纯 JS 兜底，输入使用独立 ArrayBuffer，调用有超时，密文格式不变。Worker 健康检查、R2 预签名和 CORS 已线上验证；全套 **21 套件 753 条**全绿，APK `AB630CD3…`；真机上传/恢复待复验。 |
+| v2.39 | 2026-09-22 | **修 P3 真机阻断：同步 API 搬到 pages.dev**（详见 11.47）—— 真机验收前独立复核云端发现两个必失败点：① `unimate-sync.2025040140.workers.dev` 在大陆**被 DNS 污染**（实测解析到 69.171.228.74，Meta 地址段；443 连接超时），而 `unimate3.pages.dev` 实测 200/1.3s —— 手机根本连不到 Worker；② Worker 的 `APP_ORIGINS` 只有 `http://localhost`，而 APK 页面源是 **`https://localhost`**（Capacitor androidScheme=https），即便域名通也会被 403。改法：新增 `cloudflare/pages/_worker.js`（Pages Advanced Mode），**同域提供** `/health` 与 `/v1/presign`：做 CORS 白名单（含 `https://localhost`）→ **剥掉 Origin** 后边缘转发给真 Worker（Cloudflare 内部解析不受本地污染影响）→ 其余路径交给 `env.ASSETS`；客户端 `SYNC_API_BASE` 默认改为 `https://unimate3.pages.dev`；新增 `scripts/make-pages-package.mjs` 让 Pages 上传包**可复现**（v2.36~v2.38 的包是手工拷的，脚本里查不到痕迹）。`test:sync` 30→**43 条**，全套 **21 套件 766 条** |
 | v2.37 | 2026-09-22 | **P3 端到端加密换机同步**（详见 11.45）：同步口令经 PBKDF2-SHA256 210k 派生，AES-256-GCM 加密备份；随机恢复码可独立解密且首次上传前强制另存；口令/恢复码不保存不上传；Cloudflare Worker 只签 15 分钟 R2 URL，R2 密钥只在 secrets。全套 **21 套件 749 条**全绿，APK `3ABC52D4…`；真实云端与双机真机流程待部署后验证。 |
 | v2.36 | 2026-09-22 | **北二外从 APK 内置迁移为签名云端档案**（详见 11.44）：本地只留学校名单占位；完整档案只存在于云端 `catalog/bisu.json`，验清单签名与档案 SHA-256 后才安装。Android 构建同步网页资源后会剔除 `catalog/adapters`，并把“云端档案未入包”设为出包硬门槛。全套 **20 套件 723 条**全绿；APK `BF310F41…`；Cloudflare 已上传且三文件哈希核验一致，真机下载/切换待验。 |
 | v2.35 | 2026-09-22 | **修正 v2.34“前台服务运行=提醒链路运行”的错误假设**（详见 11.43）：v2.34 真机仍是锁屏不响、打开后集中弹。根因是 `ReminderGuardService` 只挂常驻通知，没有任何扫描或投递。新增 `ReminderAlarmReceiver` 接管插件排期并用 `RTC_WAKEUP + setExactAndAllowWhileIdle` 到点直接投递；守护服务每 15 秒扫一次持久化排期；迟到超过 2 分钟一律丢弃；心跳改到最近提醒后 30 秒。`test:notify` 99→**106 条**，全套 **20 套件 724 条**；APK `7CC5CFC6…`，真机待复验。 |
