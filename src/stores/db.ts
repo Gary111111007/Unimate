@@ -51,7 +51,9 @@ function defaultSettings(p: SchoolProfile): Settings {
     // 提醒守护前台服务：默认开（它决定"关掉 App 还能不能准时收到提醒"），可在通知设置里关
     reminderGuard: true,
     // P3 默认未启用；用户主动建立同步后才写入不含口令的连接信息
-    sync: null
+    sync: null,
+    // 账号同步（v2.42）：只记账号名，用来在本机算同步码；口令绝不落盘
+    syncAccount: null
   };
 }
 

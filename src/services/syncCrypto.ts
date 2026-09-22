@@ -198,6 +198,44 @@ export function parseRecoveryCode(code: string): { syncId: string; secret: strin
   return { syncId: parts[1], secret: parts[2] };
 }
 
+/**
+ * 账号同步（v2.42，A 方案）：把"要抄的同步码"换成"记得住的账号 + 口令"。
+ *
+ * 账号名在**本机**参与派生，算出同一把同步码 —— 换机时只要输账号和口令，课表就回来了。
+ * 服务器看到的仍然只是 syncId（再经 pepper 变成对象名），它既不知道账号名、也不知道口令。
+ *
+ * 这条路的代价（界面必须如实写明，见 AGENTS.md 第 7 条）：
+ *  - 账号名是可猜的（尤其是学号），所以**口令是唯一的秘密**：至少 10 位，别用生日/学号；
+ *  - 忘记口令且恢复码也丢失时，谁都救不回来 —— 云端没有钥匙。
+ */
+const ACCOUNT_DOMAIN = 'unimate-account-v1';
+
+/** 归一化：大小写、首尾空格、全角字符、连续空格都不该导致"换个手机上不去了" */
+export function normalizeAccount(raw: string): string {
+  return String(raw || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** 账号 → 同步码（22 字符 base64url，与随机同步码同一命名空间，云端接口不用改） */
+export function deriveAccountSyncId(account: string): string {
+  const name = normalizeAccount(account);
+  if (name.length < 3) throw new Error('账号至少 3 个字符');
+  if (name.length > 64) throw new Error('账号名最长 64 个字符');
+  return b64u(sha256(enc.encode(ACCOUNT_DOMAIN + '\u0000' + name)).slice(0, 16));
+}
+
+/**
+ * 删除云端备份用的"墓碑"：一条不含任何用户数据的小 JSON。
+ * 覆盖上去就等于把原来的密文从桶里抹掉（R2 默认不开版本控制），
+ * 客户端下载到它会明确提示"这份备份已被删除"，而不是报一堆看不懂的解析错。
+ */
+export function tombstoneBytes(): Uint8Array {
+  return enc.encode(JSON.stringify({ format: FORMAT, version: 1, cipher: 'AES-256-GCM', tombstone: true, createdAt: new Date().toISOString() }));
+}
+
+export function isTombstone(bytes: Uint8Array): boolean {
+  try { return JSON.parse(dec.decode(bytes))?.tombstone === true; } catch { return false; }
+}
+
 export function parseSyncEnvelope(bytes: Uint8Array): SyncEnvelope {
   let value: any;
   try { value = JSON.parse(dec.decode(bytes)); } catch { throw new Error('云端文件不是有效的 Unimate 同步包'); }
@@ -213,7 +251,11 @@ export function parseSyncEnvelope(bytes: Uint8Array): SyncEnvelope {
   return value as SyncEnvelope;
 }
 
-export async function encryptForSync(backup: Uint8Array, passphrase: string, current?: SyncConfig): Promise<EncryptedSync> {
+/**
+ * @param current 已有的同步配置（更新同一份云端备份时传它，数据密钥会被沿用）
+ * @param account 账号同步（A 方案）：首次建立时用账号派生同步码，换机才可能"输账号就找到"
+ */
+export async function encryptForSync(backup: Uint8Array, passphrase: string, current?: SyncConfig, account?: string): Promise<EncryptedSync> {
   assertPassphrase(passphrase);
   if (!backup.length || backup.length > SYNC_MAX_BYTES) throw new Error('同步包必须小于 20 MB');
 
@@ -223,18 +265,26 @@ export async function encryptForSync(backup: Uint8Array, passphrase: string, cur
   let recoveryWrap: SyncKeyWrap;
   let recoveryCode: string | undefined;
 
-  if (current) {
+  // 账号模式下如果现有配置的同步码与账号派生结果不一致（比如先随机建过同步、后来又设了账号），
+  // 一律按"另起一份"处理：沿用旧同步码会让账号在其他手机上找不到这份备份。
+  const wanted = account ? deriveAccountSyncId(account) : '';
+  const reuse = current && (!wanted || current.syncId === wanted) ? current : undefined;
+
+  if (reuse) {
     syncId = current.syncId;
     dataKey = await unwrapKey(current.passwordWrap, passphrase, syncId);
     passwordWrap = current.passwordWrap;
     recoveryWrap = current.recoveryWrap;
   } else {
     const identity = newSyncIdentity();
-    syncId = identity.syncId;
+    syncId = wanted || identity.syncId;
     recoveryCode = identity.recoveryCode;
     dataKey = randomBytes(32);
     passwordWrap = await wrapKey(dataKey, passphrase, syncId);
+    // 恢复码里带着它自己的 syncId，账号模式下要把恢复码里的那一段改成账号派生的同步码，
+    // 否则用户拿恢复码去别的手机恢复时，会去查一个不存在的对象（与 v2.37 那次"恢复码要用得上"的初衷冲突）。
     recoveryWrap = await wrapKey(dataKey, identity.recoverySecret, syncId);
+    if (wanted) recoveryCode = 'UM1.' + syncId + '.' + identity.recoverySecret;
   }
 
   const nonce = randomBytes(12);

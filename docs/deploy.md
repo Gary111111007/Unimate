@@ -27,8 +27,8 @@
 ```powershell
 cd E:\Gary\北京化工大学\北化app\Work
 npm run build
-node scripts\make-pages-package.mjs v2.41          # 生成"可拖放目录"（含同步 API 的 _worker.js）
-npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.41-upload --project-name unimate3
+node scripts\make-pages-package.mjs v2.42          # 生成"可拖放目录"（含同步 API 的 _worker.js）
+npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.42-upload --project-name unimate3
 ```
 
 不想用命令行：回到 Cloudflare 项目页 → **Create new deployment** → 拖 **`artifacts\cloudflare\unimate-cloudflare-<版本>-upload` 这个目录**。

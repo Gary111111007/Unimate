@@ -4,7 +4,8 @@ import { gcm } from '@noble/ciphers/aes';
 import { pbkdf2 } from '@noble/hashes/pbkdf2';
 import { sha256 } from '@noble/hashes/sha256';
 import {
-  SYNC_KDF_ITERATIONS, configFromRecovery, decryptSync, encryptForSync, parseRecoveryCode, parseSyncEnvelope
+  SYNC_KDF_ITERATIONS, configFromRecovery, decryptSync, deriveAccountSyncId, encryptForSync, isTombstone,
+  normalizeAccount, parseRecoveryCode, parseSyncEnvelope, tombstoneBytes
 } from '../src/services/syncCrypto.ts';
 
 const root = resolve(import.meta.dirname, '..');
@@ -75,7 +76,9 @@ const worker = read('cloudflare/sync-worker/src/index.js');
 ok('设置页有加密换机同步入口', me.includes('加密换机同步') && me.includes('确认并上传密文'));
 ok('恢复前仍走统一二次确认', /await db\.confirm\(\{/.test(me) && /开始恢复/.test(me));
 ok('口令输入禁止浏览器自动填充', (me.match(/autocomplete="off"/g) || []).length >= 3);
-ok('关于页如实写明可选密文上传', me.includes('只保存 AES-256-GCM 密文') && me.includes('同步口令和恢复码不上传、不保存'));
+// v2.42 起关于页还要点名"账号"：账号同步上线后，只说"口令和恢复码"就不够了
+ok('关于页如实写明可选密文上传（含账号同步）',
+  me.includes('服务器只保存 AES-256-GCM 密文') && me.includes('同步账号、口令和恢复码不上传、不保存'));
 ok('登录页不再宣称绝不上传', login.includes('同步只上传端到端加密密文'));
 ok('Android WebView 优先使用标准 WebCrypto', /subtle\.deriveBits/.test(syncCryptoSource) &&
   /subtle\.encrypt/.test(syncCryptoSource) && /subtle\.decrypt/.test(syncCryptoSource));
@@ -281,6 +284,123 @@ console.log('\n--- v2.41 行为：中转路径真跑一遍（打桩上游 Worker
   } finally {
     globalThis.fetch = realFetch;
   }
+}
+
+/*
+ * v2.42：账号同步（A 方案）——把"要抄的同步码"换成"账号 + 口令"。
+ * 账号名只在本机参与派生；服务器看到的仍然只有同步码（再经 pepper 变对象名）。
+ */
+console.log('\n--- v2.42：账号同步（A 方案）---');
+{
+  const id1 = deriveAccountSyncId('zhixiaohui');
+  ok('账号派生的同步码是 22 字符 base64url（与随机同步码同一命名空间，云端接口不用改）',
+    /^[A-Za-z0-9_-]{22}$/.test(id1), id1);
+  ok('同一个账号每次算出来都一样（换机才找得到）', deriveAccountSyncId('zhixiaohui') === id1, '');
+  ok('归一化：大小写、首尾空格、全角、连续空格都不影响结果',
+    deriveAccountSyncId('  ZhiXiaoHui ') === id1 && normalizeAccount('张　三') === normalizeAccount('张 三'), '');
+  ok('不同账号 → 不同同步码', deriveAccountSyncId('zhixiaohui') !== deriveAccountSyncId('zhixiaohui2'), '');
+  ok('账号名不会原样出现在同步码里（它是哈希）', !id1.includes('zhixiaohui'), id1);
+  let short = '';
+  try { deriveAccountSyncId('ab'); } catch (e: any) { short = e.message; }
+  ok('账号太短直接拒绝', /至少 3 个字符/.test(short), short);
+  let tooLong = '';
+  try { deriveAccountSyncId('a'.repeat(65)); } catch (e: any) { tooLong = e.message; }
+  ok('账号过长直接拒绝（避免有人拿它当存储用）', /64/.test(tooLong), tooLong);
+
+  // 账号模式建包：同步码必须等于账号派生的那个，否则换机查不到对象
+  const plain2 = new TextEncoder().encode('账号同步的课表数据：高等数学 周一 1-2 节'.repeat(8));
+  const pack = await encryptForSync(plain2, 'correct horse battery staple', undefined, '  ZhiXiaoHui ');
+  ok('账号模式建包：同步码 = 账号派生值', pack.config.syncId === id1, pack.config.syncId);
+  ok('账号模式也生成恢复码', !!pack.recoveryCode && pack.recoveryCode.startsWith('UM1.'));
+  ok('账号模式的恢复码指向同一份云端对象（否则恢复码在别的手机上会查空）',
+    parseRecoveryCode(pack.recoveryCode!).syncId === id1, parseRecoveryCode(pack.recoveryCode!).syncId);
+  ok('账号模式同样能只凭恢复码解密（口令忘了还有这条路）',
+    Buffer.from((await decryptSync(pack.bytes, pack.recoveryCode!)).backup).equals(Buffer.from(plain2)), '');
+
+  // 打桩上游 Worker 与 R2，把"新手机用账号找回"整条链真跑一遍
+  const pagesModule2: any = await import('../cloudflare/pages/_worker.js');
+  const relay2 = pagesModule2.default;
+  const realFetch2 = globalThis.fetch;
+  const seen2: Array<{ url: string; method: string; headers: any; body: any }> = [];
+  const ticket2 = 'https://acct.r2.cloudflarestorage.com/unimate-sync/v1/from-account.umig?X-Amz-Signature=stub';
+  const cloud = new Map<string, Uint8Array>();
+  let lastPresignBody = '';
+  globalThis.fetch = (async (input: any, init: any = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    seen2.push({ url, method: init.method || 'GET', headers: init.headers || {}, body: init.body });
+    if (url.includes('/v1/presign')) {
+      lastPresignBody = String(init.body || '');
+      return new Response(JSON.stringify({ url: ticket2, method: 'PUT', expiresAt: '2026-09-22T13:00:00.000Z' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url === ticket2) {
+      const method = init.method || 'GET';
+      const stored = cloud.get('obj');
+      if (method === 'PUT') { cloud.set('obj', new Uint8Array(init.body)); return new Response(null, { status: 200 }); }
+      if (!stored) return new Response('nope', { status: 404 });
+      return new Response(stored, { status: 200, headers: { 'Content-Type': 'application/vnd.unimate.sync+json' } });
+    }
+    return new Response('missing', { status: 404 });
+  }) as any;
+
+  try {
+    // 1) 第一台手机：账号 + 口令 → 加密 → 经 pages.dev 中转上传
+    const putRes = await relay2.fetch(new Request('https://unimate3.pages.dev/v1/put?syncId=' + pack.config.syncId, {
+      method: 'POST', headers: { Origin: 'https://localhost', 'Content-Type': 'application/vnd.unimate.sync+json' }, body: pack.bytes
+    }), { ASSETS: { fetch: () => new Response('asset') } });
+    ok('账号模式上传：中转返回 200', putRes.status === 200, '');
+    ok('上传给服务端的只有同步码/操作/大小 —— 不含账号名，也不含口令',
+      /"syncId":"[A-Za-z0-9_-]{22}"/.test(lastPresignBody) && !lastPresignBody.includes('zhixiaohui')
+      && !lastPresignBody.includes('battery') && !/password|account/i.test(lastPresignBody), lastPresignBody);
+    ok('中转 URL 里也没有账号名明文', !seen2[0].url.includes('zhixiaohui'), seen2[0].url);
+
+    // 2) 第二台手机：只输账号 + 口令，自动算出同步码 → 下载 → 解密
+    const getRes = await relay2.fetch(new Request('https://unimate3.pages.dev/v1/get?syncId=' + deriveAccountSyncId('zhixiaohui'), {
+      method: 'POST', headers: { Origin: 'https://localhost', 'Content-Type': 'application/json' }, body: '{}'
+    }), { ASSETS: { fetch: () => new Response('asset') } });
+    const fromCloud = new Uint8Array(await getRes.arrayBuffer());
+    const opened = await decryptSync(fromCloud, deriveAccountSyncId('zhixiaohui'), 'correct horse battery staple');
+    ok('换机：只凭"账号 + 口令"就把备份拿回来，且逐字节一致',
+      Buffer.from(opened.backup).equals(Buffer.from(plain2)), '');
+    let wrongMsg = '';
+    try { await decryptSync(fromCloud, deriveAccountSyncId('zhixiaohui'), 'wrong password here'); }
+    catch (e: any) { wrongMsg = e.message; }
+    ok('口令错 → 明确拒绝，不返回数据', /不正确|校验失败/.test(wrongMsg), wrongMsg);
+
+    // 3) 删除云端备份（撤回）：墓碑覆盖，密文随之销毁
+    const stone = tombstoneBytes();
+    ok('墓碑是合法的小 JSON，且不含任何用户数据',
+      isTombstone(stone) && stone.length < 300 && !new TextDecoder().decode(stone).includes('高等数学'), '');
+    await relay2.fetch(new Request('https://unimate3.pages.dev/v1/put?syncId=' + pack.config.syncId, {
+      method: 'POST', headers: { Origin: 'https://localhost', 'Content-Type': 'application/vnd.unimate.sync+json' }, body: stone
+    }), { ASSETS: { fetch: () => new Response('asset') } });
+    const afterDelete = cloud.get('obj')!;
+    ok('删除后桶里只剩墓碑，原密文被覆盖销毁（R2 不开版本控制）',
+      isTombstone(afterDelete) && !Buffer.from(afterDelete).equals(Buffer.from(pack.bytes)), '');
+  } finally {
+    globalThis.fetch = realFetch2;
+  }
+
+  // 界面与存储接线（光有算法、没接上也没用）
+  const me = read('src/views/MeView.vue');
+  ok('界面：账号同步的三个动作都接上了（上传 / 找回 / 删除云端备份）',
+    /async function accountUpload\(/.test(me) && /async function accountFetch\(/.test(me) && /async function deleteCloudBackup\(/.test(me), '');
+  ok('界面：账号找回走"下载 → 解密 → 预览 → 覆盖/合并 → 二次确认"同一条链路',
+    /const syncId = deriveAccountSyncId\(account\)/.test(me) && /downloadSyncCipher\(syncId\)/.test(me)
+    && /decryptSync\(cipher, syncId, acctPass\.value\)/.test(me), '');
+  ok('界面：删除云端备份走 db.confirm 二次确认（硬规则 1）',
+    /async function deleteCloudBackup[\s\S]{0,400}db\.confirm\(/.test(me), '');
+  ok('界面：换同步方式时销毁旧云端备份也要二次确认',
+    /要顺手销毁旧的云端备份吗/.test(me), '');
+  ok('文案与实现一致：不再写"直传 Cloudflare R2"（正文已改走 pages.dev 中转）',
+    !/直传 Cloudflare R2/.test(me) && /经 <b>unimate3\.pages\.dev<\/b> 中转上传/.test(me), '');
+  ok('隐私文案说清"账号/口令/恢复码不上传、不保存"',
+    /你的同步账号、口令和恢复码不上传、不保存/.test(me), '');
+  const types = read('src/types.ts');
+  const dbSrc = read('src/stores/db.ts');
+  ok('设置里只多存一个账号名（口令绝不落盘）',
+    /syncAccount\?: string \| null/.test(types) && /syncAccount: null/.test(dbSrc)
+    && !/syncPassword|syncPassphrase|syncPass\b/.test(types + dbSrc), '');
 }
 
 console.log('\n通过：' + pass + ' 条 P3 同步断言');

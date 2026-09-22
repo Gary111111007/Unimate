@@ -285,6 +285,11 @@ export interface Settings {
     recoveryWrap: { salt: string; iterations: number; nonce: string; ciphertext: string };
     lastUploadedAt?: string;
   } | null;
+  /**
+   * 账号同步（v2.42，A 方案）只存**账号名本身**：它是用来在本机算出同步码的，
+   * 让"换机输账号 + 口令"成为可能。口令与恢复码一样，绝不落盘、绝不上传。
+   */
+  syncAccount?: string | null;
 }
 
 export interface InterestEntry { schoolId: string; schoolName: string; contact: string; createdAt: string }
