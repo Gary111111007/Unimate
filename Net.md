@@ -10,15 +10,15 @@
 
 | 项 | 当前真实状态 |
 | --- | --- |
-| Pages | `https://unimate3.pages.dev`；北二外签名档案已上线并核对哈希（线上 `bisu.json` 与本地逐字节一致）。**待上传**目录 `artifacts/cloudflare/unimate-cloudflare-v2.39-upload`（含根目录 `_worker.js`；Pages 拖放页不接受 ZIP）。 |
+| Pages | `https://unimate3.pages.dev`；v2.39 **已上传并核对**（线上首页引用 `assets/index-DroQga0f.js`，与本次 APK 同一份代码；`catalog/` 三件套 200，`bisu.json` 与本地逐字节一致）。 |
 | Worker | `https://unimate-sync.2025040140.workers.dev`；`/health` 已验证正常。**但 `*.workers.dev` 在大陆被 DNS 污染**（实测解析 69.171.228.74 / 连接超时，见 PRD 11.47），所以 App 不再直连它。 |
-| 同步 API 入口 | **`https://unimate3.pages.dev`**（Pages Advanced Mode `_worker.js` 同域提供 `/health`、`/v1/presign`，再边缘转发给 Worker，转发时剥掉 Origin）。客户端 `SYNC_API_BASE` 已改为它。 |
+| 同步 API 入口 | **`https://unimate3.pages.dev`**（Pages Advanced Mode `_worker.js` 同域提供 `/health`、`/v1/presign`，再边缘转发给 Worker，转发时剥掉 Origin）。客户端 `SYNC_API_BASE` 已改为它。**已线上核对**：`/health` 200 且回显 `ACAO: https://localhost`；预检 204；`/v1/presign` 用 APK 的来源能拿到 15 分钟 PUT 短链；非白名单来源 403。 |
 | R2 | 私有 bucket `unimate-sync`；不开公开访问。 |
 | Worker secrets | 已设 `R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`SYNC_OBJECT_PEPPER`。**任何文档只记名称，不记值**。 |
 | 签名链 | `/v1/presign` 已能生成 15 分钟 PUT URL，主机、bucket 路径与 `X-Amz-Signature` 均正确。该检查不写 R2 对象。 |
 | CORS | R2 OPTIONS 预检已返回 204；允许 `http://localhost`、`https://unimate3.pages.dev`的 GET/PUT 及 `Content-Type`。 |
-| 已验证的边界 | Worker 存活、预签名、bucket 指向和 CORS。 |
-| 未验证的边界 | v2.38 真机密文上传、下载、解密预览、二次确认恢复，以及恢复码接管。 |
+| 已验证的边界 | Worker 存活；**pages.dev 上的 `/health`、CORS 预检（含 APK 的 `https://localhost`）、`/v1/presign` 短链**；bucket 指向与对象名 HMAC。 |
+| 未验证的边界 | v2.39 真机密文上传、下载、解密预览、二次确认恢复，以及恢复码接管。 |
 
 ### 下一次对话的起点
 
@@ -26,9 +26,8 @@
 2. 「我的 → 加密换机同步」：首次建立时把“同步码或完整恢复码”清空（截图里的 `aaa` 不是故障原因，但该框首次建立时不用填）；输入两遍至少 10 位口令。
 3. 点“建立同步并生成恢复码”；恢复码只显示一次，先另存，再勾选确认并上传密文。
 4. 成功后才进行第二台设备恢复验收；截图/日志不得包含同步口令、完整恢复码或 R2 secret。
-5. Pages 尚未更新到 v2.39（线上前端仍是 v2.37 的 `assets/index-BODDF0lq.js`）：拖放 `unimate-cloudflare-v2.39-upload` 目录并选 Production。
-   上传后先核对 `https://unimate3.pages.dev/health` 返回 `{"ok":true}` —— 这一步证明了 `_worker.js` 已被 Pages 接收（拖放方式支持 Advanced Mode），
-   再开始真机上传/恢复。Worker 已部署，**不需要**再上传 Worker ZIP，也不要重设 secret。
+5. ~~Pages 更新到 v2.39~~ —— **2026-09-22 已完成并核对**（`/health` 200、预检 204、预签名 200、非白名单 403，线上前端 = `assets/index-DroQga0f.js`）。
+   Worker 已部署，**不需要**再上传 Worker ZIP，也不要重设 secret。
 
 ---
 

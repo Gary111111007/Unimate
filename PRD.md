@@ -18,17 +18,17 @@
 | --- | --- |
 | 北二外档案 | **云端已上线**：`https://unimate3.pages.dev/catalog/` 的清单、签名和 `bisu.json` 均返回 200，SHA-256 与本地包一致；APK 不内置北二外完整档案。**待真机**完成“可下载 → 下载 → 切换”。 |
 | P3 云端 | **已部署**：私有 R2 bucket `unimate-sync`；Worker `https://unimate-sync.2025040140.workers.dev`；四项 secret 已设置（只记名称，不记值）：`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `SYNC_OBJECT_PEPPER`。 |
-| P3 云端验证 | **已验证** `/health`；**已验证** `/v1/presign` 能签发指向正确私有 bucket 的 PUT URL；**已验证** R2 CORS 预检返回 204，允许 `http://localhost` 与 `https://unimate3.pages.dev` 的 GET/PUT。**未验证**真机完整密文 PUT/GET/恢复。 |
+| P3 云端验证 | **2026-09-22 改走 pages.dev 后重新核对**：`GET https://unimate3.pages.dev/health` → 200 且回显 `Access-Control-Allow-Origin: https://localhost`（证明 Pages 上的 `_worker.js` 已生效并成功转发到 Worker）；`OPTIONS /v1/presign` → 204（Allow-Methods/Headers 正确）；`POST /v1/presign`（Origin `https://localhost`）→ 200，返回指向**私有** bucket 的 **15 分钟** PUT 短链、对象名是 HMAC（不含同步码）；非白名单来源 → 403。**未验证**真机完整密文 PUT/GET/恢复。 |
 | v2.37 真机结果 | 首次点“建立同步并生成恢复码”时报 `$ is not a function`。它发生在本机加密阶段，尚未上传，与 R2 凭据/CORS 无关。界面上输入的 `aaa` 也不是成因；首次建立时“同步码或恢复码”本就应留空。 |
 | v2.38 修复 | PBKDF2-SHA256 / AES-256-GCM 改为 **WebCrypto 优先 + `@noble/*` 纯 JS 兜底**；独立 ArrayBuffer；60 秒超时；密文格式不变。WebCrypto/纯 JS 交叉向量逐字节一致。 |
 | 自动化与出包 | **已验证**：`test:sync` 30 条；全套 21 套件 753 条全绿；6 步构建、`apksigner verify`、包内反查、客户端敏感信息扫描通过；生产依赖 `npm audit --omit=dev` 为 0 漏洞。 |
-| 待办的唯一主线 | **① 先把 Pages 更新到 v2.39**（拖放 `unimate-cloudflare-v2.39-upload` 目录 → Production）—— 不做这一步，手机连不到同步 API（见 11.47 的两个阻断）；② 覆盖安装 v2.39 APK（**不卸载**）→ 首次建立时清空同步码框、输入两遍至少 10 位口令 → 生成并安全保存恢复码 → 确认上传 → 第三台设备（或第二台）下载/解密/预览/二次确认恢复。 |
+| 待办的唯一主线 | ① ~~先把 Pages 更新到 v2.39~~ —— **已完成并核对通过**（线上首页已引用 `assets/index-DroQga0f.js`，与本次 APK 同一份代码）；② **覆盖安装 v2.39 APK（不要卸载）** → 首次建立时把"同步码或完整恢复码"清空、输入两遍至少 10 位口令 → 生成并安全保存恢复码 → 确认上传密文 → 第二台设备下载/解密/预览/二次确认恢复。 |
 | 提醒链路 | v2.35 起 `ReminderAlarmReceiver` 接管插件排期并用精确闹钟到点直接投递，守护服务每 15 秒扫一次持久化排期；**这一版（v2.39 APK）里就包含它**，装同一次包即可顺带复验提醒。 |
 
 当前交付物：
 
 - APK（v2.39）：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，SHA-256 `1A33536558F7F9B0A6195F3D3F8BF611095D97F75FCA0B2F5FD8ACDD980DF4C8`。
-- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.39-upload`](artifacts/cloudflare/unimate-cloudflare-v2.39-upload)（根目录含 `_worker.js`，这是同步 API 能在大陆被手机访问的关键）。
+- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.39-upload`](artifacts/cloudflare/unimate-cloudflare-v2.39-upload)（根目录含 `_worker.js`，这是同步 API 能在大陆被手机访问的关键）——**2026-09-22 已上传并核对通过**（见 14.3）。
 - Pages ZIP 归档：`artifacts/cloudflare/unimate-cloudflare-v2.39.zip`（Pages 网页不直接接受 ZIP，要拖放解压目录）。
 - Worker 已在线，**不要再上传 Worker ZIP，不要把任何 secret 值写进 PRD/聊天/截图**。
 
@@ -2884,6 +2884,8 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-22 | v2.36 Pages 包上传并线上核验 | 三条 `/catalog/` 地址均 200；线上 SHA-256 与本地完全一致，北二外云端档案已就绪 |
 | 2026-09-22 | 生成 v2.37 P3 交付包 | Pages 包 [`unimate-cloudflare-v2.37.zip`](artifacts/cloudflare/unimate-cloudflare-v2.37.zip)，SHA-256 `56729C5DD179BD2CBAA671FF364EE803D189D1CFEC45855626C3EDDFF1F78512`；Worker 包 [`unimate-sync-worker-v2.37.zip`](artifacts/cloudflare/unimate-sync-worker-v2.37.zip)，SHA-256 `B83D1B9A26204C0E5F17F1BA5C4B44E1B18BF3F9F65E0AF78C13A891361091C0`；待按 Worker README 配置私有 R2 与 secrets 后部署 |
 | 2026-09-22 | v2.38 WebView 兼容修复包 | Pages 包 [`unimate-cloudflare-v2.38.zip`](artifacts/cloudflare/unimate-cloudflare-v2.38.zip)，SHA-256 `4991DD280C9BB43D7E4C1200AD148D8452DBA37D3BCC6421752BE10B21F5F6CB`；可拖放目录 [`unimate-cloudflare-v2.38-upload`](artifacts/cloudflare/unimate-cloudflare-v2.38-upload) |
+| 2026-09-22 | 产品负责人拖放 v2.39 上传包（含根目录 `_worker.js`）到 Pages → Production | **核对通过**：首页引用 `assets/index-DroQga0f.js`（与本次 APK 同一份代码）；`catalog/` 三件套仍 200；**`GET /health` → 200 且回显 `Access-Control-Allow-Origin: https://localhost`**（证明 Pages 的 `_worker.js` 生效并成功转发到 Worker）；`OPTIONS /v1/presign` → 204（Allow-Methods/Headers 正确）；`POST /v1/presign`（Origin 用 APK 的 `https://localhost`）→ 200，返回指向私有 bucket 的 15 分钟 PUT 短链、对象名为 HMAC；非白名单来源 → 403。**同步 API 在大陆域名上已可用** |
+| 2026-09-22 | 上传踩坑 | 第一次拖的是工程目录 → Pages 报"upload exceeds the limit of 1000 files"。正确做法：拖 `artifacts/cloudflare/unimate-cloudflare-<版本>-upload` 这个目录（本次 15 个文件 / 0.64 MB），或在项目根跑 `npx wrangler pages deploy <该目录> --project-name unimate3`。已写进 `docs/deploy.md` 待补 |
 
 ### 14.4 出包记录（APK）
 
