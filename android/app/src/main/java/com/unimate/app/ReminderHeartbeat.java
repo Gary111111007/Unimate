@@ -46,7 +46,11 @@ public class ReminderHeartbeat extends BroadcastReceiver {
     /** 只给自己用的动作（manifest 里注册，exported=false） */
     public static final String ACTION = "com.unimate.app.REMINDER_TICK";
     private static final int REQUEST_CODE = 20260921;
-    private static final long TICK_MS = 15 * 60 * 1000L;        // 有近期排期：15 分钟一跳
+    /**
+     * 有近期排期时的跳频。取 10 分钟：Android 在 Doze 下对"允许待机"的闹钟限制是**每 9 分钟一条**，
+     * 再密也不会更快；而 10 分钟能把"最多晚 15 分钟"压到"最多晚 10 分钟"。
+     */
+    private static final long TICK_MS = 10 * 60 * 1000L;
     private static final long TICK_IDLE_MS = 60 * 60 * 1000L;   // 没有近期排期：一小时一跳（省电）
     private static final long CATCHUP_MS = 30 * 60 * 1000L;     // 只补 30 分钟内错过的
     private static final String INTENT_ID_KEY = "LocalNotificationId";
@@ -97,14 +101,14 @@ public class ReminderHeartbeat extends BroadcastReceiver {
             cancelPluginAlarm(context, n.getId());          // 避免插件那条闹钟稍后再投一次
             storage.deleteNotification(idStr);
         }
+        SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences.Editor ed = sp.edit().putLong("lastScanAt", System.currentTimeMillis());
         if (posted > 0) {
-            SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            sp.edit()
-                    .putLong("lastPostedAt", System.currentTimeMillis())
-                    .putInt("lastPostedCount", posted)
-                    .putInt("totalPosted", sp.getInt("totalPosted", 0) + posted)
-                    .apply();
+            ed.putLong("lastPostedAt", System.currentTimeMillis())
+              .putInt("lastPostedCount", posted)
+              .putInt("totalPosted", sp.getInt("totalPosted", 0) + posted);
         }
+        ed.apply();
         return posted;
     }
 
@@ -118,11 +122,12 @@ public class ReminderHeartbeat extends BroadcastReceiver {
             SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
             long armedAt = sp.getLong("armedAt", 0);
             long nextAt = sp.getLong("nextAt", 0);
-            long lastRunAt = sp.getLong("lastRunAt", 0);
+            long lastScanAt = sp.getLong("lastScanAt", 0);
             long lastPostedAt = sp.getLong("lastPostedAt", 0);
             o.put("armedAt", armedAt);
             o.put("nextAt", nextAt);
-            o.put("lastRunAt", lastRunAt);
+            o.put("lastScanAt", lastScanAt);
+            o.put("lastRunAt", lastScanAt);   // 兼容旧字段名
             o.put("lastPostedAt", lastPostedAt);
             o.put("lastPostedCount", sp.getInt("lastPostedCount", 0));
             o.put("totalPosted", sp.getInt("totalPosted", 0));
@@ -201,7 +206,7 @@ public class ReminderHeartbeat extends BroadcastReceiver {
                 long t = n.getSchedule().getAt().getTime();
                 if (t > now && t < nearest) nearest = t;
             }
-            long delay = (nearest - now <= 45 * 60 * 1000L) ? TICK_MS : TICK_IDLE_MS;
+            long delay = (nearest - now <= 60 * 60 * 1000L) ? TICK_MS : TICK_IDLE_MS;
             Intent i = new Intent(context, ReminderHeartbeat.class).setAction(ACTION);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
@@ -215,7 +220,6 @@ public class ReminderHeartbeat extends BroadcastReceiver {
             // 记下"什么时候排的、下一跳在什么时候"——自检报告里要显示出来
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                     .putLong("armedAt", now)
-                    .putLong("lastRunAt", now)
                     .putLong("nextAt", next)
                     .apply();
         } catch (Throwable ignored) { }

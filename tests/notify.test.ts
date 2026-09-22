@@ -162,7 +162,8 @@ console.log('');
     const hb = fs.readFileSync(hbPath, 'utf8');
     ok('心跳用 setAndAllowWhileIdle（Doze 里也能被放行）', /setAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP/.test(hb), '');
     ok('心跳自己重排下一跳（Android 不允许精确重复闹钟）', /static void arm\(Context context\)/.test(hb) && /arm\(context\);\s*\}\s*$|arm\(context\);/.test(hb), '');
-    ok('有近期排期才 15 分钟一跳，否则 60 分钟（省电）', /TICK_IDLE_MS = 60 \* 60 \* 1000L/.test(hb) && /nearest - now <= 45 \* 60 \* 1000L/.test(hb), '');
+    ok('有近期排期才 10 分钟一跳（Doze 下 9 分钟是系统下限），否则 60 分钟（省电）',
+      /TICK_MS = 10 \* 60 \* 1000L/.test(hb) && /TICK_IDLE_MS = 60 \* 60 \* 1000L/.test(hb) && /nearest - now <= 60 \* 60 \* 1000L/.test(hb), '');
     ok('只补 30 分钟内错过的（更早的直接丢弃，避免一股脑）', /CATCHUP_MS = 30 \* 60 \* 1000L/.test(hb) && /now - t > CATCHUP_MS/.test(hb), '');
     ok('补投后取消插件那条闹钟（避免重复投递）', /cancelPluginAlarm\(context, n\.getId\(\)\)/.test(hb), '');
     ok('补投后从插件存储里删掉（避免下次重复）', /storage\.deleteNotification\(idStr\)/.test(hb), '');
@@ -199,6 +200,15 @@ console.log('');
   const hbSrc = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'ReminderHeartbeat.java'), 'utf8');
   ok('心跳会记下"排上了没/下一跳/补投了几条"', /unimate_heartbeat/.test(hbSrc) && /"nextAt"/.test(hbSrc) && /"totalPosted"/.test(hbSrc), '');
   ok('心跳状态能报出"下一跳是否还在未来"（被系统撤掉能看出来）', /pendingNext/.test(hbSrc), '');
+  ok('心跳每次扫描都留痕（lastScanAt），别只在补投时才更新', /lastScanAt/.test(hbSrc), '');
+  /*
+   * 【v2.32 修的隐藏自伤】Capacitor 的 LocalNotifications.scheduled() **在 Android 上没实现**，
+   * 调用会抛 "not implemented on android"。旧代码 catch 成空数组，于是面板永远显示"0 条"、
+   * 清理与投递自检全部空转。现在改成原生直读插件存储。
+   */
+  ok('原生暴露 pendingNotifications（直读插件存储）',
+    /public void pendingNotifications\(PluginCall call\)/.test(java) && /NotificationStorage/.test(java), '');
+  ok('原生返回的排期带 id/at/标题/渠道', /o\.put\("id"/.test(java) && /o\.put\("at"/.test(java) && /o\.put\("title"/.test(java), '');
   const bridge = fsMod.readFileSync(pathMod.join(root, 'src', 'services', 'jwwebview.ts'), 'utf8');
   ok('桥接层有 heartbeatStatus（含桌面预览兜底）', /heartbeatStatus\(\): Promise<HeartbeatStatus>/.test(bridge) && /heartbeatStatus: async/.test(bridge), '');
   ok('电池优化查询超时放宽到 6 秒（真机启动时 2.5 秒会误判）', /查电池优化', JwWebView\.powerStatus\(\), 6000/.test(notifySrc), '');
@@ -213,6 +223,16 @@ console.log('');
   // 产品负责人明确不来自启动：文案要把"精确闹钟"与"自启动"分开说清楚
   ok('文案把精确闹钟与自启动分开（不逼用户开自启动）',
     /精确闹钟不是自启动/.test(me) || /精确闹钟/.test(me), '');
+  // 排期读取必须走原生（scheduled() 在安卓上是空的）
+  ok('排期读取走 pendingList()（原生直读）', /export async function pendingList/.test(notifySrc) && /JwWebView\.pendingNotifications\(\)/.test(notifySrc), '');
+  {
+    // 注释里会解释这段历史，数之前先把注释剥掉
+    const code = notifySrc.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+    const hits = (code.match(/LocalNotifications\.scheduled\(\)/g) || []).length;
+    ok('排期统计不再直接调 LocalNotifications.scheduled()（只允许 web 兜底那一处）', hits === 1, String(hits));
+  }
+  ok('清理与统计都用 pendingList/safeScheduled', /async function safeScheduled[\s\S]{0,120}pendingList\(\)/.test(notifySrc), '');
+  ok('自检报告也走原生读取', /最早三条排期[\s\S]{0,200}pendingList\(\)/.test(notifySrc) || /const all = await pendingList\(\);[\s\S]{0,200}最早三条排期/.test(notifySrc), '');
 }
 
 /*

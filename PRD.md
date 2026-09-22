@@ -1,6 +1,6 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v2.31 ｜ 日期 2026-09-22 ｜ 状态：已实现并出包，待真机复验（提醒：修 powerStatus 缺 ok 字段 + 一键自检报告）
+> 版本 v2.32 ｜ 日期 2026-09-22 ｜ 状态：已实现并出包，待真机复验（提醒：修 scheduled() 在安卓空转的隐藏自伤，排期改原生直读）
 > 口径变更：本版起"App 自己发起的联网请求只有天气一处"作废 —— 现在是**两处**：天气（默认关闭）与
 > 高校档案更新（打开「选择高校」页时每天最多一次，只下载公开配置、不上传任何信息，见 5.14、11.35）。
 > 签名算法是 `Net.md` 原定的 **Ed25519**；但客户端**用纯 JS 验签、不依赖平台 WebCrypto**（真机逼出来的一次返工，见 11.35 A 节）。
@@ -2426,6 +2426,59 @@ App 侧的 15 分钟兜底心跳会尽量补投。
   （已改成逐键拷贝）；另有一次 Gradle 守护进程卡死，杀掉后重跑正常。
 - **未验证（真机）**：装 v2.31 后，「复制自检报告」那段文本 + 是否开了精确闹钟。
 
+---
+
+### 11.40 第二十九轮（v2.32，2026-09-22）：`scheduled()` 在安卓上是空转（隐藏最深的那个自伤）
+
+产品负责人按 v2.31 的提示点了「复制自检报告」，贴回来的是这段：
+
+```
+Unimate 提醒自检 · 2026-09-22 11:10
+原生环境：是
+插件里排期条数：查询失败 "LocalNotifications.scheduled()" is not implemented on android
+精确闹钟授权：denied
+电池优化豁免：未豁免 · 机型 OPPO / 一加 / realme
+兜底心跳：已排（上一跳 9-22 11:10，下一跳 9-22 12:10）；累计补投 0 条
+```
+
+**第二行就是这个自伤**：Capacitor 的 `LocalNotifications.scheduled()` **只在 iOS/Web 实现，Android 上直接抛异常**。
+而我把它当成了"排期真相"：
+
+| 受影响的东西 | 在安卓上的真实行为 |
+| --- | --- |
+| 「我的 → 通知设置」的"系统已排期提醒 0 条" | 永远 0（不是没排，是读不到）——真机截图里那个"0 条"就是这么来的 |
+| v2.28 的 `cleanupStaleOnBoot()` | 读到空数组 → **什么都不清**（开机恢复广播造成的补发轰炸一直没被压住） |
+| v2.30 的"投递自检（missed）" | 永远 0 → **"系统没按时投递"的硬证据根本没在工作** |
+| v2.30 心跳 `arm()` 里"近期有没有排期"的判断 | 永远"没有" → 一直按 60 分钟跳，而不是 10/15 分钟 |
+
+**v2.32 的修法**：
+
+1. 新增原生 `pendingNotifications()`：**直读插件的 `NotificationStorage`**（那才是排期的真相），返回 `id/at/标题/内容/渠道`；
+2. `pendingList()` 成为唯一的排期读取入口（原生走原生，桌面预览才用 `scheduled()`）；
+   `scheduleStats / safeScheduled / cleanupStaleOnBoot / 自检报告` 全部改走它；
+3. 心跳跳频：有近期排期时 **10 分钟**（Doze 对"允许待机"闹钟的下限是 9 分钟，10 分钟是能拿到的最快节奏），
+   没有近期排期仍旧 60 分钟；并把"上次扫描时间"与"上次补投条数"分开记账（旧字段把"排心跳的时间"说成了"上一跳"）；
+4. 自检报告末尾加**结论行**：缺精确闹钟 / 缺电池优化豁免时直接写出来，不用对着数字猜。
+
+#### 这份报告同时给出的另两条事实
+
+- **精确闹钟 = denied、电池优化 = 未豁免**（OPPO/一加/realme）→ 与"9 分钟前才收到提醒"完全吻合
+  （Doze 下"允许待机"的闹钟每 9 分钟才放行一条）；
+- **兜底心跳已排**（下一跳 12:10）→ 机制是活的，但它当时按 60 分钟跳，说明**读不到任何近期排期** —— 正是上面那个 bug 造成的。
+
+#### 验证与产物
+
+- `test:notify` 74 → **81 条**：新增"原生暴露 pendingNotifications 且返回 id/at/标题""排期读取走 pendingList()"
+  "不再直接调 `LocalNotifications.scheduled()`（只保留 web 兜底一处）""清理与统计都走 pendingList""自检报告走原生读取"
+  "心跳 10/60 分钟两档""lastScanAt 每次扫描留痕"。
+- APK `B23E2EF1…`；包内反查：`classes12.dex` 含 `pendingNotifications`；前端含「结论：」「上次扫描」「若刚重建过仍是 0」。
+- **未验证（真机）**：装 v2.32 后"系统已排期提醒"应显示真实条数（几十条而不是 0）、心跳下一跳应 ≤10 分钟、
+  以及再复制一次自检报告看结论行。
+
+---
+
+### 11.4 已安装的 Codex Skill（需求第 8 项，已完成)
+
 | Skill | 位置 | 用途 | 状态 |
 | --- | --- | --- | --- |
 | android-apk-builder | `C:\Users\Admin\.codex\skills\android-apk-builder`（源：github.com/super101/android-apk-builder-skill） | Capacitor 打包、Gradle assembleDebug、apksigner/aapt 校验、交付说明 | 已安装 |
@@ -2523,6 +2576,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 本次 v2.29 提交 | 2026-09-21 | v2.29 | **P2.5 解析适配器热更新**：`src/services/parser/rules.ts`（规则层 + 白名单校验）、两个解析器改为从规则层取值、`src/services/schoolCatalog.ts`（`adapters` 字段 + 下载校验）、`src/stores/db.ts`（下载/激活/回退 + 落盘）、`src/components/ParserRulesBar.vue` + 导入/考试面板、`scripts/make-school-pack.mjs`（规则包签名）、`docs/adapters.md`、`tests/adapters.test.ts`（51 条） | 两个 Golden Test 原样通过 = 重构没改坏行为；本次不下发任何规则包（`index.adapters = []`） |
 | 本次 v2.30 提交 | 2026-09-21 | v2.30 | **提醒兜底心跳 + 投递自检**（真机第四轮仍"一打开才提醒"）：新增 `android/app/src/main/java/com/unimate/app/ReminderHeartbeat.java` + manifest 注册 + `MainActivity.onCreate` 排心跳；`src/services/notify.ts` 的 `cleanupStaleOnBoot()` 改返回 `{cancelled, missed}`；`src/stores/db.ts` 记录 `notifyCleanup`；`src/views/MeView.vue` 显示"本该响过但系统没投递"的条数；`tests/notify.test.ts` +16（62 条） | 心跳的边界（ROM 明确冻结时同样放行不了）见 11.38 A；这是 AGENTS.md 里预留的最后手段 |
 | 本次 v2.31 提交 | 2026-09-22 | v2.31 | **真机截图驱动的修复 + 自检报告**：`JwWebViewPlugin.java`（powerStatus 补 `ok`、新增 `heartbeatStatus`）、`ReminderHeartbeat.java`（写运行痕迹）、`src/services/jwwebview.ts` + `notify.ts`（`heartbeatStatus` 包装、超时 6s、`selfCheckReport()`）、`src/views/MeView.vue`（心跳状态行 + 「复制自检报告」+ 文案区分精确闹钟/自启动）、`tests/notify.test.ts` +12（74 条） | 截图证据与两个 bug 见 11.39；编译期踩到 `JSObject` 没有 `putAll`，构建脚本按规矩挡住不出包 |
+| 本次 v2.32 提交 | 2026-09-22 | v2.32 | **修 `LocalNotifications.scheduled()` 在安卓空转**（自检报告第二条暴露）：`JwWebViewPlugin.java` 新增 `pendingNotifications()` 直读插件存储；`jwwebview.ts` + `notify.ts`（`pendingList()` 成为唯一读取入口、统计/清理/自检全走它）、`ReminderHeartbeat.java`（跳频 10/60 分钟、`lastScanAt` 分开记账）、`MeView.vue`、`tests/notify.test.ts` +7（81 条） | 影响面与修法见 11.40；真机待复验"排期条数不再是 0" |
 
 ### 14.2 依赖与环境变更
 
@@ -2564,6 +2618,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-21 | `DFC2326D…` | v2.29：**解析适配器热更新（P2.5）**：规则层 + 与档案共用签名清单 + 改版演练测试。全套 **20 套件 664 条**断言全绿；`apksigner verify` 与完整性校验全项通过；包内反查：`解析规则`、`回到内置`、`adapters/` 都在，两个 Golden Test（57+45）仍全绿 = 内置解析行为没被改坏 |
 | 2026-09-21 | `15520571…` | v2.30：**提醒兜底心跳 + 投递自检**。全套 **20 套件 680 条**断言全绿；`apksigner verify` 与完整性校验全项通过；包内反查：`classes12.dex` 里有 `ReminderHeartbeat`，`aapt2 dump xmltree` 能看到 receiver 注册（`com.unimate.app.ReminderHeartbeat` / `com.unimate.app.REMINDER_TICK` / `BOOT_COMPLETED` / `QUICKBOOT_POWERON`） |
 | 2026-09-22 | `D8A7068F…` | v2.31：**修 powerStatus 缺 ok + 心跳状态可查 + 一键自检报告**。全套 **20 套件 692 条**断言全绿；`apksigner verify` 与完整性校验全项通过；包内反查：前端含「复制自检报告 / 兜底心跳 / 精确闹钟不是自启动 / 最早三条排期」，`classes12.dex` 含 `heartbeatStatus` |
+| 2026-09-22 | `B23E2EF1…` | v2.32：**修 `scheduled()` 在安卓空转**（排期改原生直读）+ 心跳 10/60 分钟两档 + 自检报告结论行。全套 **20 套件 699 条**断言全绿；包内反查：`classes12.dex` 含 `pendingNotifications`，前端含「结论：」「上次扫描」「若刚重建过仍是 0」 |
 
 > 出包唯一正确方式：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1`（11→17 步全套测试 + 构建 + APK 内容反查；红一条不出包）。
 > 沙箱内跑该脚本会因 Node/Gradle 拿不到用户信息而失败，需在沙箱外执行 —— 这是环境限制，不是工程问题。
@@ -2683,6 +2738,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| v2.32 | 2026-09-22 | **修隐藏最深的那个自伤：`LocalNotifications.scheduled()` 在 Android 上没实现**（详见 11.40）—— 产品负责人按 v2.31 的自检报告一跑，第二条就是 `查询失败 "LocalNotifications.scheduled()" is not implemented on android`。也就是说：面板里"系统已排期 0 条"、v2.28 的"清理过期排期"、v2.30 的"投递自检（missed 计数）"**在安卓上全部是空转**（读到空数组 → 什么也不清、missed 永远 0），这正解释了为什么"一打开全涌出来"始终没被压住。改法：新增原生 `pendingNotifications()` **直读插件的 NotificationStorage**（排期的真相），`scheduleStats / safeScheduled / cleanupStaleOnBoot / 自检报告` 全部走它（只保留 web 预览的 `scheduled()` 兜底）；心跳跳频在有近期排期时 15→**10 分钟**（Doze 的 9 分钟是系统下限，10 分钟把"最多晚 15 分钟"压到"最多晚 10 分钟"），并把"上次扫描时间"与"上次补投几条"分开记账。自检报告末尾直接给**结论行**（缺精确闹钟 / 缺电池优化豁免时明确写出来）。`test:notify` 74→**81 条**，全套 **20 套件 699 条** |
 | v2.31 | 2026-09-22 | **真机截图驱动的两个修复 + 一键自检报告**（详见 11.39）—— 真机截图（OPPO/一加）显示：① **精确闹钟"未授权"**（Android 12+ 默认不给 → 插件退化成省电批处理，最早的投递窗口正好是 **9 分钟**，与"我一打开才给我弹 9 分钟前的提醒"完全对上）；② **电池优化"未检测"** —— 其实是我的 bug：原生 `powerStatus` 成功分支漏了 `ok:true`，前端按 `ps.ok` 判断就把状态显示成"未检测"，还**把「去允许后台运行」按钮藏了起来**（机型与厂商路径都查到了，却显示未检测）。现修复：原生补 `ok`、查询超时 2.5s→6s；新增**原生心跳状态查询**（`heartbeatStatus`：排上了没/下一跳/累计补投几条）并在面板显示——光有代码不算数，真机上要先能证明它在跑；新增**「复制自检报告」**按钮，把权限/排期条数与最早三条计划时刻/精确闹钟/电池优化/机型/心跳状态打成一段可复制文本，以后反馈问题不用来回截图。文案明确区分「**精确闹钟不是自启动**」：前者是标准权限、建议开；厂商自启动**可不开**（代价是晚几分钟，心跳兜底）。`test:notify` 62→**74 条**，全套 **20 套件 692 条** |
 | v2.30 | 2026-09-21 | **提醒兜底心跳 + 投递自检**（详见 11.38）—— 真机第三轮反馈仍是"到点不响、一打开才提醒"，说明系统压根没按时投递插件的排期（精确闹钟未授权 / Doze / 待机桶 / 厂商冻结都会这样）。新增原生 `ReminderHeartbeat`：**不依赖插件排期**，每 15 分钟（近期无排期时 60 分钟）用 `setAndAllowWhileIdle` 醒一次，扫插件持久化的排期，把"刚过期还没投递"的直接投出去并撤掉它对应的那条闹钟；**只补 30 分钟以内**的，更早的直接丢弃（与"错过的不补发"口径一致，绝不制造轰炸）；App 启动即排上、开机广播也重排。另加**投递自检**：冷启动清理时对比"账本里的计划时刻"与"系统里还留着的排期"，直接数出"**本该响过、但系统一直没投递**"的条数并在通知设置里显示——这就是"系统在延迟闹钟"的硬证据。`test:notify` 46→**62 条**，全套 20 套件 **680 条** |
 | v2.29 | 2026-09-21 | **解析适配器热更新（`Net.md` P2.5）**（详见 11.37）—— 把两个解析器里的选择器/正则/字段下标/周次语法/列名映射全部抽成 `parser/rules.ts` 的**声明式规则**（默认值=原硬编码值，Golden Test 57+45 原样通过），教务改版时**下发一份规则包即可，不用发版**：规则包与学校档案**共用同一份签名清单**（`catalog/index.json` 的 `adapters` 字段）、同一套 sha256 与结构校验、同一套"每天一次"限频；`validateRulePack()` 用**显式键白名单 + 正则可编译 + 取值范围**把关，**规则里没有任何可执行代码**（Net.md 2.4 的红线）；只有 `version > 内置版本` 的包才会被激活；导入面板/考试面板显示"当前用的是内置还是规则包"，可一键回到内置（二次确认）。新增 `tests/adapters.test.ts` **51 条**（含 Net.md 的验收场景：把样本页改坏 → 内置解析不出 → 下发规则后 25 条全部解析正确）。全套 20 套件 **664 条** |

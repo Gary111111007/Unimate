@@ -5,11 +5,14 @@ import android.content.Intent;
 import android.webkit.CookieManager;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSObject;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.capacitorjs.plugins.localnotifications.LocalNotification;
+import com.capacitorjs.plugins.localnotifications.NotificationStorage;
 
 /**
  * 内嵌教务/在线平台 WebView。
@@ -243,6 +246,43 @@ public class JwWebViewPlugin extends Plugin {
         } catch (Exception e) {
             ret.put("ok", false);
             ret.put("error", e.getMessage() == null ? "查询失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * 读插件里**真正排着**的通知（v2.32）。
+     *
+     * 为什么必须自己做：Capacitor 的 `LocalNotifications.scheduled()` **在 Android 上没实现**，
+     * 调用会直接抛 "not implemented on android" —— 于是 v2.28/v2.30 写的"清理过期排期""投递自检"
+     * 在安卓上全是空转（读到空数组 → 什么也不清、missed 永远是 0），"系统已排期 0 条"也是这么来的。
+     * 这里直接读插件的 NotificationStorage（它才是排期的真相）。
+     */
+    @PluginMethod
+    public void pendingNotifications(PluginCall call) {
+        JSObject ret = new JSObject();
+        JSArray arr = new JSArray();
+        try {
+            NotificationStorage storage = new NotificationStorage(getContext());
+            for (String id : storage.getSavedNotificationIds()) {
+                LocalNotification n = storage.getSavedNotification(id);
+                if (n == null || n.getId() == null) continue;
+                JSObject o = new JSObject();
+                o.put("id", n.getId());
+                o.put("title", n.getTitle() == null ? "" : n.getTitle());
+                o.put("body", n.getBody() == null ? "" : n.getBody());
+                o.put("channelId", n.getChannelId() == null ? "" : n.getChannelId());
+                if (n.getSchedule() != null && n.getSchedule().getAt() != null) {
+                    o.put("at", n.getSchedule().getAt().getTime());
+                }
+                arr.put(o);
+            }
+            ret.put("items", arr);
+            ret.put("ok", true);
+        } catch (Exception e) {
+            ret.put("items", arr);
+            ret.put("ok", false);
+            ret.put("error", e.getMessage() == null ? "读取失败" : e.getMessage());
         }
         call.resolve(ret);
     }

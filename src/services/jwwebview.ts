@@ -31,6 +31,11 @@ export interface JwWebViewPlugin {
   openExactAlarmSettings(): Promise<{ ok: boolean; error: string }>;
   /** 提醒兜底心跳的运行状态（v2.31）：证明"它到底有没有在跑"就靠这几个数 */
   heartbeatStatus(): Promise<HeartbeatStatus>;
+  /**
+   * 读**真正排着**的通知（v2.32）。必须自己实现：Capacitor 的 `LocalNotifications.scheduled()`
+   * 在 Android 上没实现（调用会抛 "not implemented on android"），只有原生直读插件存储才准。
+   */
+  pendingNotifications(): Promise<PendingNotifications>;
   /** 界面字号：原生用 WebView textZoom，只放大文字不动布局坐标系 */
   setTextZoom(options: { percent: number }): Promise<{ ok: boolean; applied: number; error: string }>;
 }
@@ -50,6 +55,8 @@ export interface HeartbeatStatus {
   armed: boolean;
   armedAt: number;
   nextAt: number;
+  /** 上一次"扫描"的时间（每次心跳都会刷新；用来判断心跳是不是真在跑） */
+  lastScanAt: number;
   lastRunAt: number;
   /** 上一次真正补投的时间与条数 */
   lastPostedAt: number;
@@ -57,6 +64,20 @@ export interface HeartbeatStatus {
   totalPosted: number;
   /** 下一跳是否还在未来（排上了但被系统撤掉的话这里会是 false） */
   pendingNext: boolean;
+  error?: string;
+}
+
+export interface PendingNotification {
+  id: number;
+  at?: number;
+  title: string;
+  body: string;
+  channelId: string;
+}
+
+export interface PendingNotifications {
+  ok: boolean;
+  items: PendingNotification[];
   error?: string;
 }
 
@@ -68,7 +89,8 @@ export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
     powerStatus: async (): Promise<PowerStatus> => ({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '桌面预览环境无法查询电池优化状态，请在手机上查看', error: 'web-unsupported' }),
     requestIgnoreBattery: async () => ({ ok: false, mode: '', error: '桌面预览环境无法调用系统设置' }),
     openExactAlarmSettings: async () => ({ ok: false, error: '桌面预览环境无法调用系统设置' }),
-    heartbeatStatus: async (): Promise<HeartbeatStatus> => ({ ok: false, armed: false, armedAt: 0, nextAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, pendingNext: false, error: 'web-unsupported' }),
+    heartbeatStatus: async (): Promise<HeartbeatStatus> => ({ ok: false, armed: false, armedAt: 0, nextAt: 0, lastScanAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, pendingNext: false, error: 'web-unsupported' }),
+    pendingNotifications: async (): Promise<PendingNotifications> => ({ ok: false, items: [], error: 'web-unsupported' }),
     setTextZoom: async (o: { percent: number }) => ({ ok: false, applied: o && o.percent ? o.percent : 100, error: 'web-unsupported' })
   })
 });

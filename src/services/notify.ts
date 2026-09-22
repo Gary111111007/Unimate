@@ -5,7 +5,7 @@ import { ref } from 'vue';
 import { guard } from './guard.ts';
 import { WIRE_DATE_RE, wireAt } from './notifyWire.ts';
 import { readJson, writeJson } from './io.ts';
-import { JwWebView, isNativeWebView, type HeartbeatStatus, type PowerStatus } from './jwwebview.ts';
+import { JwWebView, isNativeWebView, type HeartbeatStatus, type PendingNotification, type PowerStatus } from './jwwebview.ts';
 import type { Course, NoteItem, Settings, Timetable } from '../types.ts';
 
 const CLASS_ID_BASE = 100000;
@@ -111,11 +111,28 @@ async function ensureChannels(): Promise<void> {
   }
 }
 
-async function safeScheduled(): Promise<number[]> {
+/**
+ * 读"真正排着"的通知（v2.32 修正）。
+ *
+ * 【踩过的坑】Capacitor 的 `LocalNotifications.scheduled()` **在 Android 上没实现**，
+ * 调用直接抛 "not implemented on android" —— 之前这里 catch 成空数组，于是：
+ *   · 面板里"系统已排期提醒 0 条"（明明排了）
+ *   · v2.28 的"清理过期排期"、v2.30 的"投递自检"在安卓上**全部空转**（读到空 → 什么也不清、missed 永远 0）
+ * 现在改成**原生直读插件的 NotificationStorage**（那才是排期的真相）；桌面预览用 web 插件的 scheduled()。
+ */
+export async function pendingList(): Promise<PendingNotification[]> {
   try {
+    if (isNativeWebView()) {
+      const r = await guard('读排期', JwWebView.pendingNotifications(), 4000, null as any);
+      return r && r.ok && Array.isArray(r.items) ? r.items as PendingNotification[] : [];
+    }
     const all = await guard('读排期', LocalNotifications.scheduled(), 2500, [] as any);
-    return all.map((n) => n.id);
+    return (all || []).map((n: any) => ({ id: n.id, at: n.at ? new Date(n.at).getTime() : undefined, title: n.title || '', body: n.body || '', channelId: n.channelId || '' }));
   } catch { return []; }
+}
+
+async function safeScheduled(): Promise<number[]> {
+  return (await pendingList()).map((n) => n.id);
 }
 
 async function cancelIds(ids: number[]): Promise<void> {
@@ -197,16 +214,17 @@ export interface ScheduleStats { total: number; classReminders: number; todoRemi
 // 把测试提醒整个滤掉了，导致闹钟明明排进去了却永远显示"0 条"。这里改为全量分类统计。
 export async function scheduleStats(): Promise<ScheduleStats> {
   const s: ScheduleStats = { total: 0, classReminders: 0, todoReminders: 0, testReminders: 0, nextFireAt: '' };
+  // 走 pendingList()（原生直读插件存储）—— 旧写法用的 LocalNotifications.scheduled() 在安卓上没实现，
+  // 结果面板永远显示"0 条"，把一个真问题伪装成了"没有排期"（v2.32 修正）。
   try {
-    const all = await guard('排期统计', LocalNotifications.scheduled(), 2500, [] as any);
+    const all = await pendingList();
     s.total = all.length;
     const times: number[] = [];
     for (const n of all) {
       if (n.id === TEST_ID || n.id === DEMO_ID) s.testReminders++;
       else if (n.id >= NOTE_ID_BASE) s.todoReminders++;
       else if (n.id >= CLASS_ID_BASE) s.classReminders++;
-      const at = (n as any).at || ((n as any).schedule && (n as any).schedule.at);
-      if (at) { const t = new Date(at).getTime(); if (t > 0) times.push(t); }
+      if (n.at && n.at > 0) times.push(n.at);
     }
     times.sort((a, b) => a - b);
     if (times.length) s.nextFireAt = new Date(times[0]).toTimeString().slice(0, 5);
@@ -434,7 +452,7 @@ export async function powerStatus(): Promise<PowerStatus> {
 
 /** 兜底心跳状态（v2.31）：给"自检报告"用 */
 export async function heartbeatStatus(): Promise<HeartbeatStatus> {
-  const empty: HeartbeatStatus = { ok: false, armed: false, armedAt: 0, nextAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, pendingNext: false };
+  const empty: HeartbeatStatus = { ok: false, armed: false, armedAt: 0, nextAt: 0, lastScanAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, pendingNext: false };
   try {
     const r: HeartbeatStatus = await guard('查心跳状态', JwWebView.heartbeatStatus(), 4000, null as any);
     return r && r.ok ? r : empty;
@@ -490,18 +508,16 @@ export async function selfCheckReport(): Promise<string> {
   lines.push('Unimate 提醒自检 · ' + now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
     + ' ' + now.toTimeString().slice(0, 5));
   lines.push('原生环境：' + (isNativeWebView() ? '是' : '否（桌面预览）'));
+  const fmt = (t: number) => {
+    const d = new Date(t);
+    return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + d.toTimeString().slice(0, 5);
+  };
   try {
-    const st = await LocalNotifications.scheduled();
     lines.push('系统通知权限：' + await permissionState());
-    lines.push('插件里排期条数：' + st.length);
-    const times = st.map((n: any) => {
-      const at = n.at || (n.schedule && n.schedule.at);
-      return at ? new Date(at).getTime() : 0;
-    }).filter((t: number) => t > 0).sort((a: number, b: number) => a - b);
-    const fmt = (t: number) => {
-      const d = new Date(t);
-      return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + d.toTimeString().slice(0, 5);
-    };
+    // 原生直读插件存储（LocalNotifications.scheduled() 在 Android 上没实现，会抛 not implemented）
+    const all = await pendingList();
+    lines.push('插件里排期条数：' + all.length + (all.length ? '' : '（若刚重建过仍是 0，说明排期没成功）'));
+    const times = all.map((n) => n.at || 0).filter((t) => t > 0).sort((a, b) => a - b);
     lines.push('最早三条排期：' + (times.length ? times.slice(0, 3).map(fmt).join(' / ') + '（现在 ' + fmt(Date.now()) + '）' : '（无）'));
   } catch (e: any) {
     lines.push('插件里排期条数：查询失败 ' + ((e && e.message) || e));
@@ -514,11 +530,23 @@ export async function selfCheckReport(): Promise<string> {
   try {
     const hb = await heartbeatStatus();
     lines.push('兜底心跳：' + (hb.ok ? (hb.armed
-      ? '已排（上一跳 ' + fmtMs(hb.lastRunAt) + '，下一跳 ' + fmtMs(hb.nextAt) + '）'
+      ? '已排（上次扫描 ' + fmtMs(hb.lastScanAt || hb.armedAt) + '，下一跳 ' + fmtMs(hb.nextAt) + '，间隔按最近排期自动在 10/60 分钟之间选）'
       : '未排（App 启动时应该会排上；若一直未排请反馈）')
       : '查询失败') + '；累计补投 ' + hb.totalPosted + ' 条'
       + (hb.lastPostedCount ? '（上次补投 ' + hb.lastPostedCount + ' 条 @ ' + fmtMs(hb.lastPostedAt) + '）' : ''));
   } catch { lines.push('兜底心跳：查询失败'); }
+  /*
+   * 结论提示：把"现在最可能的成因"直接写在报告末尾，省得对着数字猜。
+   * 依据是 Android 的规则：没有精确闹钟权限 → 插件只能排"允许待机"的近似闹钟，Doze 下每 9 分钟才放行一条。
+   */
+  try {
+    const exact = await exactAlarmState();
+    const ps = await powerStatus();
+    const need: string[] = [];
+    if (exact !== 'granted' && exact !== 'unsupported') need.push('精确闹钟未授权（到点会晚，且 Doze 下每 9 分钟才放行一条）');
+    if (ps.ok && !ps.ignoring) need.push('电池优化未豁免（系统会把应用冻住，闹钟攒到打开 App 时才补发）');
+    lines.push('结论：' + (need.length ? '建议开启 → ' + need.join('；') + '。兜底心跳最多补到晚 10~15 分钟。' : '两项系统开关都已就绪；若还漏响请把这行报告发我。'));
+  } catch { /* 只是提示，失败就算了 */ }
   return lines.join('\n');
 }
 
