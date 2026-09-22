@@ -134,7 +134,10 @@ console.log('\n--- v2.39：同步 API 走 pages.dev（绕开被污染/不可达�
   ok('转发时剥掉 Origin（Worker 侧按服务端到服务端放行）',
     /headers\.delete\('Origin'\)/.test(pagesWorker), '');
   ok('CORS 允许 APK 的来源 https://localhost（原来只有 http://localhost，会被 403）',
-    /ALLOWED_ORIGINS = \['https:\/\/localhost', 'http:\/\/localhost', 'https:\/\/unimate3\.pages\.dev'\]/.test(pagesWorker), '');
+    pagesWorker.includes("EXACT_ORIGINS = ['https://unimate3.pages.dev']")
+    && pagesWorker.includes('LOCAL_ORIGIN = /^https?:\\/\\/(localhost|127\\.0\\.0\\.1)(:\\d+)?$/'), '');
+  ok('本机调试的带端口来源（http://localhost:5204）也被允许 —— v2.39 的坑',
+    /function pickOrigin\(raw\)/.test(pagesWorker) && /LOCAL_ORIGIN\.test\(raw\)/.test(pagesWorker), '');
   ok('预检返回 204 且带 Allow-Methods/Allow-Headers',
     /request\.method === 'OPTIONS'\) return new Response\(null, \{ status: 204/.test(pagesWorker)
     && /Access-Control-Allow-Methods/.test(pagesWorker) && /Access-Control-Allow-Headers/.test(pagesWorker), '');

@@ -16,7 +16,20 @@
  */
 const UPSTREAM = 'https://unimate-sync.2025040140.workers.dev';
 const API_PATHS = ['/health', '/v1/presign'];
-const ALLOWED_ORIGINS = ['https://localhost', 'http://localhost', 'https://unimate3.pages.dev'];
+const EXACT_ORIGINS = ['https://unimate3.pages.dev'];
+/**
+ * 本机来源允许任意端口：APK 里是 `https://localhost`（无端口），而 `npm run dev` 调试时是
+ * `http://localhost:5204` 这类**带端口**的来源 —— v2.39 的白名单只写了不带端口的写法，
+ * 结果网页端调试一律被预检拒掉（手机不受影响，但这种"只有真机能测"的坑必须消掉）。
+ */
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+function pickOrigin(raw) {
+  if (!raw) return '';
+  if (EXACT_ORIGINS.indexOf(raw) >= 0) return raw;
+  if (LOCAL_ORIGIN.test(raw)) return raw;
+  return '';
+}
 
 function corsHeaders(origin, preflight) {
   const h = new Headers({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -42,7 +55,7 @@ export default {
     if (API_PATHS.indexOf(url.pathname) < 0) return env.ASSETS.fetch(request);
 
     const rawOrigin = request.headers.get('Origin') || '';
-    const origin = ALLOWED_ORIGINS.indexOf(rawOrigin) >= 0 ? rawOrigin : '';
+    const origin = pickOrigin(rawOrigin);
     if (rawOrigin && !origin) return jsonError('来源不允许', 403, '');
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(origin, true) });
 

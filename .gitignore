@@ -5,6 +5,9 @@ artifacts/
 build-gradle*.log
 .DS_Store
 
+# 测试跑一次就重写一次的临时产物（zip 测试往这里写），不该跟着提交走
+tests/tmp-interop.zip
+
 # 学校档案下发的签名私钥（Net.md P2）：绝不入库、绝不外发。
 # 丢了就 keygen 一套新的，并把新公钥写回 src/catalog/schoolKey.ts（**旧 APK 会认新签名无效**）。
 keys/

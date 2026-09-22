@@ -27,8 +27,8 @@
 ```powershell
 cd E:\Gary\北京化工大学\北化app\Work
 npm run build
-node scripts\make-pages-package.mjs v2.39          # 生成"可拖放目录"（含同步 API 的 _worker.js）
-npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.39-upload --project-name unimate3
+node scripts\make-pages-package.mjs v2.40          # 生成"可拖放目录"（含同步 API 的 _worker.js）
+npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.40-upload --project-name unimate3
 ```
 
 不想用命令行：回到 Cloudflare 项目页 → **Create new deployment** → 拖 **`artifacts\cloudflare\unimate-cloudflare-<版本>-upload` 这个目录**。
@@ -42,6 +42,10 @@ npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.39-upload -
 2. **根目录必须有 `_worker.js`**（v2.39 起）：它是 Pages 的 Advanced Mode 入口，同步 API 靠它在大陆可达的 pages.dev 域名上提供
    （`*.workers.dev` 被 DNS 污染，手机连不上）。
 3. **命令行方式传的是"目录"本身**：`npx wrangler pages deploy <目录> --project-name unimate3`，不是目录里的内容。
+
+**同步 API 的 CORS 白名单（v2.40 起）**：`_worker.js` 里 `EXACT_ORIGINS` 放生产来源（`https://unimate3.pages.dev`），本机来源走 `LOCAL_ORIGIN` 正则
+（`localhost` / `127.0.0.1`，**端口任意**）。v2.39 只写死 `http://localhost` 与 `https://localhost`，于是 `npm run dev` 的 `http://localhost:5204`
+这类**带端口**的网页来源一律被预检 403（手机不受影响，APK 的来源就是 `https://localhost`）—— 表现成"只有真机能测"。**改了白名单必须重新部署才生效。**
 
 > 出包（APK）与部署（网页）是两件事：`scripts\build-apk.ps1` 只产出 APK；网页要按上面单独部署。
 

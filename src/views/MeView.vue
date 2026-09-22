@@ -38,8 +38,14 @@ const wire = ref({ ok: true, sample: '', hint: '' });
 const power = ref({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: '' });
 /** 兜底心跳状态（v2.31）：证明它到底有没有在跑 */
 const hb = ref({ ok: false, armed: false, nextAt: 0, lastPostedCount: 0, totalPosted: 0, lastPostedAt: 0 });
-/** 提醒守护前台服务状态（v2.34） */
-const guard = ref({ ok: false, enabled: false, running: false });
+/**
+ * 提醒守护前台服务状态（v2.34）。
+ * 【v2.40 修】原来这里叫 `const guard`，和上面导入的 `guard()` 超时工具**重名**：
+ * SFC 编译会把工具改名（真机压缩后是 `$`），于是 v2.35 新加的同步代码里 `guard(...)` 全变成
+ * 在调用这个 ref —— 真机报 `$ is not a function`，而 v2.38 还把它当成 WebCrypto 问题去修。
+ * 教训：**顶层声明不许与 import 重名**，现在有 `test:order` 静态扫全仓库兜底。
+ */
+const guardState = ref({ ok: false, enabled: false, running: false });
 const reportMsg = ref('');
 /** 打开「天气」面板时的开关与城市：用它判断"保存时用户是不是明确改过"（改过就允许立刻拉一次） */
 const wxOpened = ref({ enabled: false, city: '' });
@@ -187,7 +193,7 @@ async function refreshNotifyState(): Promise<void> {
   exact.value = await exactAlarmState();
   power.value = await powerStatus();
   hb.value = await heartbeatStatus();
-  guard.value = await reminderGuardStatus();
+  guardState.value = await reminderGuardStatus();
   wire.value = wireSelfCheck();
   stats.value = await scheduleStats();
   sched.value = stats.value.total;
@@ -493,7 +499,7 @@ async function copyInterests(): Promise<void> {
           </div>
           <div class="small muted" style="margin-top: 4px; line-height: 1.6">
             开启后通知栏会常驻一条<b>静音小通知</b>（"Unimate 提醒运行中"），让系统不把 App 冻住 ——
-            这是国产 ROM 上唯一还能由 App 自己做到的保活手段。状态：{{ guard.ok ? (guard.running ? '正在运行' : (guard.enabled ? '已开但没跑起来' : '已关闭')) : '未检测' }}。<br />
+            这是国产 ROM 上唯一还能由 App 自己做到的保活手段。状态：{{ guardState.ok ? (guardState.running ? '正在运行' : (guardState.enabled ? '已开但没跑起来' : '已关闭')) : '未检测' }}。<br />
             关掉也能用，只是提醒可能晚到，或等你打开 App 时才补发。
           </div>
           <button class="btn block sm grey" style="margin-top: 10px" @click="copySelfCheck()">复制自检报告（发我即可）</button>

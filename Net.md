@@ -1,8 +1,8 @@
 # Unimate 联网与云端路线图（Net.md）
 
-> 版本 v2 ｜ 2026-09-22 ｜ 配套 PRD v2.38
+> 版本 v2 ｜ 2026-09-22 ｜ 配套 PRD v2.40
 > 一句话：**把"联网"做成产品的护城河（分享 / 热更新 / 同步 / 智能），同时守住"数据全本地、不采集"这条底线。**
-> P0~P3 已进入实现；P3 的 Worker/R2 已部署，v2.38 客户端兼容修复待真机复验。每个阶段都保留目标、方案、成本、验收与风险。
+> P0~P3 已进入实现；P3 的 Worker/R2 已部署、Pages 同域转发已核对；客户端 `$ is not a function` 的真因（**变量重名**，不是 WebCrypto）已在 v2.40 修好，真机复验待产品负责人执行。每个阶段都保留目标、方案、成本、验收与风险。
 
 ---
 
@@ -10,23 +10,24 @@
 
 | 项 | 当前真实状态 |
 | --- | --- |
-| Pages | `https://unimate3.pages.dev`；v2.39 **已上传并核对**（线上首页引用 `assets/index-DroQga0f.js`，与本次 APK 同一份代码；`catalog/` 三件套 200，`bisu.json` 与本地逐字节一致）。 |
+| Pages | `https://unimate3.pages.dev`；v2.39 **已上传并核对**（线上首页引用 `assets/index-DroQga0f.js`；`catalog/` 三件套 200，`bisu.json` 与本地逐字节一致）。**v2.40 上传包待重传**（只差 `_worker.js` 的 CORS 白名单写法与前端 bundle）。 |
 | Worker | `https://unimate-sync.2025040140.workers.dev`；`/health` 已验证正常。**但 `*.workers.dev` 在大陆被 DNS 污染**（实测解析 69.171.228.74 / 连接超时，见 PRD 11.47），所以 App 不再直连它。 |
 | 同步 API 入口 | **`https://unimate3.pages.dev`**（Pages Advanced Mode `_worker.js` 同域提供 `/health`、`/v1/presign`，再边缘转发给 Worker，转发时剥掉 Origin）。客户端 `SYNC_API_BASE` 已改为它。**已线上核对**：`/health` 200 且回显 `ACAO: https://localhost`；预检 204；`/v1/presign` 用 APK 的来源能拿到 15 分钟 PUT 短链；非白名单来源 403。 |
 | R2 | 私有 bucket `unimate-sync`；不开公开访问。 |
 | Worker secrets | 已设 `R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`SYNC_OBJECT_PEPPER`。**任何文档只记名称，不记值**。 |
 | 签名链 | `/v1/presign` 已能生成 15 分钟 PUT URL，主机、bucket 路径与 `X-Amz-Signature` 均正确。该检查不写 R2 对象。 |
-| CORS | R2 OPTIONS 预检已返回 204；允许 `http://localhost`、`https://unimate3.pages.dev`的 GET/PUT 及 `Content-Type`。 |
-| 已验证的边界 | Worker 存活；**pages.dev 上的 `/health`、CORS 预检（含 APK 的 `https://localhost`）、`/v1/presign` 短链**；bucket 指向与对象名 HMAC。 |
-| 未验证的边界 | v2.39 真机密文上传、下载、解密预览、二次确认恢复，以及恢复码接管。 |
+| CORS | R2 OPTIONS 预检已返回 204；允许 `https://unimate3.pages.dev` 的 GET/PUT 及 `Content-Type`，本机来源按 `LOCAL_ORIGIN` 正则放行（`localhost` / `127.0.0.1`，**端口任意** —— v2.40 补上的一格：网页调试的来源是 `http://localhost:5204` 这类带端口的写法，v2.39 的白名单只有不带端口的形式，会被预检 403）。 |
+| 已验证的边界 | Worker 存活；**pages.dev 上的 `/health`、CORS 预检（含 APK 的 `https://localhost`）、`/v1/presign` 短链**；bucket 指向与对象名 HMAC；**v2.40 用预签名 URL 直打 R2：PUT 200/2.1s、GET 逐字节一致**（证明服务端与 R2 无问题）。 |
+| 未验证的边界 | **v2.40 APK** 上的真机密文上传、下载、解密预览、二次确认恢复，以及恢复码接管。 |
 
 ### 下一次对话的起点
 
-1. 覆盖安装 `artifacts/android/unimate-debug.apk`，**不要卸载旧版**；APK SHA-256 为 `1A33536558F7F9B0A6195F3D3F8BF611095D97F75FCA0B2F5FD8ACDD980DF4C8`（v2.39）。
+1. 覆盖安装 `artifacts/android/unimate-debug.apk`，**不要卸载旧版**；APK SHA-256 为 `B978B64FA316BDF550CFCA3688A184D1E54C5B51C581A1AE83D909FDCF33B71F`（v2.40；上一版 v2.39 是 `1A33536558F7F9B0A6195F3D3F8BF611095D97F75FCA0B2F5FD8ACDD980DF4C8`）。
 2. 「我的 → 加密换机同步」：首次建立时把“同步码或完整恢复码”清空（截图里的 `aaa` 不是故障原因，但该框首次建立时不用填）；输入两遍至少 10 位口令。
 3. 点“建立同步并生成恢复码”；恢复码只显示一次，先另存，再勾选确认并上传密文。
 4. 成功后才进行第二台设备恢复验收；截图/日志不得包含同步口令、完整恢复码或 R2 secret。
 5. ~~Pages 更新到 v2.39~~ —— **2026-09-22 已完成并核对**（`/health` 200、预检 204、预签名 200、非白名单 403，线上前端 = `assets/index-DroQga0f.js`）。
+   现在再拖一次 **v2.40** 上传包（`artifacts/cloudflare/unimate-cloudflare-v2.40-upload`，同样拖**目录本身**）：相对 v2.39 只改了 `_worker.js` 的 CORS 写法与前端 bundle，手机侧能力不变，重传是为了让网页端调试也能联调。拖完我会用 curl 复核。
    Worker 已部署，**不需要**再上传 Worker ZIP，也不要重设 secret。
 
 ---
@@ -152,14 +153,16 @@
 | 备选（更省事） | 保持现状"导出 `.umig` → 系统分享 → 新机导入"（PRD 11.15 一期），零基础设施；P3 只是把它变成"能通过公网中转" |
 | 验收 | ① 两台设备用同一 `syncId`+口令能恢复；② 服务器侧无法读出明文；③ 口令错 → 明确提示且不破坏本地数据；④ 断网时该功能灰掉、不影响其它功能 |
 
-**v2.38 实现状态**：客户端加密、恢复码、`.umig`、上传/下载/预览/二次确认恢复已实现；私有 R2、Worker、四项 secret 与 CORS 已部署。v2.37 真机首次加密暴露 `$ is not a function`，v2.38 已改为 WebCrypto 优先、纯 JS 兜底，并为密码调用加 60 秒超时。两路实现的 PBKDF2/AES-GCM 交叉向量逐字节一致。恢复码采用独立 256-bit 秘密包裹同一数据密钥，因此能真正恢复，而不是只验证摘要。
+**v2.38 实现状态（结论已在 v2.40 更正）**：客户端加密、恢复码、`.umig`、上传/下载/预览/二次确认恢复已实现；私有 R2、Worker、四项 secret 与 CORS 已部署。v2.38 把 v2.37 真机首次加密暴露的 `$ is not a function` 当成 WebCrypto 兼容问题，改为"标准 WebCrypto 优先 + 纯 JS 兜底"并加 60 秒超时（两路 PBKDF2/AES-GCM 交叉向量逐字节一致）。**这一整套改造本身没坏、予以保留，但它并没有修好那个报错** —— 真因见下一段。恢复码采用独立 256-bit 秘密包裹同一数据密钥，因此能真正恢复，而不是只验证摘要。
+
+**v2.40 定案：`$ is not a function` 不是密码学问题，是变量重名**：v2.34 在 `src/views/MeView.vue` 写了 `const guard = ref({...})`（提醒守护前台服务状态），与同文件第 8 行 `import { guard } from '../services/guard.ts'`（AGENTS.md 硬规则 8 要求的超时工具）**重名**。SFC 编译把 import 的那个改名（dev 构建里报的就是 `guard2 is not a function`，真机压缩后成 `$`），于是 v2.35 新增的 `guard('生成同步备份', …)` 变成"调用一个 ref"。修法：改名 `guardState`，并在 `test:order` 加**全仓库"顶层声明与 import 重名"静态扫描**（变异验证过：把重名写回去必红）。这条经验已进 `docs/context.md` 的坑表。详见 PRD 11.48。
 
 **v2.39 真机阻断修复**：接手复核时发现两件事会让真机必然失败 ——
 ① `*.workers.dev` 在大陆被 DNS 污染（实测解析到 69.171.228.74，443 超时；而 pages.dev 200/1.3s），手机连不到 Worker；
 ② Worker 的 `APP_ORIGINS` 只有 `http://localhost`，而 APK 页面源是 `https://localhost`，会被 403。
 现改为 **API 同域放在 pages.dev 上**（`cloudflare/pages/_worker.js`，Pages Advanced Mode）：处理 CORS（含 `https://localhost`）→ 剥掉 Origin → 边缘转发给真 Worker → 其余交给静态资源。
 客户端 `SYNC_API_BASE` 默认即 `https://unimate3.pages.dev`；Pages 上传包由 `scripts/make-pages-package.mjs` 可复现地产出。
-**当前只剩：拖放 v2.39 上传包 → 核对 `/health` → 真机完整 PUT/GET 与双机恢复验收。**
+**当前只剩：重拖 v2.40 上传包 → 我核对 `/health` → 真机完整 PUT/GET 与双机恢复验收。**
 
 ### 2.6 P4 智能解析（"自己训练一套模型"）—— 我的诚实评估
 
@@ -259,7 +262,7 @@ share/index.html      # 分享只读页（静态）
 | 第 2 周 | 公网静态站上线（免备案域名）+ 演示视频 | 比赛材料直接可用 |
 | 第 3 周 | ~~P2 学校档案热更新（含签名）~~ **已完成（v2.25）** | 兑现"新增高校不发版" |
 | 第 4 周 | ~~P2.5 适配器热更新~~ **技术能力已完成（v2.29）** + 运营：再补 5 所学校 | 后续主要是高校档案/规则的采集与审核 |
-| 之后 | ~~P3 客户端、Worker 与 R2 部署~~ → **v2.38 真机 PUT/GET + 双机恢复验收** → P5 AI 助手 →（可选）P4 智能解析 | P3 云端已就绪，不要重做 Worker/R2 配置 |
+| 之后 | ~~P3 客户端、Worker 与 R2 部署~~ → **v2.40 真机 PUT/GET + 双机恢复验收** → P5 AI 助手 →（可选）P4 智能解析 | P3 云端已就绪，不要重做 Worker/R2 配置 |
 
 ---
 
@@ -297,6 +300,6 @@ share/index.html      # 分享只读页（静态）
 | P0 天气 | PRD 第 9 节 O-系列"天气板块（Open-Meteo，默认关闭）"待办 |
 | P1 分享 | 新增条目（建议列入 PRD 第 3 节 Sheet1 与 5.11） |
 | P2 学校档案热更新 | **已实现**：PRD 5.14 / 10.11（AC-70~74）/ 11.35、`docs/school-pack.md`；对应 PRD 5.9 高校档案与学校选择、1.5 扩展战略 |
-| P3 跨机同步 | PRD 11.15（早期设计）/ 11.45（v2.37 实现）/ 11.46（v2.38 WebView 兼容修复与当前验证状态） |
+| P3 跨机同步 | PRD 11.15（早期设计）/ 11.45（v2.37 实现）/ 11.46（v2.38 改造，结论已被 11.48 更正）/ 11.48（v2.40 真因与链路验证） |
 | P4 智能解析 | 新增条目（本文 §2.6） |
 | P5 AI 助手 | 新增条目（本文 §2.7） |

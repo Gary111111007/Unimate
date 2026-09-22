@@ -34,17 +34,53 @@ const EAGER = /(^|[^.\w])(watch|watchEffect)\s*\(/;
 
 let checked = 0;
 const problems: string[] = [];
+/**
+ * 【v2.40 新增】顶层声明与 import 重名扫描。
+ *
+ * 真实事故：v2.34 我在 MeView.vue 里写了 `const guard = ref(...)`（提醒守护状态），
+ * 而同一个文件第 8 行早就 `import { guard } from '../services/guard.ts'`（超时工具）。
+ * SFC 编译时把**工具**改名成 `guard2`（真机压缩后是 `$`），于是 v2.35 新加的同步代码里
+ * 所有 `guard(...)` 都在调用那个 ref → 真机报 `$ is not a function`。
+ * 更糟的是它被误判成 WebCrypto 兼容问题，v2.38 整整修错了一轮。
+ * 这类重名构建/单测都不报错，只有真机炸 —— 必须静态扫。
+ */
+const collisions: string[] = [];
 
 for (const f of files) {
   const code = scriptOf(f, readFileSync(f, 'utf8'));
   if (!code.trim()) continue;
   const lines = code.split('\n');
 
+  // 0) 收集 import 引入的本地名字
+  const importedAt = new Map<string, number>();
+  lines.forEach((l, i) => {
+    const m = l.match(/^\s*import\s+([\s\S]*?)\s+from\s+['"]/);
+    if (!m) return;
+    const clause = m[1];
+    const braces = clause.match(/\{([^}]*)\}/);
+    if (braces) {
+      for (const part of braces[1].split(',')) {
+        const nm = (part.split(/\s+as\s+/).pop() || '').trim();
+        if (/^[A-Za-z_$][\w$]*$/.test(nm) && !importedAt.has(nm)) importedAt.set(nm, i);
+      }
+    }
+    const dflt = clause.replace(/\{[^}]*\}/, '').replace(/,/g, ' ').trim().split(/\s+/)[0];
+    if (dflt && /^[A-Za-z_$][\w$]*$/.test(dflt) && !importedAt.has(dflt)) importedAt.set(dflt, i);
+    const ns = clause.match(/\*\s+as\s+([A-Za-z_$][\w$]*)/);
+    if (ns && !importedAt.has(ns[1])) importedAt.set(ns[1], i);
+  });
+
   // 1) 记录每个顶层名字的声明行
   const declaredAt = new Map<string, number>();
   lines.forEach((l, i) => {
     const one = l.match(DECL);
-    if (one && !declaredAt.has(one[1])) declaredAt.set(one[1], i);
+    if (one && !declaredAt.has(one[1])) {
+      declaredAt.set(one[1], i);
+      if (importedAt.has(one[1])) {
+        collisions.push(relative(root, f) + ':' + (i + 1) + ' 顶层声明 ' + one[1]
+          + ' 与第 ' + (importedAt.get(one[1])! + 1) + ' 行的 import 重名（编译后会把 import 改名，调用点会静默指向本地变量）');
+      }
+    }
     const two = l.match(DESTRUCT);
     if (two) {
       for (const part of two[1].split(',')) {
@@ -100,6 +136,8 @@ console.log('扫描 ' + files.length + ' 个源文件，命中 ' + checked + ' �
 ok('确实扫到了 watch 语句（不是空跑）', checked >= 5, checked + ' 处');
 ok('没有 watch 引用后声明变量的 TDZ 地雷', problems.length === 0, '\n        ' + problems.join('\n        '));
 ok('HoursPanel 不再受影响', !problems.some((x) => x.includes('HoursPanel')), problems.join(' | '));
+ok('顶层声明没有与 import 重名（v2.40 的 `$ is not a function` 事故）',
+  collisions.length === 0, '\n        ' + collisions.join('\n        '));
 
 console.log('');
 console.log('Order Test: ' + passed + ' passed, ' + failed + ' failed');
