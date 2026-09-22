@@ -2794,6 +2794,7 @@ v2.36~v2.38 的 Pages 上传包是**手工拷贝**的，出包脚本里查不到
 
 - **已验证（本机自动化）**：`test:order` 3 → **4 条**（含变异验证）；`test:sync` 43 → **44 条**；全套 **21 套件 768 条**全绿。
 - **已验证（构建产物）**：`npm run build` → `dist/assets/index-CyklgAhP.js`；APK 内 `assets/public/assets/index-CyklgAhP.js` 与 `dist` **SHA-256 完全一致**（`039DFC0C…`）；包内新串 `https://unimate3.pages.dev` 在、旧串 `workers.dev` 为 0；`apksigner verify` 与 6 步完整性校验通过。
+- **已验证（编译产物，直接盯着这次的病根）**：`npx vite build --minify false` 的不压缩产物里，两处同步调用就是 `await guard("生成同步备份", …)` 与 `await guard("保存加密迁移包", …)` —— 即**调用的是导入的超时工具**；整份产物里出现的 `guard2` 只有 3 处、全在 Vue 运行时的 `modifierGuards` 循环里，与本次事故无关（同样命令在**修之前**跑，MeView 自己的 import 就是被改名成 `guard2` 的那个调用点，dev 里报的也正是 `guard2 is not a function`）。
 - **未验证（真机）**：v2.40 APK 上的"生成恢复码 → 上传密文 → 第二台设备恢复"，以及提醒链路。
 - 出包指纹：APK `B978B64F…`（6.66 MB）；Pages 上传包 `artifacts/cloudflare/unimate-cloudflare-v2.40-upload`（15 文件，`_worker.js` 在根部）。
 
