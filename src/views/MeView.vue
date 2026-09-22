@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
-import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus } from '../services/notify.ts';
+import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus, setReminderGuard, reminderGuardStatus } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
 import { applyTheme, type ThemeMode } from '../services/theme.ts';
 import { FONT_LEVELS, applyTextZoom } from '../services/display.ts';
@@ -26,6 +26,8 @@ const wire = ref({ ok: true, sample: '', hint: '' });
 const power = ref({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: '' });
 /** 兜底心跳状态（v2.31）：证明它到底有没有在跑 */
 const hb = ref({ ok: false, armed: false, nextAt: 0, lastPostedCount: 0, totalPosted: 0, lastPostedAt: 0 });
+/** 提醒守护前台服务状态（v2.34） */
+const guard = ref({ ok: false, enabled: false, running: false });
 const reportMsg = ref('');
 /** 打开「天气」面板时的开关与城市：用它判断"保存时用户是不是明确改过"（改过就允许立刻拉一次） */
 const wxOpened = ref({ enabled: false, city: '' });
@@ -101,6 +103,18 @@ async function fixReminder(): Promise<void> {
 }
 
 /**
+ * 提醒守护前台服务开关（v2.34）。
+ * 说明写在界面上：它靠一条常驻静音通知让系统不冻结 App —— 这是国产 ROM 上唯一还能由 App 自己做的保活手段。
+ */
+async function toggleGuard(on: boolean): Promise<void> {
+  db.settings.reminderGuard = on;
+  const ok = await setReminderGuard(on);
+  await refreshNotifyState();
+  if (!on) { db.notify('已关闭提醒守护：可能回到"打开 App 才收到提醒"'); return; }
+  db.notify(ok ? '提醒守护已开启（通知栏会出现一条静音小通知）' : '系统不允许启动前台服务，请重试或检查系统权限');
+}
+
+/**
  * 一键自检报告：把"提醒为什么不响"的所有判据打成文本，复制到剪贴板。
  * 产品负责人反馈问题时粘贴这段就够，不用来回截图问我（v2.31 加）。
  */
@@ -146,6 +160,7 @@ async function refreshNotifyState(): Promise<void> {
   exact.value = await exactAlarmState();
   power.value = await powerStatus();
   hb.value = await heartbeatStatus();
+  guard.value = await reminderGuardStatus();
   wire.value = wireSelfCheck();
   stats.value = await scheduleStats();
   sched.value = stats.value.total;
@@ -341,6 +356,16 @@ async function copyInterests(): Promise<void> {
           </div>
           <div v-if="hb.ok" class="small muted" style="margin-top: 4px">
             下一跳 {{ hb.nextAt ? new Date(hb.nextAt).toTimeString().slice(0, 5) : '—' }} · 累计补投 {{ hb.totalPosted }} 条<template v-if="hb.lastPostedCount">（上次 {{ hb.lastPostedCount }} 条）</template>
+          </div>
+          <!-- 提醒守护前台服务（v2.34）：三项系统开关全开仍"只有打开 App 才收到提醒"时的最后一道保活 -->
+          <div class="row" style="justify-content: space-between; margin-top: 8px">
+            <span class="grow small">提醒守护（前台服务）</span>
+            <button class="chip sm" :class="{ on: db.settings.reminderGuard }" @click="toggleGuard(!db.settings.reminderGuard)">{{ db.settings.reminderGuard ? '开' : '关' }}</button>
+          </div>
+          <div class="small muted" style="margin-top: 4px; line-height: 1.6">
+            开启后通知栏会常驻一条<b>静音小通知</b>（"Unimate 提醒运行中"），让系统不把 App 冻住 ——
+            这是国产 ROM 上唯一还能由 App 自己做到的保活手段。状态：{{ guard.ok ? (guard.running ? '正在运行' : (guard.enabled ? '已开但没跑起来' : '已关闭')) : '未检测' }}。<br />
+            关掉也能用，只是提醒可能晚到，或等你打开 App 时才补发。
           </div>
           <button class="btn block sm grey" style="margin-top: 10px" @click="copySelfCheck()">复制自检报告（发我即可）</button>
           <div v-if="reportMsg" class="card small" style="margin-top: 8px; background: var(--soft); box-shadow: none; white-space: pre-wrap; word-break: break-all; user-select: text">{{ reportMsg }}</div>

@@ -11,7 +11,7 @@ import { uuid, nowStamp, dateStamp } from '../services/id.ts';
 import { readJson, writeJson, readText, writeText, remove, probeStorage } from '../services/io.ts';
 import { randomSalt, sha256Text } from '../services/crypto.ts';
 import { buildDemoBisuCourses, buildDemoNotes, buildDemoRecords, buildDemoTimetable } from '../services/demo.ts';
-import { rescheduleAll, scheduleDemoPing, cleanupStaleOnBoot } from '../services/notify.ts';
+import { rescheduleAll, scheduleDemoPing, cleanupStaleOnBoot, setReminderGuard } from '../services/notify.ts';
 import { guard, traceReset } from '../services/guard.ts';
 import { applyTextZoom } from '../services/display.ts';
 import { fetchWeather, firstFulfilled, geocode, shouldRequestWeather } from '../services/weather.ts';
@@ -47,7 +47,9 @@ function defaultSettings(p: SchoolProfile): Settings {
     // 启动时只弹一次电池优化申请
     powerPrompted: false,
     // 天气（Net.md P0）：默认关闭 —— 关着的时候一次请求都不发
-    weatherEnabled: false, weatherCity: '', weatherLoc: null, weatherNow: null, weatherTriedAt: 0
+    weatherEnabled: false, weatherCity: '', weatherLoc: null, weatherNow: null, weatherTriedAt: 0,
+    // 提醒守护前台服务：默认开（它决定"关掉 App 还能不能准时收到提醒"），可在通知设置里关
+    reminderGuard: true
   };
 }
 
@@ -423,6 +425,11 @@ function answerConfirm(ok: boolean): void {
      * 真机表现就是"演示账号的面板里写着『标准』，界面却还是上一个账号的『特大』"（v2.15 实测复现）。
      */
     void applyTextZoom(settings.value.fontSize || 100);
+    /*
+     * 提醒守护：把本账号的设置同步给原生（原生用它决定前台服务起不起）。
+     * 放在载入用户数据之后 —— 换账号/切学校时也要按新账号的设置走。
+     */
+    try { await setReminderGuard(settings.value.reminderGuard !== false); } catch { /* 原生不支持就忽略 */ }
     try { await rescheduleAll(courses.value, timetables.value, notes.value, settings.value); } catch (e) { fail('重建提醒', e); }
   }
 

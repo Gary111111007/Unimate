@@ -288,6 +288,46 @@ public class JwWebViewPlugin extends Plugin {
     }
 
     /**
+     * 提醒守护前台服务（v2.34）：开关它。
+     * 产品负责人手机上三项系统开关全就绪仍"只有打开 App 才收到提醒"——ColorOS 的后台冻结只能靠前台服务化解。
+     */
+    @PluginMethod
+    public void setReminderGuard(PluginCall call) {
+        JSObject ret = new JSObject();
+        boolean on = Boolean.TRUE.equals(call.getBoolean("enabled", true));
+        try {
+            boolean ok = ReminderGuardService.setEnabled(getContext(), on);
+            ret.put("ok", ok);
+            ret.put("enabled", on);
+            ret.put("running", ReminderGuardService.isRunning());
+            ret.put("error", ok ? "" : "系统不允许启动前台服务");
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("enabled", on);
+            ret.put("running", false);
+            ret.put("error", e.getMessage() == null ? "设置失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
+    /** 提醒守护状态（自检报告用） */
+    @PluginMethod
+    public void reminderGuardStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            ret.put("ok", true);
+            ret.put("enabled", ReminderGuardService.isEnabled(getContext()));
+            ret.put("running", ReminderGuardService.isRunning());
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("enabled", false);
+            ret.put("running", false);
+            ret.put("error", e.getMessage() == null ? "查询失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
+    /**
      * 界面字号。用 WebView 原生 textZoom 而不是 CSS zoom：
      * 只放大文字、不改变布局坐标系，课表拖动/抓取那些按像素算的交互不会被缩放带偏。
      */

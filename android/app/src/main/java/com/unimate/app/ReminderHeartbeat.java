@@ -80,6 +80,8 @@ public class ReminderHeartbeat extends BroadcastReceiver {
              */
             if (boot) dropOverdueOnBoot(context);
             else runOnce(context);
+            // 开机时尽力把提醒守护拉起来（前台服务在开机广播里可能被系统拒绝，失败就算了）
+            if (boot && ReminderGuardService.isEnabled(context)) ReminderGuardService.start(context);
         } catch (Throwable t) {
             // 心跳绝不能因为异常把整条链路带崩：下一跳照排
         }

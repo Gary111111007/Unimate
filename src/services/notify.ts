@@ -459,6 +459,26 @@ export async function heartbeatStatus(): Promise<HeartbeatStatus> {
   } catch { return empty; }
 }
 
+/**
+ * 提醒守护前台服务（v2.34）：开/关它。桌面预览返回 false，不影响流程。
+ * 为什么需要：产品负责人手机上"通知权限 + 精确闹钟 + 电池优化豁免"三项全绿、排期 21 条，
+ * 仍然只有打开 App 才收到提醒 —— ColorOS 自己的后台冻结只能靠一条前台服务化解。
+ */
+export async function setReminderGuard(enabled: boolean): Promise<boolean> {
+  try {
+    const r = await guard('设置提醒守护', JwWebView.setReminderGuard({ enabled }), 5000, null as any);
+    return !!(r && r.ok);
+  } catch { return false; }
+}
+
+/** 提醒守护状态（自检报告用） */
+export async function reminderGuardStatus(): Promise<{ ok: boolean; enabled: boolean; running: boolean }> {
+  try {
+    const r = await guard('查提醒守护', JwWebView.reminderGuardStatus(), 4000, null as any);
+    return r && r.ok ? { ok: true, enabled: !!r.enabled, running: !!r.running } : { ok: false, enabled: false, running: false };
+  } catch { return { ok: false, enabled: false, running: false }; }
+}
+
 /** 最近一次自检结果（课表页那行提示用）：只做展示，不阻塞任何流程 */
 export const reminderRisk = ref<ReminderReadiness | null>(null);
 
@@ -539,6 +559,12 @@ export async function selfCheckReport(): Promise<string> {
         + hb.lastDroppedCount + ' 条 @ ' + fmtMs(hb.lastDroppedAt) + '）—— 按"错过的提醒不补发"口径直接丢弃，避免一开机一股脑');
     }
   } catch { lines.push('兜底心跳：查询失败'); }
+  try {
+    const gd = await reminderGuardStatus();
+    lines.push('提醒守护（前台服务）：' + (gd.ok
+      ? (gd.enabled ? (gd.running ? '已开且正在运行' : '已开但没跑起来（可能被系统拒绝）') : '已关闭')
+      : '查询失败'));
+  } catch { lines.push('提醒守护：查询失败'); }
   /*
    * 结论提示：把"现在最可能的成因"直接写在报告末尾，省得对着数字猜。
    * 依据是 Android 的规则：没有精确闹钟权限 → 插件只能排"允许待机"的近似闹钟，Doze 下每 9 分钟才放行一条。

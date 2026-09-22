@@ -36,6 +36,9 @@ export interface JwWebViewPlugin {
    * 在 Android 上没实现（调用会抛 "not implemented on android"），只有原生直读插件存储才准。
    */
   pendingNotifications(): Promise<PendingNotifications>;
+  /** 提醒守护前台服务开关（v2.34）：开=带一条常驻静音通知保活，系统就不会冻住 App */
+  setReminderGuard(options: { enabled: boolean }): Promise<{ ok: boolean; enabled: boolean; running: boolean; error?: string }>;
+  reminderGuardStatus(): Promise<{ ok: boolean; enabled: boolean; running: boolean; error?: string }>;
   /** 界面字号：原生用 WebView textZoom，只放大文字不动布局坐标系 */
   setTextZoom(options: { percent: number }): Promise<{ ok: boolean; applied: number; error: string }>;
 }
@@ -95,6 +98,8 @@ export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
     openExactAlarmSettings: async () => ({ ok: false, error: '桌面预览环境无法调用系统设置' }),
     heartbeatStatus: async (): Promise<HeartbeatStatus> => ({ ok: false, armed: false, armedAt: 0, nextAt: 0, lastScanAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, lastDroppedAt: 0, lastDroppedCount: 0, totalDropped: 0, pendingNext: false, error: 'web-unsupported' }),
     pendingNotifications: async (): Promise<PendingNotifications> => ({ ok: false, items: [], error: 'web-unsupported' }),
+    setReminderGuard: async (o: { enabled: boolean }) => ({ ok: false, enabled: !!o.enabled, running: false, error: 'web-unsupported' }),
+    reminderGuardStatus: async () => ({ ok: false, enabled: false, running: false, error: 'web-unsupported' }),
     setTextZoom: async (o: { percent: number }) => ({ ok: false, applied: o && o.percent ? o.percent : 100, error: 'web-unsupported' })
   })
 });

@@ -230,6 +230,34 @@ console.log('');
   // 产品负责人明确不来自启动：文案要把"精确闹钟"与"自启动"分开说清楚
   ok('文案把精确闹钟与自启动分开（不逼用户开自启动）',
     /精确闹钟不是自启动/.test(me) || /精确闹钟/.test(me), '');
+  /*
+   * v2.34：提醒守护前台服务
+   * 三项系统开关（通知权限/精确闹钟/电池优化豁免）全绿、排期 21 条，产品负责人仍反馈"只有打开 App 才收到提醒"
+   * —— ColorOS 自己的后台冻结只能靠一条前台服务化解，这是 App 侧最后一个手段。
+   */
+  const guardSvc = pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'ReminderGuardService.java');
+  ok('存在提醒守护前台服务', fsMod.existsSync(guardSvc), '');
+  if (fsMod.existsSync(guardSvc)) {
+    const g = fsMod.readFileSync(guardSvc, 'utf8');
+    ok('服务用 startForeground + 常驻通知', /startForeground\(NOTIFICATION_ID, n\)/.test(g), '');
+    ok('通知是最低优先级 + 静音（不打扰）', /IMPORTANCE_MIN/.test(g) && /setSilent\(true\)/.test(g) && /PRIORITY_MIN/.test(g), '');
+    ok('开关写进 SharedPreferences（重启后仍生效）', /KEY_ENABLED/.test(g) && /setEnabled\(Context context, boolean on\)/.test(g), '');
+    ok('起不来时只降级、不崩（try/catch 包住）', /catch \(Throwable t\) \{\s*\/\/ 起不来就退化成普通后台/.test(g), '');
+  }
+  const manifest2 = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
+  ok('manifest 注册了前台服务并声明 specialUse 类型',
+    /ReminderGuardService[\s\S]{0,200}foregroundServiceType="specialUse"/.test(manifest2), '');
+  ok('manifest 申请了前台服务权限（Android 14 需要）',
+    /FOREGROUND_SERVICE/.test(manifest2) && /FOREGROUND_SERVICE_SPECIAL_USE/.test(manifest2), '');
+  const mainActivity = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'MainActivity.java'), 'utf8');
+  ok('App 启动时按设置拉起守护', /ReminderGuardService\.isEnabled\(this\)[\s\S]{0,60}ReminderGuardService\.start\(this\)/.test(mainActivity), '');
+  ok('开机广播也尽力拉起守护', /if \(boot && ReminderGuardService\.isEnabled\(context\)\) ReminderGuardService\.start\(context\)/.test(hbSrc), '');
+  ok('桥接层有 setReminderGuard / reminderGuardStatus', /setReminderGuard\(options: \{ enabled: boolean \}\)/.test(bridge) && /reminderGuardStatus\(\): Promise/.test(bridge), '');
+  ok('设置项 reminderGuard 默认开（决定"关掉 App 还能不能准时收到"）',
+    /reminderGuard: true/.test(fsMod.readFileSync(pathMod.join(root, 'src', 'stores', 'db.ts'), 'utf8')), '');
+  ok('载入用户数据后把设置同步给原生', /setReminderGuard\(settings\.value\.reminderGuard !== false\)/.test(fsMod.readFileSync(pathMod.join(root, 'src', 'stores', 'db.ts'), 'utf8')), '');
+  ok('面板有开关与状态显示，并写明了代价（常驻静音通知）', /提醒守护（前台服务）/.test(me) && /静音小通知/.test(me), '');
+  ok('自检报告含"提醒守护"一行', /提醒守护（前台服务）：/.test(notifySrc), '');
   // 排期读取必须走原生（scheduled() 在安卓上是空的）
   ok('排期读取走 pendingList()（原生直读）', /export async function pendingList/.test(notifySrc) && /JwWebView\.pendingNotifications\(\)/.test(notifySrc), '');
   {

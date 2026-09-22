@@ -273,6 +273,11 @@ export interface Settings {
   weatherNow: WeatherNow | null;
   /** 上次**尝试**拉取的时间（成功失败都记）：保证 30 分钟内最多一次请求 */
   weatherTriedAt: number;
+  /**
+   * 提醒守护前台服务（v2.34）：带一条最低优先级静音通知保活，避免国产 ROM 的"后台冻结"
+   * 把闹钟攒到用户打开 App 时才补发。**默认开**，可在「我的 → 通知设置」一键关闭。
+   */
+  reminderGuard: boolean;
 }
 
 export interface InterestEntry { schoolId: string; schoolName: string; contact: string; createdAt: string }

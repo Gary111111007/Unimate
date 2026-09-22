@@ -57,6 +57,18 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+
+        <!-- 提醒守护前台服务（v2.34）：带一条最低优先级静音通知保活，
+             避免国产 ROM 的"后台冻结"把闹钟攒到用户打开 App 时才补发。
+             可在「我的 → 通知设置」一键关闭。 -->
+        <service
+            android:name=".ReminderGuardService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="reminder_delivery" />
+        </service>
     </application>
 
     <!-- Permissions -->
@@ -74,6 +86,9 @@
     <!-- 提醒类 App 的标准做法：请求加入电池优化白名单。
          查证结论：不豁免电池优化时，国产 ROM 上 AlarmManager 排的通知会根本不显示。 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 提醒守护前台服务（v2.34）：Android 14 起需要声明用途类型与对应权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
 </manifest>

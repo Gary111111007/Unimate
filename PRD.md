@@ -1,6 +1,6 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v2.33 ｜ 日期 2026-09-22 ｜ 状态：已实现并出包，待真机复验（提醒：开机清场，掐掉"一打开一股脑补发"）
+> 版本 v2.34 ｜ 日期 2026-09-22 ｜ 状态：已实现并出包，待真机复验（提醒：前台服务保活，对抗 ROM 后台冻结）
 > 口径变更：本版起"App 自己发起的联网请求只有天气一处"作废 —— 现在是**两处**：天气（默认关闭）与
 > 高校档案更新（打开「选择高校」页时每天最多一次，只下载公开配置、不上传任何信息，见 5.14、11.35）。
 > 签名算法是 `Net.md` 原定的 **Ed25519**；但客户端**用纯 JS 验签、不依赖平台 WebCrypto**（真机逼出来的一次返工，见 11.35 A 节）。
@@ -2520,6 +2520,57 @@ App 侧已把这条写进自检报告的结论行，并在通知设置里给了�
 
 ---
 
+---
+
+### 11.42 第三十一轮（v2.34，2026-09-22）：提醒守护前台服务（对抗 ROM 后台冻结）
+
+第四份自检报告（v2.33 装好、并把三项系统开关都开了之后）：
+
+```
+系统通知权限：granted
+插件里排期条数：21
+最早三条排期：9-22 14:10 / 9-22 17:50 / 9-22 17:50（现在 9-22 11:30）
+精确闹钟授权：granted
+电池优化豁免：已豁免 · 机型 OPPO / 一加 / realme
+兜底心跳：已排（上次扫描 11:26，下一跳 12:26）
+结论：两项系统开关都已就绪；若还漏响请把这行报告发我。
+```
+
+**三项系统开关全绿、排期 21 条、心跳在跑，依旧是"不打开 App 就没有提醒"。**
+这说明拦截发生在我们够不到的那一层：**ColorOS 自己的后台冻结 / 自启动管理**（他明确表示不想动那些开关）。
+App 侧还能做的只剩**前台服务**——让系统把 App 当成"正在运行的可见应用"，从而不进冻结/受限待机。
+
+#### A. 实现
+
+| 部分 | 内容 |
+| --- | --- |
+| `ReminderGuardService.java` | 前台服务：`startForeground` + **最低优先级、静音、不可划掉**的常驻通知"Unimate 提醒运行中"；渠道 `unimate-guard-v1`（IMPORTANCE_MIN、无声音无振动、不显示角标）；点通知回到 App |
+| 开关 | `SharedPreferences(unimate_guard/enabled)`；`setEnabled()` 写标记并起停服务；**默认开**；起不来时只降级（`running=false`），绝不崩 |
+| 拉起时机 | ① App 启动（`MainActivity.onCreate`，此时在前台，启动一定被允许）；② 开机广播（`ReminderHeartbeat` 里尽力而为，失败就算了）；③ 载入用户数据后 JS 把本账号设置同步给原生（换账号也按新设置走） |
+| 声明 | manifest：`foregroundServiceType="specialUse"` + `PROPERTY_SPECIAL_USE_FGS_SUBTYPE=reminder_delivery` + `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_SPECIAL_USE` 权限（Android 14 起必需） |
+| 界面 | 「我的 → 通知设置」新增一行**提醒守护（前台服务）开关** + 状态（正在运行 / 已开但没跑起来 / 已关闭），并写明代价：通知栏常驻一条静音小通知；关掉也能用，只是提醒可能晚到或等打开 App 才补发 |
+| 自检报告 | 新增一行"提醒守护（前台服务）：已开且正在运行 / 已开但没跑起来 / 已关闭" |
+
+#### B. 为什么做成开关而不是偷偷开着
+
+常驻通知是可见的代价（通知栏多一条）。产品负责人一直强调"不想动系统设置"，所以这条**不需要他动任何系统设置**，
+但要让他知道通知栏会多一条、并且随时能关 —— 界面文案与自检报告都写了。默认开，是因为"关掉 App 还能不能准时收到提醒"取决于它。
+
+#### C. 验证与产物
+
+- `test:notify` 85 → **99 条**：服务存在、用 `startForeground`、通知 IMPORTANCE_MIN + 静音、
+  开关写 SharedPreferences、起不来只降级不崩、manifest 注册 `specialUse` + 权限、App 启动与开机都拉起、
+  桥接层两个方法、设置项默认开、载入用户数据后同步给原生、面板有开关与代价说明、自检报告含这一行。
+  全套 **20 套件 717 条**全绿。
+- APK `4D9B6438…`；包内反查：`classes12.dex` 含 `ReminderGuardService`；
+  `aapt2 dump xmltree` 能看到 service 注册（`foregroundServiceType=0x40000000` = SPECIAL_USE）与两个前台服务权限；
+  前端含「提醒守护（前台服务）」「静音小通知」。
+- **未验证（真机）**：装上后①通知栏是否出现那条静音常驻通知；②**关掉 App 后提醒是否准点响**。
+  如果这两条都成立，那"只能打开 App 才收到提醒"这条纠缠多轮的问题就算真正闭环；
+  若仍不响，那就只剩"ColorOS 把前台服务也杀了"这一种可能，届时要考虑把守护通知设为可长期驻留（或走系统白名单）。
+
+---
+
 ### 11.4 已安装的 Codex Skill（需求第 8 项，已完成)
 
 | Skill | 位置 | 用途 | 状态 |
@@ -2621,6 +2672,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 本次 v2.31 提交 | 2026-09-22 | v2.31 | **真机截图驱动的修复 + 自检报告**：`JwWebViewPlugin.java`（powerStatus 补 `ok`、新增 `heartbeatStatus`）、`ReminderHeartbeat.java`（写运行痕迹）、`src/services/jwwebview.ts` + `notify.ts`（`heartbeatStatus` 包装、超时 6s、`selfCheckReport()`）、`src/views/MeView.vue`（心跳状态行 + 「复制自检报告」+ 文案区分精确闹钟/自启动）、`tests/notify.test.ts` +12（74 条） | 截图证据与两个 bug 见 11.39；编译期踩到 `JSObject` 没有 `putAll`，构建脚本按规矩挡住不出包 |
 | 本次 v2.32 提交 | 2026-09-22 | v2.32 | **修 `LocalNotifications.scheduled()` 在安卓空转**（自检报告第二条暴露）：`JwWebViewPlugin.java` 新增 `pendingNotifications()` 直读插件存储；`jwwebview.ts` + `notify.ts`（`pendingList()` 成为唯一读取入口、统计/清理/自检全走它）、`ReminderHeartbeat.java`（跳频 10/60 分钟、`lastScanAt` 分开记账）、`MeView.vue`、`tests/notify.test.ts` +7（81 条） | 影响面与修法见 11.40；真机待复验"排期条数不再是 0" |
 | 本次 v2.33 提交 | 2026-09-22 | v2.33 | **开机清场**：`ReminderHeartbeat.java` 增加 `dropOverdueOnBoot()` 并在开机广播时走它（丢掉已过期与 20 秒内要响的排期，撤销其闹钟；未来排期不动），记账 `totalDropped/lastDroppedCount`；`jwwebview.ts` + `notify.ts`（状态字段与报告"开机清场"行）、`tests/notify.test.ts` +4（85 条） | 针对插件恢复广播把过期排期改写成 now+15s 的机制，见 11.41；ColorOS 冻结仍需电池优化豁免 |
+| 本次 v2.34 提交 | 2026-09-22 | v2.34 | **提醒守护前台服务**（三项系统开关全绿仍漏响 → 对抗 ROM 后台冻结）：新增 `ReminderGuardService.java` + manifest 注册（specialUse + 两个前台服务权限）；`JwWebViewPlugin` 加 `setReminderGuard/reminderGuardStatus`；`MainActivity` 与 `ReminderHeartbeat` 拉起；`types.ts` + `db.ts`（`reminderGuard` 默认开、载入用户数据后同步原生）；`notify.ts`（包装 + 报告行）；`MeView.vue`（开关 + 代价说明）；`tests/notify.test.ts` +14（99 条） | 论证与代价见 11.42；真机待验"关掉 App 也能准点响" |
 
 ### 14.2 依赖与环境变更
 
@@ -2664,6 +2716,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-22 | `D8A7068F…` | v2.31：**修 powerStatus 缺 ok + 心跳状态可查 + 一键自检报告**。全套 **20 套件 692 条**断言全绿；`apksigner verify` 与完整性校验全项通过；包内反查：前端含「复制自检报告 / 兜底心跳 / 精确闹钟不是自启动 / 最早三条排期」，`classes12.dex` 含 `heartbeatStatus` |
 | 2026-09-22 | `B23E2EF1…` | v2.32：**修 `scheduled()` 在安卓空转**（排期改原生直读）+ 心跳 10/60 分钟两档 + 自检报告结论行。全套 **20 套件 699 条**断言全绿；包内反查：`classes12.dex` 含 `pendingNotifications`，前端含「结论：」「上次扫描」「若刚重建过仍是 0」 |
 | 2026-09-22 | `FAE3DBE9…` | v2.33：**开机清场**（丢掉过期与"20 秒内要响"的排期，避免插件恢复广播造成一股脑）。全套 **20 套件 703 条**断言全绿；包内反查：`classes12.dex` 含 `dropOverdueOnBoot`，前端含「开机清场：累计丢掉」 |
+| 2026-09-22 | `4D9B6438…` | v2.34：**提醒守护前台服务**（对抗 ROM 后台冻结）。全套 **20 套件 717 条**断言全绿；包内反查：`classes12.dex` 含 `ReminderGuardService`，`aapt2 dump xmltree` 显示 service 的 `foregroundServiceType=0x40000000`(specialUse) 与 `FOREGROUND_SERVICE`/`FOREGROUND_SERVICE_SPECIAL_USE` 权限，前端含「提醒守护（前台服务）」「静音小通知」 |
 
 > 出包唯一正确方式：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1`（11→17 步全套测试 + 构建 + APK 内容反查；红一条不出包）。
 > 沙箱内跑该脚本会因 Node/Gradle 拿不到用户信息而失败，需在沙箱外执行 —— 这是环境限制，不是工程问题。
@@ -2783,6 +2836,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| v2.34 | 2026-09-22 | **提醒守护前台服务：对抗国产 ROM 的后台冻结**（详见 11.42）—— 产品负责人第三份自检报告里**三项系统开关全部就绪**（通知权限 granted、精确闹钟 granted、电池优化已豁免）、排期 21 条、心跳已排，但**仍然"只有打开 App 才收到提醒"**。也就是说 ColorOS 自己的后台冻结/自启动那一层还在拦，而他不愿意动那些开关。App 侧唯一还能做的只剩**前台服务**：新增 `ReminderGuardService`（最低优先级**静音常驻通知**"Unimate 提醒运行中"），让系统认为 App 正在运行，从而不把它放进冻结/受限待机状态；App 启动即拉起、开机广播尽力拉起；设置项 `reminderGuard` **默认开**，通知设置里一键可关（关掉就回到原行为，文案写明了这一点）。自检报告新增"提醒守护（前台服务）：已开且正在运行 / 已开但没跑起来 / 已关闭"。`test:notify` 85→**99 条**，全套 **20 套件 717 条** |
 | v2.33 | 2026-09-22 | **开机清场：把"一打开/一开机所有提醒一股脑出来"从机制上掐掉**（详见 11.41）—— 产品负责人的第三份自检报告确认 v2.32 修好了排期读取（**插件里排期 21 条**，最早三条 14:10/17:50/17:50）、**精确闹钟已授权**，只剩"电池优化未豁免"。同时他仍反馈"一点开才一股脑"。查插件源码可知：`LocalNotificationRestoreReceiver` 在**开机广播**里把所有**已过期**的排期改写成 `now + 15 秒` 再排出去——这就是"一股脑"的机制。我们本来就定了"错过的提醒不补发"，所以 v2.33 让**我们自己的开机接收器先清场**：丢掉"已过期"以及"20 秒内就要响"的排期（后者正是被插件改写成 now+15s 的那批）并撤销它们的闹钟，未来的排期一律不动；清掉多少条也记进自检报告（"开机清场：累计丢掉 N 条"）。`test:notify` 81→**85 条**，全套 **20 套件 703 条** |
 | v2.32 | 2026-09-22 | **修隐藏最深的那个自伤：`LocalNotifications.scheduled()` 在 Android 上没实现**（详见 11.40）—— 产品负责人按 v2.31 的自检报告一跑，第二条就是 `查询失败 "LocalNotifications.scheduled()" is not implemented on android`。也就是说：面板里"系统已排期 0 条"、v2.28 的"清理过期排期"、v2.30 的"投递自检（missed 计数）"**在安卓上全部是空转**（读到空数组 → 什么也不清、missed 永远 0），这正解释了为什么"一打开全涌出来"始终没被压住。改法：新增原生 `pendingNotifications()` **直读插件的 NotificationStorage**（排期的真相），`scheduleStats / safeScheduled / cleanupStaleOnBoot / 自检报告` 全部走它（只保留 web 预览的 `scheduled()` 兜底）；心跳跳频在有近期排期时 15→**10 分钟**（Doze 的 9 分钟是系统下限，10 分钟把"最多晚 15 分钟"压到"最多晚 10 分钟"），并把"上次扫描时间"与"上次补投几条"分开记账。自检报告末尾直接给**结论行**（缺精确闹钟 / 缺电池优化豁免时明确写出来）。`test:notify` 74→**81 条**，全套 **20 套件 699 条** |
 | v2.31 | 2026-09-22 | **真机截图驱动的两个修复 + 一键自检报告**（详见 11.39）—— 真机截图（OPPO/一加）显示：① **精确闹钟"未授权"**（Android 12+ 默认不给 → 插件退化成省电批处理，最早的投递窗口正好是 **9 分钟**，与"我一打开才给我弹 9 分钟前的提醒"完全对上）；② **电池优化"未检测"** —— 其实是我的 bug：原生 `powerStatus` 成功分支漏了 `ok:true`，前端按 `ps.ok` 判断就把状态显示成"未检测"，还**把「去允许后台运行」按钮藏了起来**（机型与厂商路径都查到了，却显示未检测）。现修复：原生补 `ok`、查询超时 2.5s→6s；新增**原生心跳状态查询**（`heartbeatStatus`：排上了没/下一跳/累计补投几条）并在面板显示——光有代码不算数，真机上要先能证明它在跑；新增**「复制自检报告」**按钮，把权限/排期条数与最早三条计划时刻/精确闹钟/电池优化/机型/心跳状态打成一段可复制文本，以后反馈问题不用来回截图。文案明确区分「**精确闹钟不是自启动**」：前者是标准权限、建议开；厂商自启动**可不开**（代价是晚几分钟，心跳兜底）。`test:notify` 62→**74 条**，全套 **20 套件 692 条** |
