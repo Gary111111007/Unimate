@@ -10,7 +10,7 @@ import { DEFAULT_PERIOD_TIMES, courseColorIndex } from '../catalog/periods.ts';
 import { uuid, nowStamp, dateStamp } from '../services/id.ts';
 import { readJson, writeJson, readText, writeText, remove, probeStorage } from '../services/io.ts';
 import { randomSalt, sha256Text } from '../services/crypto.ts';
-import { buildDemoBisuCourses, buildDemoNotes, buildDemoRecords, buildDemoTimetable } from '../services/demo.ts';
+import { buildDemoNotes, buildDemoRecords, buildDemoTimetable } from '../services/demo.ts';
 import { rescheduleAll, scheduleDemoPing, cleanupStaleOnBoot, setReminderGuard } from '../services/notify.ts';
 import { guard, traceReset } from '../services/guard.ts';
 import { applyTextZoom } from '../services/display.ts';
@@ -49,7 +49,9 @@ function defaultSettings(p: SchoolProfile): Settings {
     // 天气（Net.md P0）：默认关闭 —— 关着的时候一次请求都不发
     weatherEnabled: false, weatherCity: '', weatherLoc: null, weatherNow: null, weatherTriedAt: 0,
     // 提醒守护前台服务：默认开（它决定"关掉 App 还能不能准时收到提醒"），可在通知设置里关
-    reminderGuard: true
+    reminderGuard: true,
+    // P3 默认未启用；用户主动建立同步后才写入不含口令的连接信息
+    sync: null
   };
 }
 
@@ -452,17 +454,10 @@ function answerConfirm(ok: boolean): void {
     timetables.value = [tt];
     settings.value.lastActiveTimetableId = tt.id;
     try {
-      if (p.schoolId === 'bisu') {
-        // 北二外没有打包的脱敏教务页面样本，演示课表用内置的一份（课程/教室取自产品负责人给的截图）
-        courses.value = buildDemoBisuCourses().map((c) => ({
-          ...c, id: uuid(), timetableId: tt.id, colorIndex: courseColorIndex(String(c.name || ''))
-        })) as Course[];
-      } else {
-        const html = await fetch('sample-timetable.html').then((r) => r.text());
-        const mod = await import('../services/parser/jwglxtBuct.ts');
-        const parsed = mod.parseJwglxtTimetable(html);
-        courses.value = parsed.courses.map((c) => ({ ...c, id: uuid(), timetableId: tt.id, colorIndex: courseColorIndex(c.name) }));
-      }
+      const html = await fetch('sample-timetable.html').then((r) => r.text());
+      const mod = await import('../services/parser/jwglxtBuct.ts');
+      const parsed = mod.parseJwglxtTimetable(html);
+      courses.value = parsed.courses.map((c) => ({ ...c, id: uuid(), timetableId: tt.id, colorIndex: courseColorIndex(c.name) }));
     } catch { courses.value = []; }
     notes.value = buildDemoNotes(p.secondClass.enabled);
     // 没有第二课堂的学校不生成二课记录（否则会凭空出现一堆"板块分数"）

@@ -331,6 +331,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
     }
     // 单次排期上限，避免 Android 一次性注册过多闹钟
     await guard('批量排期', LocalNotifications.schedule({ notifications: list.slice(0, 64) }), 8000, undefined);
+    if (isNativeWebView()) await guard('接管原生提醒', JwWebView.hardenNotifications(), 6000, undefined);
     result.scheduled = Math.min(list.length, 64);
     // 记账：只记真正排进去的那些（多的那部分下次打开时会因为"账本里没有"被清掉）
     await savePlan(list.slice(0, 64).map((x) => ({ id: x.id, at: (x.schedule.at as Date).getTime(), kind: x.extra.k })));
@@ -359,6 +360,7 @@ export async function scheduleTest(minutes: number): Promise<{ ok: boolean; at: 
         schedule: { at: atTime(when), allowWhileIdle: true }, channelId: 'todo-' + CHANNEL_TAG, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     }), 8000, undefined);
+    if (isNativeWebView()) await guard('接管测试提醒', JwWebView.hardenNotifications(), 6000, undefined);
     return { ok: true, at: when.toTimeString().slice(0, 8), error: '' };
   } catch (e: any) {
     return { ok: false, at: '', error: (e && (e.message || String(e))) || '未知错误' };
@@ -376,6 +378,7 @@ export async function scheduleDemoPing(): Promise<boolean> {
         schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, channelId: 'todo-' + CHANNEL_TAG, smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     }), 8000, undefined);
+    if (isNativeWebView()) await guard('接管演示提醒', JwWebView.hardenNotifications(), 6000, undefined);
     return true;
   } catch { return false; }
 }

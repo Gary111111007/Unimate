@@ -150,8 +150,8 @@ console.log('');
  * 9. 兜底心跳（v2.30）：系统把闹钟攒着时的最后一道保险
  *
  * 真机第三轮反馈仍然是"到点不响、一打开才提醒" —— 说明系统压根没按时投递插件的排期。
- * 心跳不依赖插件排期：每 15 分钟（近期无排期时 60 分钟）自己醒一次，扫插件持久化的排期，
- * 把"刚过期还没投递"的补投出去；只补 30 分钟以内的，更早的直接丢弃（不制造轰炸）。
+ * 心跳不依赖插件接收器：近期提醒后 30 秒兜底，平时 60 分钟巡检；
+ * 只补 2 分钟以内的，更早的直接丢弃（不制造轰炸）。
  */
 console.log('');
 {
@@ -162,9 +162,9 @@ console.log('');
     const hb = fs.readFileSync(hbPath, 'utf8');
     ok('心跳用 setAndAllowWhileIdle（Doze 里也能被放行）', /setAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP/.test(hb), '');
     ok('心跳自己重排下一跳（Android 不允许精确重复闹钟）', /static void arm\(Context context\)/.test(hb) && /arm\(context\);\s*\}\s*$|arm\(context\);/.test(hb), '');
-    ok('有近期排期才 10 分钟一跳（Doze 下 9 分钟是系统下限），否则 60 分钟（省电）',
-      /TICK_MS = 10 \* 60 \* 1000L/.test(hb) && /TICK_IDLE_MS = 60 \* 60 \* 1000L/.test(hb) && /nearest - now <= 60 \* 60 \* 1000L/.test(hb), '');
-    ok('只补 30 分钟内错过的（更早的直接丢弃，避免一股脑）', /CATCHUP_MS = 30 \* 60 \* 1000L/.test(hb) && /now - t > CATCHUP_MS/.test(hb), '');
+    ok('近期排期后 30 秒兜底、否则 60 分钟巡检',
+      /nearest \+ 30_000L/.test(hb) && /TICK_IDLE_MS = 60 \* 60 \* 1000L/.test(hb) && /nearest - now <= 60 \* 60 \* 1000L/.test(hb), '');
+    ok('只补 2 分钟内错过的（更早的直接丢弃，避免一股脑）', /CATCHUP_MS = 2 \* 60 \* 1000L/.test(hb) && /now - t > CATCHUP_MS/.test(hb), '');
     ok('补投后取消插件那条闹钟（避免重复投递）', /cancelPluginAlarm\(context, n\.getId\(\)\)/.test(hb), '');
     ok('补投后从插件存储里删掉（避免下次重复）', /storage\.deleteNotification\(idStr\)/.test(hb), '');
     // v2.33：开机广播必须"清场"而不是"补投"——插件自己的恢复广播会把过期排期改写成 now+15s 一起放出来
@@ -243,16 +243,26 @@ console.log('');
     ok('通知是最低优先级 + 静音（不打扰）', /IMPORTANCE_MIN/.test(g) && /setSilent\(true\)/.test(g) && /PRIORITY_MIN/.test(g), '');
     ok('开关写进 SharedPreferences（重启后仍生效）', /KEY_ENABLED/.test(g) && /setEnabled\(Context context, boolean on\)/.test(g), '');
     ok('起不来时只降级、不崩（try/catch 包住）', /catch \(Throwable t\) \{\s*\/\/ 起不来就退化成普通后台/.test(g), '');
+    ok('前台服务不是空壳：每 15 秒独立扫描到期提醒', /SCAN_MS = 15_000L/.test(g) && /ReminderHeartbeat\.runOnce/.test(g) && /handler\.postDelayed\(this, SCAN_MS\)/.test(g), '');
+    ok('服务启动后接管插件闹钟，页面关闭也能由原生投递', /ReminderHeartbeat\.hardenAll\(this\)/.test(g), '');
   }
   const manifest2 = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
   ok('manifest 注册了前台服务并声明 specialUse 类型',
     /ReminderGuardService[\s\S]{0,200}foregroundServiceType="specialUse"/.test(manifest2), '');
   ok('manifest 申请了前台服务权限（Android 14 需要）',
     /FOREGROUND_SERVICE/.test(manifest2) && /FOREGROUND_SERVICE_SPECIAL_USE/.test(manifest2), '');
+  ok('manifest 注册了带迟到保护的单条提醒接收器',
+    /ReminderAlarmReceiver[\s\S]{0,180}android:exported="false"/.test(manifest2), '');
+  const alarmReceiver = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'ReminderAlarmReceiver.java'), 'utf8');
+  ok('单条接收器不启动页面，直接走原生投递', /ReminderHeartbeat\.deliverById\(context, id\)/.test(alarmReceiver), '');
+  ok('原生排期使用 RTC_WAKEUP + setExactAndAllowWhileIdle', /setExactAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP/.test(hbSrc), '');
+  ok('投递前按原计划时刻验迟到窗口', /deliverById[\s\S]{0,900}now - at <= CATCHUP_MS/.test(hbSrc), '');
   const mainActivity = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'MainActivity.java'), 'utf8');
   ok('App 启动时按设置拉起守护', /ReminderGuardService\.isEnabled\(this\)[\s\S]{0,60}ReminderGuardService\.start\(this\)/.test(mainActivity), '');
   ok('开机广播也尽力拉起守护', /if \(boot && ReminderGuardService\.isEnabled\(context\)\) ReminderGuardService\.start\(context\)/.test(hbSrc), '');
   ok('桥接层有 setReminderGuard / reminderGuardStatus', /setReminderGuard\(options: \{ enabled: boolean \}\)/.test(bridge) && /reminderGuardStatus\(\): Promise/.test(bridge), '');
+  ok('每次批量/测试/演示排期后都调用原生接管且包 guard 超时',
+    (notifySrc.match(/guard\('接管(?:原生|测试|演示)提醒', JwWebView\.hardenNotifications\(\), 6000/g) || []).length === 3, '');
   ok('设置项 reminderGuard 默认开（决定"关掉 App 还能不能准时收到"）',
     /reminderGuard: true/.test(fsMod.readFileSync(pathMod.join(root, 'src', 'stores', 'db.ts'), 'utf8')), '');
   ok('载入用户数据后把设置同步给原生', /setReminderGuard\(settings\.value\.reminderGuard !== false\)/.test(fsMod.readFileSync(pathMod.join(root, 'src', 'stores', 'db.ts'), 'utf8')), '');

@@ -23,7 +23,15 @@ export interface BackupManifest {
   files: { path: string; size: number; sha256: string }[];
 }
 
-export interface ExportResult { fileName: string; path: string; size: number; manifest: BackupManifest }
+export interface ExportResult {
+  fileName: string;
+  path: string;
+  /** 应用私有目录中的相对路径；P3 加密上传复用同一份 ZIP 字节，不重复组包。 */
+  storagePath: string;
+  size: number;
+  manifest: BackupManifest;
+  bytes: Uint8Array;
+}
 
 function stamp(): string {
   const d = new Date();
@@ -85,10 +93,18 @@ export async function exportBackup(schoolId: string, schoolName: string, usernam
   const fileName = 'unimate-backup-' + schoolId + '-' + username + '-' + stamp() + '.unimate.zip';
   const outPath = 'exports/' + fileName;
   await writeBinaryBase64(outPath, bytesToBase64(zip));
-  return { fileName, path: await nativeUri(outPath), size: zip.length, manifest };
+  return { fileName, path: await nativeUri(outPath), storagePath: outPath, size: zip.length, manifest, bytes: zip };
 }
 
 export interface ImportPreview { manifest: BackupManifest; entries: number }
+
+/** 保存端到端加密后的单文件迁移包，供系统分享/网盘离线中转。 */
+export async function saveEncryptedMigration(bytes: Uint8Array, syncId: string): Promise<{ fileName: string; path: string }> {
+  const fileName = 'unimate-encrypted-' + syncId.slice(0, 8) + '-' + stamp() + '.umig';
+  const outPath = 'exports/' + fileName;
+  await writeBinaryBase64(outPath, bytesToBase64(bytes));
+  return { fileName, path: await nativeUri(outPath) };
+}
 
 export async function inspectBackup(bytes: Uint8Array): Promise<ImportPreview> {
   const items = readZip(bytes);

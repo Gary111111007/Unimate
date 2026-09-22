@@ -58,6 +58,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- 单条提醒由本接收器校验原计划时刻：过期超过两分钟直接丢弃，防止启动后集中补发。 -->
+        <receiver
+            android:name=".ReminderAlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.unimate.app.REMINDER_DELIVER" />
+            </intent-filter>
+        </receiver>
+
         <!-- 提醒守护前台服务（v2.34）：带一条最低优先级静音通知保活，
              避免国产 ROM 的"后台冻结"把闹钟攒到用户打开 App 时才补发。
              可在「我的 → 通知设置」一键关闭。 -->

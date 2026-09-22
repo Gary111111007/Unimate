@@ -1,12 +1,35 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v2.34 ｜ 日期 2026-09-22 ｜ 状态：已实现并出包，待真机复验（提醒：前台服务保活，对抗 ROM 后台冻结）
-> 口径变更：本版起"App 自己发起的联网请求只有天气一处"作废 —— 现在是**两处**：天气（默认关闭）与
-> 高校档案更新（打开「选择高校」页时每天最多一次，只下载公开配置、不上传任何信息，见 5.14、11.35）。
+> 版本 v2.38 ｜ 日期 2026-09-22 ｜ 状态：北二外云端档案已上线；P3 Worker/R2 已部署，Android WebView 加密兼容修复待真机复验
+> 口径变更：App 自己的联网功能现在有**三类**：天气（默认关闭）、高校档案更新，以及用户主动操作的
+> 加密换机同步。同步只上传 AES-256-GCM 密文，口令与恢复码不保存、不上传（见 11.45）。
 > 签名算法是 `Net.md` 原定的 **Ed25519**；但客户端**用纯 JS 验签、不依赖平台 WebCrypto**（真机逼出来的一次返工，见 11.35 A 节）。
-> 范围：第一版 = 完全本地运行的 Android App + 可安装 APK（不依赖自建服务器）
+> 范围：核心功能完全本地运行；P3 换机同步为可选能力，依赖 Cloudflare Worker + 私有 R2，断网不影响其它功能
 > 来源：由《要求.docx》已确认内容整理，并补充基于真实教务课表页面样本（个人课表查询.html）推导出的解析规范与可检查的验收标准。
 > 标注【待确认 Qx】的条目需产品负责人拍板后才进入开发（见第 12 节）。
+
+---
+
+## 当前接续摘要（新对话先读）
+
+> 这一节只写“现在真正到哪了”。历史设计与取证仍保留在 11.44~11.46。
+
+| 项目 | 当前状态 |
+| --- | --- |
+| 北二外档案 | **云端已上线**：`https://unimate3.pages.dev/catalog/` 的清单、签名和 `bisu.json` 均返回 200，SHA-256 与本地包一致；APK 不内置北二外完整档案。**待真机**完成“可下载 → 下载 → 切换”。 |
+| P3 云端 | **已部署**：私有 R2 bucket `unimate-sync`；Worker `https://unimate-sync.2025040140.workers.dev`；四项 secret 已设置（只记名称，不记值）：`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `SYNC_OBJECT_PEPPER`。 |
+| P3 云端验证 | **已验证** `/health`；**已验证** `/v1/presign` 能签发指向正确私有 bucket 的 PUT URL；**已验证** R2 CORS 预检返回 204，允许 `http://localhost` 与 `https://unimate3.pages.dev` 的 GET/PUT。**未验证**真机完整密文 PUT/GET/恢复。 |
+| v2.37 真机结果 | 首次点“建立同步并生成恢复码”时报 `$ is not a function`。它发生在本机加密阶段，尚未上传，与 R2 凭据/CORS 无关。界面上输入的 `aaa` 也不是成因；首次建立时“同步码或恢复码”本就应留空。 |
+| v2.38 修复 | PBKDF2-SHA256 / AES-256-GCM 改为 **WebCrypto 优先 + `@noble/*` 纯 JS 兜底**；独立 ArrayBuffer；60 秒超时；密文格式不变。WebCrypto/纯 JS 交叉向量逐字节一致。 |
+| 自动化与出包 | **已验证**：`test:sync` 30 条；全套 21 套件 753 条全绿；6 步构建、`apksigner verify`、包内反查、客户端敏感信息扫描通过；生产依赖 `npm audit --omit=dev` 为 0 漏洞。 |
+| 待办的唯一主线 | 覆盖安装 v2.38（**不卸载**）→ 首次建立时清空同步码框、输入两遍至少 10 位口令 → 生成并安全保存恢复码 → 确认上传 → 第二台设备下载/解密/预览/二次确认恢复。 |
+
+当前交付物：
+
+- APK：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，SHA-256 `AB630CD3E4ADD9B11938AC80490D97BADDF97CBD33E073759FE044FC026E0C0D`。
+- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.38-upload`](artifacts/cloudflare/unimate-cloudflare-v2.38-upload)。
+- Pages ZIP 归档：[`artifacts/cloudflare/unimate-cloudflare-v2.38.zip`](artifacts/cloudflare/unimate-cloudflare-v2.38.zip)，SHA-256 `4991DD280C9BB43D7E4C1200AD148D8452DBA37D3BCC6421752BE10B21F5F6CB`。Cloudflare Pages 网页不直接接受该 ZIP，要拖放解压目录。
+- Worker 已在线，**不要再上传 Worker ZIP，不要把任何 secret 值写进 PRD/聊天/截图**。
 
 ---
 
@@ -64,7 +87,7 @@
 
 **核心概念**：Unimate 不是"北化定制软件"，而是**一套高校校园学习生活一站式智能助手的通用框架**。每所高校的差异——教务系统地址与课表页面结构、学期与节次时间表、在线教学平台域名、第二课堂板块与分值规则、校区与教学楼命名、校色校徽——全部收敛进**一份高校档案（SchoolProfile）+ 一个数据源适配器（TimetableSourceAdapter）**，App 主体逻辑、页面与数据模型与学校无关。
 
-**落地策略**：第一版把北京化工大学做到可用、可验收；**v2.21 起新增第二所落地高校：北京第二外国语学院**（无第二课堂版本）；其余高校在 App 内**可见、可选、明确标注"开发中"**，并提供本地意向登记。
+**落地策略**：第一版把北京化工大学做到可用、可验收并随 APK 内置；北京第二外国语学院已有适配，但从 v2.36 起改为**签名云端档案**，在学校列表中下载、验签通过后才可使用；其余高校在 App 内**可见、明确标注"开发中"**，并提供本地意向登记。
 
 | 为什么这样设计 | 说明 |
 | --- | --- |
@@ -560,7 +583,7 @@
 
 ### 5.9 M11 高校档案与学校选择（品牌延展的核心）
 
-**5.9.1 数据模型 SchoolProfile（当前唯一实例：buct）**
+**5.9.1 数据模型 SchoolProfile（APK 内置实例：buct；云端实例：bisu）**
 
 ```json
 {
@@ -810,7 +833,7 @@
 
     unimate/
       manifest.json                       # 全局清单：schemaVersion、学校列表、账号列表、导出信息
-      catalog/universities.json           # 内置高校名单（北化 live，其余 developing）
+      catalog/universities.json           # APK 内置高校名单（仅北化 live；北二外由签名云端档案激活）
       catalog/interests.json              # 未接入高校的本地意向登记（纯本地）
       schools/
         buct/                             # schoolId 分区：切换学校即切换整个分区
@@ -2571,6 +2594,114 @@ App 侧还能做的只剩**前台服务**——让系统把 App 当成"正在运
 
 ---
 
+### 11.43 第三十二轮（v2.35，2026-09-22）：守护服务从“挂名保活”改成真正投递
+
+v2.34 真机复验仍然是：**锁屏/离开 App 后到点不响，一打开 App 后旧提醒集中出现**。
+重新逐行检查后确认 v2.34 有一个实现与文案不一致的缺口：`ReminderGuardService` 只调用了
+`startForeground()` 并显示常驻通知，**服务内部没有任何扫描或投递逻辑**。如果 ColorOS 扣住插件的
+`AlarmManager`，这个服务虽然显示“正在运行”，实际不会主动做任何事；打开 App 后系统恢复插件广播，
+旧提醒仍会集中投递。这次不再把“前台服务已运行”等同于“提醒链路已运行”。
+
+#### A. 三层修复
+
+| 层次 | 实现 |
+| --- | --- |
+| 主投递 | 新增 `ReminderAlarmReceiver`；每次 JS 排期完成后，原生读取插件 `NotificationStorage`，先用 `RTC_WAKEUP + setExactAndAllowWhileIdle` 排自己的单条接收器，成功后才撤掉插件原闹钟。接收器不启动页面，直接从存储取标题、内容、渠道和点击载荷后投递 |
+| 前台主动扫描 | `ReminderGuardService` 每 **15 秒**调用一次 `ReminderHeartbeat.runOnce()`；WebView、页面甚至 Activity 都不需要打开。服务启动时也会重新接管现存排期。v2.34 的“空壳前台服务”由此变成真正执行提醒工作的守护进程 |
+| 防集中补发 | 所有原生投递统一校验原计划时刻：迟到不超过 **2 分钟**才允许补投，超过就撤闹钟并删存储，绝不在打开 App 后把几小时前的提醒一起弹出。兜底心跳从固定 10 分钟改为“最近一条提醒后 30 秒” |
+
+接管顺序必须是“**新闹钟排成功 → 再撤插件旧闹钟**”；反过来会在原生排期失败时把本来还能响的提醒吞掉。
+批量课表/待办、1 分钟测试提醒和演示提醒三条入口全部在 `guard()` 超时保护内调用原生接管。
+
+#### B. 验证与边界
+
+- **已验证**：`test:notify` 99 → **106 条**；全套 **20 套件 724 条**全绿；Android Java 编译与
+  `assembleDebug` 成功；APK 签名、bundle 一致性、权限与资源校验通过；manifest 反查能看到
+  `ReminderAlarmReceiver`、`REMINDER_DELIVER`、`ReminderGuardService` 与 `specialUse`。
+- APK SHA-256：`7CC5CFC64D2BCB0940DC0CA8C2DCCAF9CC9562B1D2125BC2C4EF6C0A7D1AEAC0`。
+- **未验证（必须真机）**：锁屏并完全离开 App 后，1 分钟测试提醒能否在目标时刻附近出现；放置一条
+  过期超过 2 分钟的提醒后再打开 App，是否不再集中补发。
+- 系统“强行停止”应用后，Android 会撤掉闹钟并禁止接收广播；任何第三方日历 App 都无法绕过这个系统语义。
+  普通返回桌面、划走最近任务和锁屏不属于强行停止，应由本方案覆盖。
+
+---
+
+### 11.44 第三十三轮（v2.36，2026-09-22）：北二外改为签名云端档案
+
+产品负责人明确要求：北二外不能再随 APK 本地内置，而要在“选择高校”列表里从云端下载；完成后先上传 Cloudflare，再进入 P3。
+
+#### A. 本地与云端边界
+
+| 位置 | 北二外状态 |
+| --- | --- |
+| `src/catalog/universities.ts` | 只保留名单占位（`developing`），用于离线时仍能搜索到北二外；删除完整 `BISU_PROFILE`，`profileFor('bisu')` 返回 `null`，内置版本表也不再有 `bisu` |
+| `catalog/bisu.json` | 完整档案的唯一源：状态 `live`、无第二课堂、12 节时间、教务地址与三个已核实入口 |
+| `public/catalog/*` / `dist/catalog/*` | Cloudflare 待上传产物：`index.json` + Ed25519 签名 + `bisu.json`；签名清单拉取成功后，学校列表把北二外从“开发中”变成“可下载” |
+| Android APK | 构建脚本在 `cap sync` 后从 Android assets 中剔除 `catalog` 与 `adapters`；完整性校验新增“云端档案未入包”，发现任何文件就中止出包 |
+
+原先 `db.seedDemo()` 里按 `schoolId === 'bisu'` 生成北二外演示课表的硬编码分支也已删除，避免出现“档案说是云端，功能数据仍偷偷内置”的半迁移状态。
+
+#### B. 下载链路
+
+1. 用户进入选择高校页，App 请求 Cloudflare 上的 `catalog/index.json` 与 `index.json.sig`；
+2. 用 APK 内置 Ed25519 公钥验签；北二外行显示“可下载”；
+3. 点击后下载 `catalog/bisu.json`，核对签名清单中的 SHA-256，再校验结构与 HTTPS 域名白名单；
+4. 通过后写入本机 `catalog/downloaded-schools.json`，北二外进入“已下载 · 已可使用”；
+5. 删除下载档案仍走统一二次确认；正在使用北二外时不允许直接删除，必须先切到其他高校。
+
+#### C. Cloudflare 交付
+
+- 应上传完整 [`dist`](dist) 目录，不能只把 `dist/catalog` 当作一次完整 Pages 部署，否则可能覆盖掉站点其余资源。
+- 上传后至少核对：`/catalog/index.json`、`/catalog/index.json.sig`、`/catalog/bisu.json` 均返回真实文件而不是站点首页 HTML。
+- **已验证**：签名工具只从 TS 导出北化，不覆盖手写北二外源；重新签名自检通过；全套 **20 套件 723 条**全绿；APK 完整性校验显示“云端档案未入包=True”。
+- **已验证（线上）**：2026-09-22 产品负责人上传后，`index.json`、`index.json.sig`、`bisu.json` 均返回 200；线上 SHA-256 分别为 `ED73442B…`、`06BF7C51…`、`41B8CF41…`，与本地发布包逐字节一致。清单中北二外为 `live`，文件哈希与 `bisu.json` 一致。
+- **未验证（真机）**：仍需在新 APK 上走一遍“可下载 → 下载 → 切换北二外”；线上文件与签名链已就绪，但不能把 HTTP/哈希核验冒充真机交互验收。
+
+---
+
+### 11.45 第三十四轮（v2.37，2026-09-22）：P3 端到端加密换机同步
+
+产品负责人在北二外档案上传完成后明确进入 P3。本轮保留原 `.unimate.zip` 本地备份，同时新增可选的加密 `.umig` 与 Cloudflare R2 公网中转；未主动操作时不会上传任何用户数据。
+
+#### A. 加密与恢复模型
+
+| 项 | 实现 |
+| --- | --- |
+| 正文加密 | 每个同步身份生成随机 256-bit 数据密钥；备份 ZIP 使用 AES-256-GCM + 每次随机 12-byte nonce 加密，密文另存原文 SHA-256 与长度供解密后二次校验 |
+| 口令 | PBKDF2-HMAC-SHA256，随机 16-byte salt，**210,000 次**，派生 256-bit 包裹密钥；口令只停留在当前界面内存，不写设置、不上传 |
+| 恢复码 | 首次建立时生成 256-bit 随机恢复秘密，独立包裹同一数据密钥；恢复码格式含 128-bit `syncId`，只显示一次。用户必须勾选“已另存”才能首次上传；它能真正解密，不是装饰性校验码 |
+| 本机落盘 | 只保存 `syncId` 与两份已加密的数据密钥包裹；不保存同步口令或恢复码。每次上传同时保存一份加密 `.umig`，断网时仍可走系统文件中转 |
+| 失败边界 | 错口令、错恢复码、GCM 篡改、解密后 SHA/长度不一致均在写入本机数据前拒绝；覆盖/合并恢复继续走统一 `db.confirm` 二次确认 |
+
+#### B. Cloudflare 传输边界
+
+- `cloudflare/sync-worker/` 是独立 Worker 工程；R2 Access Key、Secret 与对象名 pepper 只通过 `wrangler secret put` 配置，不进入仓库或 APK。
+- App 向 Worker 提交随机 `syncId` 与操作类型；Worker 将 `HMAC-SHA256(pepper, syncId)` 作为私有 R2 对象名，签发 **15 分钟** `GET` / `PUT` URL。App 随后直连 R2，Worker 不经手备份正文。
+- Worker 限制来源、请求频率与申报体积；R2 bucket 必须私有并设置 CORS、费用告警。预签名 PUT 无法可靠限制浏览器实际体积，这一剩余风险已写入部署说明，不隐瞒。
+- 默认客户端地址为 `https://unimate-sync.2025040140.workers.dev`；若实际地址不同，构建时通过 `VITE_SYNC_API_BASE` 注入后重新出包。
+
+#### C. 验证状态
+
+- **已验证（本机自动化）**：`test:sync` 26 条断言覆盖口令/恢复码往返、错误口令、密文篡改、恢复后换新口令、明文不入密文包、UI 与隐私文案、Worker 来源拒绝、15 分钟签名及 URL 不泄露原同步码；Worker `wrangler deploy --dry-run` 打包成功（15.91 KiB / gzip 5.13 KiB）。全套 **21 套件 749 条**全绿；规定构建脚本完成 6 步校验，APK `3ABC52D4…`，签名与包内反查通过。
+- **已验证（包内反查）**：APK bundle 含“加密换机同步”、`AES-256-GCM` 与预期 Worker 地址；不含 `R2_SECRET_ACCESS_KEY`、`SYNC_OBJECT_PEPPER`、测试 secret、`BISU_PROFILE` 或北二外演示教室文本。
+- **v2.37 出包时尚未验证（历史状态）**：当时 R2 bucket、四项 Worker secret、CORS 与 Worker 尚未由产品负责人部署。随后已完成部署，当前结论以 11.46 和页首“当前接续摘要”为准。
+- **仍未验证（真机）**：两台 Android 设备的“上传 → 输入同步码+口令 → 预览 → 二次确认恢复”，以及恢复码接管流程。
+
+---
+
+### 11.46 第三十五轮（v2.38，2026-09-22）：修 Android WebView 加密兼容
+
+产品负责人完成 R2、四项 Worker secret、Worker 部署与 Pages 更新后，第一次真机点“建立同步并生成恢复码”直接报 `$ is not a function`。错误出现在本地加密阶段，尚未请求 Worker，因此与 R2 密钥或 CORS 无关。
+
+- PBKDF2-SHA256 与 AES-256-GCM 改为 Android WebView 标准 WebCrypto 实现优先，`@noble/*` 纯 JS 实现作为厂商 WebView 不完整时的兜底。
+- WebCrypto 输入统一拷贝为无 offset 的独立 `ArrayBuffer`，避免部分旧 WebView 拒绝 `ArrayBufferView`；所有异步密码调用均设 60 秒超时。
+- 两种实现继续使用同一 PBKDF2/AES-GCM 参数和密文包格式，不需要迁移 Worker、R2 对象或旧恢复码。
+- **已验证（云端）**：Worker `/health` 正常；`/v1/presign` 能签发指向私有 `unimate-sync` bucket 的 PUT URL；R2 CORS 预检返回 204，允许 `https://unimate3.pages.dev` 的 GET/PUT/content-type。
+- **已验证（本机自动化）**：`test:sync` 30 条（含 WebCrypto/纯 JS 的 PBKDF2 与 AES-GCM 逐字节交叉向量）；全套 **21 套件 753 条**全绿；6 步出包、`apksigner verify` 与 APK 内容反查通过。
+- **未验证（真机）**：v2.38 尚需在原设备复验“生成恢复码 → 上传密文”；通过后再用第二台设备验收恢复。
+
+---
+
 ### 11.4 已安装的 Codex Skill（需求第 8 项，已完成)
 
 | Skill | 位置 | 用途 | 状态 |
@@ -2605,7 +2736,7 @@ App 侧还能做的只剩**前台服务**——让系统把 App 当成"正在运
 | Q16 | ~~参赛材料能否放真实截图？~~ **已确认** | **不放任何真实截图**：一律用脱敏 fixture `fixtures/jwglxt-buct.sample.html` 与演示账号"智小汇" | 已写入 7.6 硬规定 |
 | Q17 | 第 8 条"消息提醒有问题"具体是哪种：① 到点完全不弹；② 弹了但时间不对；③ 弹了但点击没跳转；④ 其实想要别的提醒（如当天课表播报、二课填报提醒）？ | 已先加固通知链路，并在"我的 → 通知设置"加了诊断面板 | 请点一次「测试提醒（1 分钟）」，把"已排期 N 条"与"最近一次重建结果"两行文字反馈回来，据此定位 |
 | Q18 | 北二外档案里**没核实**的几项：①「移动校园」「智慧教学」的真实网址；② 学期总周数（暂按 18）；③ 校区名（暂按"校本部"）；④ 是否有独立的第二课堂/活动分值规则？ | ①②③④ 已按要求**先不硬编**，等产品负责人给准确信息再补（App 内长按入口可自行改地址，不必等发版） | 直接影响北二外的校园服务入口完整度与提醒区间 |
-| Q19 | AGENTS.md 第 4 条写的是"北化是首个落地高校、其余外校只出现在列表并标开发中"；v2.21 起北二外也是"已可使用"（第二所落地） | 已实现为两所 live，其余仍标"开发中" | 需要产品负责人点头后同步修改 AGENTS.md 那条规则的措辞（我未擅自改） |
+| Q19 | ~~北二外应随 APK 内置还是走云端下载？~~ | **已确认走签名云端档案**：APK 只留名单占位，清单拉取成功后显示“可下载”，验签并下载后才可使用 | v2.36 已落实并同步 AGENTS.md |
 
 其他风险：
 
@@ -2673,12 +2804,18 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 本次 v2.32 提交 | 2026-09-22 | v2.32 | **修 `LocalNotifications.scheduled()` 在安卓空转**（自检报告第二条暴露）：`JwWebViewPlugin.java` 新增 `pendingNotifications()` 直读插件存储；`jwwebview.ts` + `notify.ts`（`pendingList()` 成为唯一读取入口、统计/清理/自检全走它）、`ReminderHeartbeat.java`（跳频 10/60 分钟、`lastScanAt` 分开记账）、`MeView.vue`、`tests/notify.test.ts` +7（81 条） | 影响面与修法见 11.40；真机待复验"排期条数不再是 0" |
 | 本次 v2.33 提交 | 2026-09-22 | v2.33 | **开机清场**：`ReminderHeartbeat.java` 增加 `dropOverdueOnBoot()` 并在开机广播时走它（丢掉已过期与 20 秒内要响的排期，撤销其闹钟；未来排期不动），记账 `totalDropped/lastDroppedCount`；`jwwebview.ts` + `notify.ts`（状态字段与报告"开机清场"行）、`tests/notify.test.ts` +4（85 条） | 针对插件恢复广播把过期排期改写成 now+15s 的机制，见 11.41；ColorOS 冻结仍需电池优化豁免 |
 | 本次 v2.34 提交 | 2026-09-22 | v2.34 | **提醒守护前台服务**（三项系统开关全绿仍漏响 → 对抗 ROM 后台冻结）：新增 `ReminderGuardService.java` + manifest 注册（specialUse + 两个前台服务权限）；`JwWebViewPlugin` 加 `setReminderGuard/reminderGuardStatus`；`MainActivity` 与 `ReminderHeartbeat` 拉起；`types.ts` + `db.ts`（`reminderGuard` 默认开、载入用户数据后同步原生）；`notify.ts`（包装 + 报告行）；`MeView.vue`（开关 + 代价说明）；`tests/notify.test.ts` +14（99 条） | 论证与代价见 11.42；真机待验"关掉 App 也能准点响" |
+| 本次 v2.35 提交 | 2026-09-22 | v2.35 | **修 v2.34 前台服务只是空壳**：新增 `ReminderAlarmReceiver`，接管插件排期为 `RTC_WAKEUP + setExactAndAllowWhileIdle`；`ReminderGuardService` 每 15 秒独立扫描；统一 2 分钟迟到上限，过期直接丢弃；心跳改为最近提醒后 30 秒；三条排期入口均经 `guard()` 调原生接管；`tests/notify.test.ts` +7（106 条） | 见 11.43；已出包，真机待验锁屏准点与无历史轰炸 |
+| 本次 v2.36 提交 | 2026-09-22 | v2.36 | **北二外改为签名云端档案**：内置名单改 developing、删除 `BISU_PROFILE`/内置版本/演示硬编码；完整档案只在 `catalog/bisu.json`；打包器只导出内置北化再合并云端源；Android 出包剔除 `catalog/adapters` 并硬校验不入包；更新 AGENTS/Net/PRD 与学校测试 | Cloudflare 已上传；三文件 200 且 SHA-256 与发布包一致，真机下载/切换待验 |
+| 本次 v2.37 提交 | 2026-09-22 | v2.37 | **P3 端到端加密换机同步**：AES-256-GCM 正文、PBKDF2-SHA256 210k、128-bit 同步码、可真正解密的恢复码、加密 `.umig`；设置页上传/下载/预览/二次确认恢复；Cloudflare Worker 为私有 R2 签 15 分钟短链，密钥只用 secrets；新增 `test:sync` | 客户端与 Worker 本机验证完成；待产品负责人部署 R2/Worker 后做双机真机联调 |
+| 本次 v2.38 提交 | 2026-09-22 | v2.38 | **修真机 `$ is not a function`**：P3 口令派生与 AES-GCM 改为 WebCrypto 优先、纯 JS 兜底；输入拷贝为独立 ArrayBuffer，异步调用加超时；密文格式不变；`test:sync` 26→30，新增两路实现的逐字节向量比对 | Worker 健康检查、R2 预签名与 CORS 已线上验证；v2.38 真机上传待复验 |
 
 ### 14.2 依赖与环境变更
 
 | 日期 | 动作 | 说明 |
 | --- | --- | --- |
 | 2026-09-20 | `npm install qrcode-generator`（2.0.4，MIT，纯 JS 无依赖） | 课表分享二维码**本机生成**，不用在线二维码接口（避免把课表交给第三方）；`package.json`/`package-lock.json` 已记录 |
+| 2026-09-22 | `npm install @noble/ciphers@1.3.0` | P3 的 AES-256-GCM 纯 JS 兜底；v2.38 起为规避部分 WebView 对该库的运行时兼容错误，改为标准 WebCrypto 优先、该库兜底，密文格式不变 |
+| 2026-09-22 | P3 Worker 依赖 `aws4fetch` + `wrangler` | 只在 `cloudflare/sync-worker` 中生成 R2 15 分钟预签名 URL；不打进 APK |
 | 2026-09-20 | 新增 `android/app/src/main/res/raw/unimate_notify.wav`（脚本生成，26.7KB） | 通知渠道声音；Android 8+ 渠道不设声音 = 静音渠道 |
 | 2026-09-20 | 新增 `android/app/src/main/res/drawable/ic_stat_icon.xml` | 通知小图标，原先引用的资源根本不存在（回退成系统灰图标） |
 | 2026-09-20 | 新增 `android/app/src/main/assets/COPYRIGHT.txt` | 署名第三层（独立于 `assets/public`，不被 cap sync 清掉） |
@@ -2697,6 +2834,10 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-21 | 分享重做后重新部署 `unimate3.pages.dev` | 线上核对：主包 = `assets/index-UMPn5m76.js`（与本次 APK 一致），含「显示完整链接 / 发给同学 / 左右滑动切换周次」→ **已同步** |
 | 2026-09-21 | 尝试部署 v2.24 的 `dist` 到 `unimate3.pages.dev` | **未完成**：本机没有登录凭据，`npx wrangler pages deploy` 在非交互环境下报 `it's necessary to set a CLOUDFLARE_API_TOKEN`（历史日志显示 OAuth 流程在本机也会 `request_forbidden`）。**需要产品负责人执行**：`npx wrangler pages deploy dist --project-name unimate3`（先 `npx wrangler login`），或在 Cloudflare 项目页拖一次新的 `dist` |
 | 2026-09-21 | v2.25 的 `dist` 也要部署（**含新增的 `catalog/` 目录**） | 未执行（同上的凭据问题）。注意：这次不只是前端包变了 —— 站点根下必须同时出现 `catalog/index.json`、`catalog/index.json.sig`、`catalog/<schoolId>.json`，否则 App 打开选校页会一直提示"站点上没有清单或签名文件"。部署后核对：`curl.exe -sS https://unimate3.pages.dev/catalog/index.json` 应返回清单 JSON |
+| 2026-09-22 | 生成 v2.36 Cloudflare Pages 完整部署包 | [`artifacts/cloudflare/unimate-cloudflare-v2.36.zip`](artifacts/cloudflare/unimate-cloudflare-v2.36.zip)，SHA-256 `CE7A1B261AEEBDF6BC2C3DF658F2A1DC39E1D5BE2E4FF217BEAD0E5C404D3954`；**待上传**，上传后核对三条 `/catalog/` 地址 |
+| 2026-09-22 | v2.36 Pages 包上传并线上核验 | 三条 `/catalog/` 地址均 200；线上 SHA-256 与本地完全一致，北二外云端档案已就绪 |
+| 2026-09-22 | 生成 v2.37 P3 交付包 | Pages 包 [`unimate-cloudflare-v2.37.zip`](artifacts/cloudflare/unimate-cloudflare-v2.37.zip)，SHA-256 `56729C5DD179BD2CBAA671FF364EE803D189D1CFEC45855626C3EDDFF1F78512`；Worker 包 [`unimate-sync-worker-v2.37.zip`](artifacts/cloudflare/unimate-sync-worker-v2.37.zip)，SHA-256 `B83D1B9A26204C0E5F17F1BA5C4B44E1B18BF3F9F65E0AF78C13A891361091C0`；待按 Worker README 配置私有 R2 与 secrets 后部署 |
+| 2026-09-22 | v2.38 WebView 兼容修复包 | Pages 包 [`unimate-cloudflare-v2.38.zip`](artifacts/cloudflare/unimate-cloudflare-v2.38.zip)，SHA-256 `4991DD280C9BB43D7E4C1200AD148D8452DBA37D3BCC6421752BE10B21F5F6CB`；可拖放目录 [`unimate-cloudflare-v2.38-upload`](artifacts/cloudflare/unimate-cloudflare-v2.38-upload) |
 
 ### 14.4 出包记录（APK）
 
@@ -2717,6 +2858,10 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-22 | `B23E2EF1…` | v2.32：**修 `scheduled()` 在安卓空转**（排期改原生直读）+ 心跳 10/60 分钟两档 + 自检报告结论行。全套 **20 套件 699 条**断言全绿；包内反查：`classes12.dex` 含 `pendingNotifications`，前端含「结论：」「上次扫描」「若刚重建过仍是 0」 |
 | 2026-09-22 | `FAE3DBE9…` | v2.33：**开机清场**（丢掉过期与"20 秒内要响"的排期，避免插件恢复广播造成一股脑）。全套 **20 套件 703 条**断言全绿；包内反查：`classes12.dex` 含 `dropOverdueOnBoot`，前端含「开机清场：累计丢掉」 |
 | 2026-09-22 | `4D9B6438…` | v2.34：**提醒守护前台服务**（对抗 ROM 后台冻结）。全套 **20 套件 717 条**断言全绿；包内反查：`classes12.dex` 含 `ReminderGuardService`，`aapt2 dump xmltree` 显示 service 的 `foregroundServiceType=0x40000000`(specialUse) 与 `FOREGROUND_SERVICE`/`FOREGROUND_SERVICE_SPECIAL_USE` 权限，前端含「提醒守护（前台服务）」「静音小通知」 |
+| 2026-09-22 | `7CC5CFC6…` | v2.35：**原生到点投递 + 前台主动扫描 + 过期防轰炸**。全套 **20 套件 724 条**断言全绿；`assembleDebug`、`apksigner verify` 与完整性校验通过；manifest 反查含 `ReminderAlarmReceiver` / `REMINDER_DELIVER`、`ReminderGuardService` specialUse 与相关权限 |
+| 2026-09-22 | `BF310F41…` | v2.36：**北二外仅云端下载**。全套 **20 套件 723 条**断言全绿；APK 6.65 MB，`apksigner verify` 通过；包内反查 `assets/public/catalog/*` 与 `assets/public/adapters/*` 均为 0，bundle 内 `jwglxt.bisu.edu.cn` / `求知楼410` / `BISU_PROFILE` 均查不到 |
+| 2026-09-22 | `3ABC52D4…` | v2.37：**P3 端到端加密换机同步**。全套 **21 套件 749 条**断言全绿；APK 6.66 MB，`apksigner verify` 与 6 步完整性校验通过；包内新串（加密换机同步 / AES-256-GCM / Worker 地址）存在，R2 secret 名、pepper 名、测试 secret 与北二外本地档案痕迹均不存在 |
+| 2026-09-22 | `AB630CD3…` | v2.38：**修 P3 真机加密 `$ is not a function`**。WebCrypto 优先 + 纯 JS 兜底 + 60 秒超时；全套 **21 套件 753 条**全绿；APK 6.66 MB，`apksigner verify` 与 6 步完整性校验通过 |
 
 > 出包唯一正确方式：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1`（11→17 步全套测试 + 构建 + APK 内容反查；红一条不出包）。
 > 沙箱内跑该脚本会因 Node/Gradle 拿不到用户信息而失败，需在沙箱外执行 —— 这是环境限制，不是工程问题。
@@ -2836,6 +2981,10 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| v2.38 | 2026-09-22 | **修 Android WebView 首次 P3 加密报 `$ is not a function`**（详见 11.46）：PBKDF2/AES-GCM 改为 WebCrypto 优先、纯 JS 兜底，输入使用独立 ArrayBuffer，调用有超时，密文格式不变。Worker 健康检查、R2 预签名和 CORS 已线上验证；全套 **21 套件 753 条**全绿，APK `AB630CD3…`；真机上传/恢复待复验。 |
+| v2.37 | 2026-09-22 | **P3 端到端加密换机同步**（详见 11.45）：同步口令经 PBKDF2-SHA256 210k 派生，AES-256-GCM 加密备份；随机恢复码可独立解密且首次上传前强制另存；口令/恢复码不保存不上传；Cloudflare Worker 只签 15 分钟 R2 URL，R2 密钥只在 secrets。全套 **21 套件 749 条**全绿，APK `3ABC52D4…`；真实云端与双机真机流程待部署后验证。 |
+| v2.36 | 2026-09-22 | **北二外从 APK 内置迁移为签名云端档案**（详见 11.44）：本地只留学校名单占位；完整档案只存在于云端 `catalog/bisu.json`，验清单签名与档案 SHA-256 后才安装。Android 构建同步网页资源后会剔除 `catalog/adapters`，并把“云端档案未入包”设为出包硬门槛。全套 **20 套件 723 条**全绿；APK `BF310F41…`；Cloudflare 已上传且三文件哈希核验一致，真机下载/切换待验。 |
+| v2.35 | 2026-09-22 | **修正 v2.34“前台服务运行=提醒链路运行”的错误假设**（详见 11.43）：v2.34 真机仍是锁屏不响、打开后集中弹。根因是 `ReminderGuardService` 只挂常驻通知，没有任何扫描或投递。新增 `ReminderAlarmReceiver` 接管插件排期并用 `RTC_WAKEUP + setExactAndAllowWhileIdle` 到点直接投递；守护服务每 15 秒扫一次持久化排期；迟到超过 2 分钟一律丢弃；心跳改到最近提醒后 30 秒。`test:notify` 99→**106 条**，全套 **20 套件 724 条**；APK `7CC5CFC6…`，真机待复验。 |
 | v2.34 | 2026-09-22 | **提醒守护前台服务：对抗国产 ROM 的后台冻结**（详见 11.42）—— 产品负责人第三份自检报告里**三项系统开关全部就绪**（通知权限 granted、精确闹钟 granted、电池优化已豁免）、排期 21 条、心跳已排，但**仍然"只有打开 App 才收到提醒"**。也就是说 ColorOS 自己的后台冻结/自启动那一层还在拦，而他不愿意动那些开关。App 侧唯一还能做的只剩**前台服务**：新增 `ReminderGuardService`（最低优先级**静音常驻通知**"Unimate 提醒运行中"），让系统认为 App 正在运行，从而不把它放进冻结/受限待机状态；App 启动即拉起、开机广播尽力拉起；设置项 `reminderGuard` **默认开**，通知设置里一键可关（关掉就回到原行为，文案写明了这一点）。自检报告新增"提醒守护（前台服务）：已开且正在运行 / 已开但没跑起来 / 已关闭"。`test:notify` 85→**99 条**，全套 **20 套件 717 条** |
 | v2.33 | 2026-09-22 | **开机清场：把"一打开/一开机所有提醒一股脑出来"从机制上掐掉**（详见 11.41）—— 产品负责人的第三份自检报告确认 v2.32 修好了排期读取（**插件里排期 21 条**，最早三条 14:10/17:50/17:50）、**精确闹钟已授权**，只剩"电池优化未豁免"。同时他仍反馈"一点开才一股脑"。查插件源码可知：`LocalNotificationRestoreReceiver` 在**开机广播**里把所有**已过期**的排期改写成 `now + 15 秒` 再排出去——这就是"一股脑"的机制。我们本来就定了"错过的提醒不补发"，所以 v2.33 让**我们自己的开机接收器先清场**：丢掉"已过期"以及"20 秒内就要响"的排期（后者正是被插件改写成 now+15s 的那批）并撤销它们的闹钟，未来的排期一律不动；清掉多少条也记进自检报告（"开机清场：累计丢掉 N 条"）。`test:notify` 81→**85 条**，全套 **20 套件 703 条** |
 | v2.32 | 2026-09-22 | **修隐藏最深的那个自伤：`LocalNotifications.scheduled()` 在 Android 上没实现**（详见 11.40）—— 产品负责人按 v2.31 的自检报告一跑，第二条就是 `查询失败 "LocalNotifications.scheduled()" is not implemented on android`。也就是说：面板里"系统已排期 0 条"、v2.28 的"清理过期排期"、v2.30 的"投递自检（missed 计数）"**在安卓上全部是空转**（读到空数组 → 什么也不清、missed 永远 0），这正解释了为什么"一打开全涌出来"始终没被压住。改法：新增原生 `pendingNotifications()` **直读插件的 NotificationStorage**（排期的真相），`scheduleStats / safeScheduled / cleanupStaleOnBoot / 自检报告` 全部走它（只保留 web 预览的 `scheduled()` 兜底）；心跳跳频在有近期排期时 15→**10 分钟**（Doze 的 9 分钟是系统下限，10 分钟把"最多晚 15 分钟"压到"最多晚 10 分钟"），并把"上次扫描时间"与"上次补投几条"分开记账。自检报告末尾直接给**结论行**（缺精确闹钟 / 缺电池优化豁免时明确写出来）。`test:notify` 74→**81 条**，全套 **20 套件 699 条** |

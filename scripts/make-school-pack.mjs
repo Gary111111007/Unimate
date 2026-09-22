@@ -79,11 +79,11 @@ function checkProfile(p) {
   return bad;
 }
 
-/** 从 src/catalog/universities.ts 导出内置档案（单一真相：改 TS 就够，导出物自动跟上） */
+/** 从 src/catalog/universities.ts 导出 APK 内置档案；云端独有档案直接维护在 catalog/*.json。 */
 async function exportBuiltin() {
   const mod = await import('../src/catalog/universities.ts');
   const names = [];
-  for (const id of ['buct', 'bisu']) {
+  for (const id of ['buct']) {
     const p = mod.profileFor(id);
     if (!p) continue;
     writeText(join(srcDir, id + '.json'), jsonText(p));

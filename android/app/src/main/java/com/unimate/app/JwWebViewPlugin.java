@@ -287,6 +287,22 @@ public class JwWebViewPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /** 将插件排期替换成带“迟到丢弃”保护的原生闹钟。 */
+    @PluginMethod
+    public void hardenNotifications(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            ret.put("count", ReminderHeartbeat.hardenAll(getContext()));
+            ret.put("ok", true);
+            ret.put("error", "");
+        } catch (Exception e) {
+            ret.put("count", 0);
+            ret.put("ok", false);
+            ret.put("error", e.getMessage() == null ? "接管排期失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
     /**
      * 提醒守护前台服务（v2.34）：开关它。
      * 产品负责人手机上三项系统开关全就绪仍"只有打开 App 才收到提醒"——ColorOS 的后台冻结只能靠前台服务化解。

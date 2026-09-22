@@ -1,10 +1,9 @@
-// 高校档案测试（v2.21 新增北二外，第二所落地高校）。
+// 高校档案测试（北化内置，北二外仅通过签名云端包下载）。
 // 重点守三件事：
 //  1) 落地状态与名单顺序（谁"已可使用"、谁还是"开发中"）；
 //  2) 北二外的两种特殊性：**没有第二课堂**、**节次时间与北化不同**（都来自产品负责人给的截图）；
 //  3) 没核实过的网址一律不收录（宁可少一个入口，也不能把学生引到错误站点）。
-import { SCHOOLS, findSchool, profileFor, BISU_PROFILE } from '../src/catalog/universities.ts';
-import { buildDemoBisuCourses } from '../src/services/demo.ts';
+import { SCHOOLS, findSchool, profileFor } from '../src/catalog/universities.ts';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -22,22 +21,26 @@ function ok(name: string, cond: boolean, extra = ''): void {
 console.log('--- 名单与落地状态 ---');
 ok('名单总数为 53 所（新增北二外）', SCHOOLS.length === 53, String(SCHOOLS.length));
 const live = SCHOOLS.filter((s) => s.status === 'live');
-ok('落地高校正好两所', live.length === 2, live.map((s) => s.name).join('/'));
+ok('APK 内置可用高校只有北化', live.length === 1 && live[0].schoolId === 'buct', live.map((s) => s.name).join('/'));
 ok('北化仍是首个落地（order=0）', findSchool('buct')?.order === 0);
-ok('北二外在名单里且已可使用', findSchool('bisu')?.status === 'live');
+ok('北二外在名单里但不是本地可用档案', findSchool('bisu')?.status === 'developing' && profileFor('bisu') === null);
 ok('北二外按拼音排在"北京大学"之后、"北京工业大学"之前', (() => {
   const pku = SCHOOLS.findIndex((s) => s.schoolId === 'pku');
   const bisu = SCHOOLS.findIndex((s) => s.schoolId === 'bisu');
   const bjut = SCHOOLS.findIndex((s) => s.schoolId === 'bjut');
   return pku < bisu && bisu < bjut;
 })(), SCHOOLS.slice(1, 5).map((s) => s.shortName).join(','));
-ok('除了这两所，其余仍是"开发中"', SCHOOLS.filter((s) => s.status !== 'live').length === 51, '');
+ok('除北化外其余 52 所在 APK 内均不可直接使用', SCHOOLS.filter((s) => s.status !== 'live').length === 52, '');
 ok('名次无重复', new Set(SCHOOLS.map((s) => s.order)).size === SCHOOLS.length, '');
 ok('开发中的学校拿不到档案（进不去）', profileFor('pku') === null && profileFor('thu') === null);
+ok('北二外不在 APK 内置版本表里', !/bisu:\s*BISU_PROFILE/.test(read('src/catalog/universities.ts')));
+ok('云端打包器只从 TS 导出北化，不会覆盖手写的北二外云端源', /for \(const id of \['buct'\]\)/.test(read('scripts/make-school-pack.mjs')));
+ok('Android 出包会剔除 catalog/adapters 云端目录',
+  /@\("catalog", "adapters"\)/.test(read('scripts/build-apk.ps1')) && /hasRemotePayload/.test(read('scripts/build-apk.ps1')));
 
-console.log('\n--- 北二外档案：没有第二课堂 ---');
-const p = profileFor('bisu')!;
-ok('档案能取到', !!p && p.name === '北京第二外国语学院', p && p.name);
+console.log('\n--- 北二外云端档案：没有第二课堂 ---');
+const p = JSON.parse(read('catalog/bisu.json'));
+ok('完整档案只从云端包源读取', p.name === '北京第二外国语学院' && !/BISU_PROFILE/.test(read('src/catalog/universities.ts')), p.name);
 ok('简称是"北二外"', p.shortName === '北二外', p.shortName);
 ok('第三栏叫"校园服务"', p.tabs.online === '校园服务', p.tabs.online);
 ok('secondClass.enabled = false', p.secondClass.enabled === false, String(p.secondClass.enabled));
@@ -80,22 +83,7 @@ ok('只收录已核实的 3 个地址，未核实的"移动校园/智慧教学"�
 ok('教务系统用同一套正方解析器（导师类同族）', p.systems.timetableAdapter === 'jwglxt-buct', p.systems.timetableAdapter);
 ok('水印角标是本校校名', p.watermark.schoolBadgeText === '北京第二外国语学院', p.watermark.schoolBadgeText);
 ok('数据目录按学校隔离', p.dataDir === 'schools/bisu', p.dataDir);
-ok('导出的常量与 profileFor 内容一致', BISU_PROFILE.schoolId === 'bisu' && BISU_PROFILE.secondClass.enabled === false);
-
-console.log('\n--- 北二外演示课表 ---');
-const demo = buildDemoBisuCourses();
-ok('演示课表 12 条（截图里能看到的课都在）', demo.length === 12, String(demo.length));
-ok('星期都在 1~7、节次都在 1~12、起止不倒挂',
-  demo.every((c) => (c.day || 0) >= 1 && (c.day || 0) <= 7 && (c.startPeriod || 0) >= 1 && (c.endPeriod || 0) <= 12 && (c.startPeriod || 0) <= (c.endPeriod || 0)),
-  JSON.stringify(demo[0]));
-ok('每条都有周次与教室', demo.every((c) => (c.weeks || []).length > 0 && !!c.room), '');
-ok('抽查三门课与截图一致', (() => {
-  const by = (n: string) => demo.find((c) => c.name === n);
-  return by('综合英语(Ⅰ)')?.day === 3 && by('综合英语(Ⅰ)')?.startPeriod === 1 && by('综合英语(Ⅰ)')?.room === '求知楼410'
-    && by('旅游大数据')?.day === 4 && by('旅游大数据')?.startPeriod === 8 && by('旅游大数据')?.room === '求是楼808'
-    && by('概率论与数理统计')?.day === 1 && by('概率论与数理统计')?.endPeriod === 12;
-})(), JSON.stringify(demo.map((c) => c.name)));
-ok('教师列留空（截图没有教师信息，不编造）', demo.every((c) => (c.teacher || '') === ''), '');
+ok('云端源档案状态为 live，下载后可启用', p.status === 'live' && p.schoolId === 'bisu');
 
 console.log('\n--- 界面是否真的按档案走（结构断言，防止只改了数据没改界面）---');
 {
@@ -124,7 +112,7 @@ console.log('\n--- 界面是否真的按档案走（结构断言，防止只改�
 }
 {
   const db = read('src/stores/db.ts');
-  ok('演示数据按学校分支（北二外走内置课表）', /p\.schoolId === 'bisu'/.test(db) && /buildDemoBisuCourses/.test(db), '');
+  ok('运行时代码不再硬编码北二外演示分支', !/p\.schoolId === 'bisu'/.test(db) && !/buildDemoBisuCourses/.test(db), '');
   ok('没有二课的学校不生成二课演示记录', /if \(p\.secondClass\.enabled\) \{[\s\S]{0,200}buildDemoRecords/.test(db), '');
   ok('演示课表标题跟着学校走', /buildDemoTimetable\(p\.name/.test(db), '');
 }

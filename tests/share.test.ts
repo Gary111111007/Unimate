@@ -131,7 +131,7 @@ console.log('\n--- 界面接线（结构断言：光有编解码、没接上也�
 }
 {
   const login = readFileSync(join(root, 'src', 'screens', 'Login.vue'), 'utf8');
-  ok('网页版登录页有"演示站"交代', /演示站<\/b>：数据只存在你这台设备的浏览器里/.test(login), '');
+  ok('网页版登录页有"演示站"与默认本地口径', /演示站<\/b>：数据默认只存在你这台设备的浏览器里/.test(login), '');
   ok('只有网页版才显示这条（APK 里不显示）', /const isWeb = !isNativeWebView\(\)/.test(login), '');
 }
 

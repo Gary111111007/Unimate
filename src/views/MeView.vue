@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
-import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
+import { exportBackup, inspectBackup, restoreBackup, saveEncryptedMigration } from '../services/backup.ts';
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
+import { configFromRecovery, decryptSync, encryptForSync, parseRecoveryCode, type EncryptedSync, type SyncConfig } from '../services/syncCrypto.ts';
+import { downloadSyncCipher, uploadSyncCipher } from '../services/cloudSync.ts';
+import { guard } from '../services/guard.ts';
 import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus, setReminderGuard, reminderGuardStatus } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
 import { applyTheme, type ThemeMode } from '../services/theme.ts';
@@ -11,12 +14,21 @@ import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts
 import { agoText, weatherText } from '../services/weather.ts';
 
 const db = useDb();
-const panel = ref<'' | 'notify' | 'theme' | 'watermark' | 'weather' | 'backup' | 'about' | 'interests'>('');
+const panel = ref<'' | 'notify' | 'theme' | 'watermark' | 'weather' | 'backup' | 'sync' | 'about' | 'interests'>('');
 const perm = ref('unknown');
 const lastBackup = ref('');
 const restoreB64 = ref('');
 const restoreMode = ref<'overwrite' | 'merge'>('overwrite');
 const restoreInfo = ref('');
+const syncCode = ref('');
+const syncPass = ref('');
+const syncPassAgain = ref('');
+const syncMsg = ref('');
+const syncBusy = ref(false);
+const recoveryReveal = ref('');
+const recoverySaved = ref(false);
+const pendingUpload = ref<EncryptedSync | null>(null);
+const pendingSyncConfig = ref<SyncConfig | null>(null);
 const sched = ref(0);
 const stats = ref({ total: 0, classReminders: 0, todoReminders: 0, testReminders: 0, nextFireAt: '' });
 const schedMsg = ref('');
@@ -33,11 +45,26 @@ const reportMsg = ref('');
 const wxOpened = ref({ enabled: false, city: '' });
 
 const sub = computed(() => SECOND_CLASS_BLOCKS.map((b) => b.name + ' ' + db.blockScore(b.key)).join(' · '));
+const syncStatusText = computed(() => db.settings.sync ? '已建立同步 · 只上传密文' : '未开启 · 口令不保存、不上传');
+const syncPassLabel = computed(() => syncCode.value.startsWith('UM1.') ? '设置新同步口令' : '同步口令');
+const syncPrimaryText = computed(() => syncBusy.value ? '处理中…' : (db.settings.sync ? '加密并更新云端备份' : '建立同步并生成恢复码'));
 
 async function open(name: typeof panel.value): Promise<void> {
   panel.value = name;
   if (name === 'notify') { await refreshNotifyState(); }
   if (name === 'weather') wxOpened.value = { enabled: db.settings.weatherEnabled, city: (db.settings.weatherCity || '').trim() };
+  if (name === 'sync') syncCode.value = db.settings.sync?.syncId || '';
+}
+
+function closePanel(): void {
+  if (panel.value === 'sync') {
+    syncPass.value = '';
+    syncPassAgain.value = '';
+    recoveryReveal.value = '';
+    recoverySaved.value = false;
+    pendingUpload.value = null;
+  }
+  panel.value = '';
 }
 
 async function test(minutes: number): Promise<void> {
@@ -178,6 +205,101 @@ async function doExport(): Promise<void> {
   db.notify('备份已生成：' + r.fileName);
 }
 
+function syncBase(): string {
+  return 'schools/' + db.profile!.schoolId + '/users/' + db.session!.accountId;
+}
+
+async function makeSyncBackup(): Promise<EncryptedSync | null> {
+  if (syncPass.value.length < 10) { syncMsg.value = '同步口令至少 10 个字符'; return null; }
+  if (syncPass.value !== syncPassAgain.value) { syncMsg.value = '两次输入的同步口令不一致'; return null; }
+  const made = await guard('生成同步备份', exportBackup(db.profile!.schoolId, db.profile!.name, db.session!.username,
+    syncBase(), db.accounts, db.session!.accountId), 60_000, null);
+  if (!made) { syncMsg.value = '生成本地备份超时，请重试'; return null; }
+  return encryptForSync(made.bytes, syncPass.value, db.settings.sync || undefined);
+}
+
+async function finishSyncUpload(pack: EncryptedSync): Promise<void> {
+  await uploadSyncCipher(pack.config.syncId, pack.bytes);
+  const local = await guard('保存加密迁移包', saveEncryptedMigration(pack.bytes, pack.config.syncId), 15_000, null);
+  db.settings.sync = pack.config;
+  await db.saveData();
+  syncCode.value = pack.config.syncId;
+  syncMsg.value = '已上传端到端加密备份' + (local ? '；本机同时保存 ' + local.fileName : '');
+  syncPass.value = '';
+  syncPassAgain.value = '';
+  pendingUpload.value = null;
+  recoveryReveal.value = '';
+  recoverySaved.value = false;
+  db.notify('加密同步完成');
+}
+
+async function prepareSyncUpload(): Promise<void> {
+  if (syncBusy.value) return;
+  syncBusy.value = true;
+  syncMsg.value = '正在本地加密…';
+  try {
+    const pack = await makeSyncBackup();
+    if (!pack) return;
+    if (pack.recoveryCode) {
+      pendingUpload.value = pack;
+      recoveryReveal.value = pack.recoveryCode;
+      syncPass.value = '';
+      syncPassAgain.value = '';
+      syncMsg.value = '先把恢复码另存到安全位置；确认保存后才能上传。';
+      return;
+    }
+    syncMsg.value = '正在上传密文…';
+    await finishSyncUpload(pack);
+  } catch (e: any) { syncMsg.value = e?.message || '同步失败，请重试'; }
+  finally { syncBusy.value = false; }
+}
+
+async function confirmRecoveryAndUpload(): Promise<void> {
+  if (!pendingUpload.value || !recoverySaved.value || syncBusy.value) return;
+  syncBusy.value = true;
+  syncMsg.value = '正在上传密文…';
+  try { await finishSyncUpload(pendingUpload.value); }
+  catch (e: any) { syncMsg.value = e?.message || '上传失败，请重试'; }
+  finally { syncBusy.value = false; }
+}
+
+async function copyRecoveryCode(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(recoveryReveal.value);
+    db.notify('恢复码已复制，请另存到安全位置');
+  } catch { syncMsg.value = '无法自动复制，请长按恢复码手动复制'; }
+}
+
+async function fetchSyncBackup(): Promise<void> {
+  if (syncBusy.value) return;
+  const entered = syncCode.value.trim();
+  if (!entered) { syncMsg.value = '请输入同步码或完整恢复码'; return; }
+  const usingRecovery = entered.startsWith('UM1.');
+  if (syncPass.value.length < 10) {
+    syncMsg.value = usingRecovery ? '请设置一个至少 10 个字符的新同步口令' : '同步口令至少 10 个字符';
+    return;
+  }
+  syncBusy.value = true;
+  syncMsg.value = '正在下载并在本机解密…';
+  try {
+    const syncId = usingRecovery ? parseRecoveryCode(entered).syncId : entered;
+    const cipher = await downloadSyncCipher(syncId);
+    const opened = await decryptSync(cipher, entered, syncPass.value);
+    const info = await inspectBackup(opened.backup);
+    pendingSyncConfig.value = usingRecovery
+      ? await configFromRecovery(cipher, entered, syncPass.value)
+      : { syncId, passwordWrap: opened.envelope.passwordWrap, recoveryWrap: opened.envelope.recoveryWrap,
+          lastUploadedAt: opened.envelope.createdAt };
+    restoreB64.value = bytesToBase64(opened.backup);
+    restoreInfo.value = '云端加密备份 · ' + info.manifest.exportedAt + ' · 课表 ' + info.manifest.counts.courses +
+      ' 条 / 记事 ' + info.manifest.counts.notes + ' 条 / 二课 ' + info.manifest.counts.records + ' 条 / 照片 ' + info.manifest.counts.photos + ' 张';
+    syncMsg.value = '解密与完整性校验通过。请在下方选择“覆盖”或“合并”，再点开始恢复。';
+    syncPass.value = '';
+    syncPassAgain.value = '';
+  } catch (e: any) { syncMsg.value = e?.message || '下载恢复失败'; }
+  finally { syncBusy.value = false; }
+}
+
 async function pickBackup(e: Event): Promise<void> {
   const f = (e.target as HTMLInputElement).files?.[0];
   if (!f) return;
@@ -215,6 +337,12 @@ async function doRestore(): Promise<void> {
   }
   await restoreBackup(base64ToBytes(restoreB64.value), b, merge);
   await db.loadUserData();
+  if (pendingSyncConfig.value) {
+    db.settings.sync = pendingSyncConfig.value;
+    await db.saveData();
+    syncCode.value = pendingSyncConfig.value.syncId;
+    pendingSyncConfig.value = null;
+  }
   restoreB64.value = ''; restoreInfo.value = '';
   db.notify('恢复完成' + (merge ? '（合并）' : kept));
 }
@@ -295,6 +423,7 @@ async function copyInterests(): Promise<void> {
 <div class="li" @click="open('watermark')"><span class="ico">💧</span><div class="grow"><div class="bold">拍照水印</div><div class="small muted">自主开关水印内容与样式</div></div><span>›</span></div>
       <div class="li" @click="open('weather')"><span class="ico">🌤️</span><div class="grow"><div class="bold">天气</div><div class="small muted">{{ db.settings.weatherEnabled ? '已开启 · 课表页顶部一行天气' : '默认关闭 · 打开后课表页顶部显示一行天气' }}</div></div><span>›</span></div>
       <div class="li" @click="open('backup')"><span class="ico">💾</span><div class="grow"><div class="bold">备份与恢复</div><div class="small muted">导出 / 导入 .unimate.zip</div></div><span>›</span></div>
+      <div class="li" @click="open('sync')"><span class="ico">🔐</span><div class="grow"><div class="bold">加密换机同步</div><div class="small muted">{{ syncStatusText }}</div></div><span>›</span></div>
       <div class="li" @click="open('interests')"><span class="ico">🏫</span><div class="grow"><div class="bold">意向清单</div><div class="small muted">已提交意向的高校（本机 {{ db.interests.length }} 条）</div></div><span>›</span></div>
       <div class="li" @click="open('about')"><span class="ico">ℹ️</span><div class="grow"><div class="bold">关于 Unimate</div><div class="small muted">版本、定位与隐私说明</div></div><span>›</span></div>
     </div>
@@ -310,9 +439,9 @@ async function copyInterests(): Promise<void> {
     </div>
   </div>
 
-  <div v-if="panel" class="mask" @click.self="panel = ''">
+  <div v-if="panel" class="mask" @click.self="closePanel">
     <div class="sheet">
-      <div class="row"><div class="title grow">{{ { notify: '通知设置', watermark: '拍照水印', weather: '天气', backup: '备份与恢复', about: '关于 Unimate', interests: '意向清单' }[panel] }}</div><button class="btn sm ghost" @click="panel = ''">关闭</button></div>
+      <div class="row"><div class="title grow">{{ { notify: '通知设置', watermark: '拍照水印', weather: '天气', backup: '备份与恢复', sync: '加密换机同步', about: '关于 Unimate', interests: '意向清单' }[panel] }}</div><button class="btn sm ghost" @click="closePanel">关闭</button></div>
       <div class="hairline"></div>
 
       <template v-if="panel === 'notify'">
@@ -476,6 +605,38 @@ async function copyInterests(): Promise<void> {
         <div class="small muted">备份包含课表、记事、第二课堂记录与照片，请妥善保管，不要随意外发。</div>
       </template>
 
+      <template v-else-if="panel === 'sync'">
+        <div class="card small" style="background: var(--soft); box-shadow: none; line-height: 1.7">
+          课表、记事、二课材料和照片先在本机用 AES-256-GCM 加密，再直传 Cloudflare R2。服务端拿不到明文，也拿不到同步口令。
+          <b>忘记口令且恢复码也丢失时，任何人都无法找回数据。</b>
+        </div>
+        <div class="field"><label>同步码或完整恢复码</label><input v-model.trim="syncCode" autocomplete="off" placeholder="首次上传会自动生成；换机时粘贴" /></div>
+        <div class="field"><label>{{ syncPassLabel }}</label><input v-model="syncPass" type="password" autocomplete="off" placeholder="至少 10 个字符，App 不会保存" /></div>
+        <div class="field"><label>再次输入口令</label><input v-model="syncPassAgain" type="password" autocomplete="off" placeholder="上传时需一致" /></div>
+        <button class="btn block" :disabled="syncBusy" @click="prepareSyncUpload">{{ syncPrimaryText }}</button>
+        <button class="btn block ghost" style="margin-top: 8px" :disabled="syncBusy || !syncCode" @click="fetchSyncBackup">下载、解密并预览</button>
+
+        <div v-if="recoveryReveal" class="card" style="margin-top: 10px; box-shadow: none; background: var(--soft)">
+          <div class="bold small">恢复码（只在本机本次显示）</div>
+          <div class="small" style="margin-top: 6px; word-break: break-all; user-select: text">{{ recoveryReveal }}</div>
+          <button class="btn block ghost sm" style="margin-top: 8px" @click="copyRecoveryCode">复制恢复码</button>
+          <label class="row small" style="margin-top: 10px"><input v-model="recoverySaved" type="checkbox" /> <span>我已把恢复码另存到安全位置</span></label>
+          <button class="btn block" style="margin-top: 8px" :disabled="!recoverySaved || syncBusy" @click="confirmRecoveryAndUpload">确认并上传密文</button>
+        </div>
+        <div v-if="syncMsg" class="card small" style="margin-top: 10px; box-shadow: none; background: var(--soft)">{{ syncMsg }}</div>
+
+        <template v-if="restoreB64">
+          <div class="hairline"></div>
+          <div class="card small" style="background: var(--soft); box-shadow: none">{{ restoreInfo }}</div>
+          <div class="chips" style="margin: 10px 0">
+            <button class="chip sm" :class="{ on: restoreMode === 'overwrite' }" @click="restoreMode = 'overwrite'">覆盖（自动留底）</button>
+            <button class="chip sm" :class="{ on: restoreMode === 'merge' }" @click="restoreMode = 'merge'">合并（按 id）</button>
+          </div>
+          <button class="btn block" @click="doRestore">开始恢复</button>
+        </template>
+        <div class="small muted" style="margin-top: 10px; line-height: 1.7">每次上传都会同时在本机生成一份加密 .umig 文件；断网时仍可通过系统文件分享完成换机。</div>
+      </template>
+
       <template v-else-if="panel === 'interests'">
         <div v-if="!db.interests.length" class="empty small">还没有提交意向。可在"选择高校"页点击任意开发中的高校提交。</div>
         <div v-for="(i, idx) in db.interests" :key="idx" class="li" style="padding: 10px 0">
@@ -500,9 +661,10 @@ async function copyInterests(): Promise<void> {
         <div class="hairline"></div>
         <div class="small" style="line-height: 1.8">
           <b>我们想做的事：</b>把大学里高频却分散的"课表、待办、第二课堂材料、在线教学平台、教务系统"收进一个 App，并做成<b>可复制到不同高校的框架</b>——每所学校的差异收敛到一份高校档案与一个数据适配器，先做好北化，再按校推进。<br /><br />
-          <b>隐私：</b>全部数据只存本机；账号密码不读取、不保存、不代填；不使用第三方地图 Key；无埋点、无上报。<br />
-          App 自己发起的联网请求只有两处：<b>天气</b>（默认关闭，开关在「我的 → 天气」）：<b>开启天气后会向 Open-Meteo 发送你的大致位置用于查询天气，不发送其他信息</b>，关掉开关后一次请求都不发；<br />
+          <b>隐私：</b>数据默认只存本机；账号密码不读取、不保存、不代填；不使用第三方地图 Key；无埋点、无上报。只有你主动开启「加密换机同步」后，才会把本机已加密、服务端无法解读的备份密文上传到 Cloudflare R2。<br />
+          App 自己的联网功能有三类：<b>天气</b>（默认关闭，开关在「我的 → 天气」）：<b>开启天气后会向 Open-Meteo 发送你的大致位置用于查询天气，不发送其他信息</b>，关掉开关后一次请求都不发；<br />
           <b>高校档案更新</b>：在「选择高校」页每天最多检查一次，只从本项目自己的站点下载<b>公开的学校档案</b>（校名、官网地址、节次表），<b>不上传任何信息</b>；下载内容带 Ed25519 签名，验签不过一律不安装。<br />
+          <b>加密换机同步</b>：仅在你点上传或下载时联网，服务器只保存 AES-256-GCM 密文；同步口令和恢复码不上传、不保存，遗失后无法找回。<br />
           （你在「北化通」里打开的教务/教学系统网页属于你主动访问，不由 App 上传数据。）<br /><br />
           <b>声明：</b>本项目为学生自制演示作品，与学校官方无关；第二课堂分数为自评记录，非学校认定结果。
         </div>

@@ -31,9 +31,9 @@ import java.util.Map;
  * 待机桶（App Standby Bucket）/厂商冻结都会这样。
  *
  * 这条心跳**不依赖插件的排期**：
- *   1) 每 15 分钟（近期无排期时拉长到 60 分钟，别白耗电）用 setAndAllowWhileIdle 醒一次；
+ *   1) 有近期排期时在计划时刻后 30 秒安排一次兜底；没有时每 60 分钟检查一次；
  *   2) 扫一遍插件持久化的排期，把"刚过期还没投递"的直接投出去，并取消它对应的那条闹钟；
- *   3) 只补"过期 30 分钟以内"的：更早的直接丢弃 —— 与 App 侧"错过的提醒不补发"口径一致，
+ *   3) 只补"过期 2 分钟以内"的：更早的直接丢弃 —— 与 App 侧"错过的提醒不补发"口径一致，
  *      绝不制造"一打开就一股脑"的轰炸。
  *
  * 注意它的边界（写下来免得以后误判）：如果 ROM 把应用**明确冻结/限制**（后台限制、深度睡眠、
@@ -46,13 +46,9 @@ public class ReminderHeartbeat extends BroadcastReceiver {
     /** 只给自己用的动作（manifest 里注册，exported=false） */
     public static final String ACTION = "com.unimate.app.REMINDER_TICK";
     private static final int REQUEST_CODE = 20260921;
-    /**
-     * 有近期排期时的跳频。取 10 分钟：Android 在 Doze 下对"允许待机"的闹钟限制是**每 9 分钟一条**，
-     * 再密也不会更快；而 10 分钟能把"最多晚 15 分钟"压到"最多晚 10 分钟"。
-     */
-    private static final long TICK_MS = 10 * 60 * 1000L;
     private static final long TICK_IDLE_MS = 60 * 60 * 1000L;   // 没有近期排期：一小时一跳（省电）
-    private static final long CATCHUP_MS = 30 * 60 * 1000L;     // 只补 30 分钟内错过的
+    /** 超过两分钟就视为过期并丢弃，禁止用户打开 App 后收到一串历史提醒。 */
+    private static final long CATCHUP_MS = 2 * 60 * 1000L;
     private static final String INTENT_ID_KEY = "LocalNotificationId";
     private static final String INTENT_OBJ_KEY = "LocalNotficationObject";
     private static final String INTENT_ACTION_KEY = "LocalNotificationUserAction";
@@ -123,7 +119,7 @@ public class ReminderHeartbeat extends BroadcastReceiver {
      * 扫一遍插件持久化的排期并补投。返回真正投出去的条数（供自检/日志）。
      * 投过的条目会从插件存储里删掉，所以 App 打开时不会重复看到。
      */
-    public static int runOnce(Context context) {
+    public static synchronized int runOnce(Context context) {
         NotificationStorage storage = new NotificationStorage(context);
         CapConfig config = CapConfig.loadDefault(context);
         NotificationManagerCompat nm = NotificationManagerCompat.from(context);
@@ -161,6 +157,71 @@ public class ReminderHeartbeat extends BroadcastReceiver {
         return posted;
     }
 
+    /** 单条闹钟到点后的投递入口；和前台扫描共用同一把锁，避免同一条重复响。 */
+    public static synchronized boolean deliverById(Context context, int id) {
+        NotificationStorage storage = new NotificationStorage(context);
+        String idStr = Integer.toString(id);
+        LocalNotification n = storage.getSavedNotification(idStr);
+        if (n == null || n.getId() == null || n.getSchedule() == null || n.getSchedule().getAt() == null) return false;
+        long now = System.currentTimeMillis();
+        long at = n.getSchedule().getAt().getTime();
+        if (at > now + 1_000L) {
+            scheduleHardened(context, n);
+            return false;
+        }
+        boolean posted = false;
+        if (now - at <= CATCHUP_MS && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            posted = post(context, NotificationManagerCompat.from(context), CapConfig.loadDefault(context), n);
+        }
+        cancelPluginAlarm(context, id);
+        storage.deleteNotification(idStr);
+        return posted;
+    }
+
+    /**
+     * 把插件的无过期保护闹钟替换为 Unimate 接收器。插件仍负责序列化通知内容，
+     * 我们只接管系统触发点和投递前的迟到校验。
+     */
+    public static int hardenAll(Context context) {
+        NotificationStorage storage = new NotificationStorage(context);
+        int count = 0;
+        for (String idStr : new ArrayList<>(storage.getSavedNotificationIds())) {
+            LocalNotification n = storage.getSavedNotification(idStr);
+            if (n == null || n.getId() == null || n.getSchedule() == null || n.getSchedule().getAt() == null) continue;
+            // 先确认新闹钟排成功，再撤插件旧闹钟；否则接管失败反而会把提醒吞掉。
+            if (scheduleHardened(context, n)) {
+                cancelPluginAlarm(context, n.getId());
+                count++;
+            }
+        }
+        arm(context);
+        return count;
+    }
+
+    private static boolean scheduleHardened(Context context, LocalNotification n) {
+        try {
+            AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (am == null || n.getId() == null || n.getSchedule() == null || n.getSchedule().getAt() == null) return false;
+            Intent i = new Intent(context, ReminderAlarmReceiver.class)
+                    .setAction(ReminderAlarmReceiver.ACTION)
+                    .putExtra(ReminderAlarmReceiver.EXTRA_ID, n.getId());
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+            PendingIntent pi = PendingIntent.getBroadcast(context, n.getId(), i, flags);
+            long at = n.getSchedule().getAt().getTime();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()) {
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
+                } else {
+                    am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
+                }
+            } else {
+                am.setExact(AlarmManager.RTC_WAKEUP, at, pi);
+            }
+            return true;
+        } catch (Throwable ignored) { return false; }
+    }
+
     /**
      * 心跳状态（给 App 的"自检报告"用）：有没有排上、下一跳什么时候、上次补投了几条、累计几条。
      * 没有这些数字的话，"心跳到底跑没跑"就只能靠猜。
@@ -192,7 +253,7 @@ public class ReminderHeartbeat extends BroadcastReceiver {
     }
 
     /** 用与插件一致的渠道/图标/点击载荷投一条通知 */
-    private static boolean post(Context context, NotificationManagerCompat nm, CapConfig config, LocalNotification n) {
+    static boolean post(Context context, NotificationManagerCompat nm, CapConfig config, LocalNotification n) {
         try {
             String channelId = n.getChannelId() != null
                     ? n.getChannelId()
@@ -231,7 +292,7 @@ public class ReminderHeartbeat extends BroadcastReceiver {
     }
 
     /** 撤掉插件给这条通知排的闹钟（PendingIntent 匹配只看组件+请求码，所以能精确撤掉） */
-    private static void cancelPluginAlarm(Context context, int id) {
+    static void cancelPluginAlarm(Context context, int id) {
         try {
             AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
             if (am == null) return;
@@ -244,7 +305,7 @@ public class ReminderHeartbeat extends BroadcastReceiver {
         } catch (Throwable ignored) { }
     }
 
-    /** 排下一跳。近期有排期就 15 分钟一跳，否则一小时一跳（省电）。 */
+    /** 排下一跳。近期有排期就在其后 30 秒兜底，否则一小时一跳（省电）。 */
     public static void arm(Context context) {
         try {
             AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
@@ -258,12 +319,14 @@ public class ReminderHeartbeat extends BroadcastReceiver {
                 long t = n.getSchedule().getAt().getTime();
                 if (t > now && t < nearest) nearest = t;
             }
-            long delay = (nearest - now <= 60 * 60 * 1000L) ? TICK_MS : TICK_IDLE_MS;
             Intent i = new Intent(context, ReminderHeartbeat.class).setAction(ACTION);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
             PendingIntent pi = PendingIntent.getBroadcast(context, REQUEST_CODE, i, flags);
-            long next = now + delay;
+            // 有近期提醒时，把兜底放在计划时刻后 30 秒，而不是固定等 10 分钟。
+            long next = (nearest != Long.MAX_VALUE && nearest - now <= 60 * 60 * 1000L)
+                    ? Math.max(now + 10_000L, nearest + 30_000L)
+                    : now + TICK_IDLE_MS;
             try {
                 am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi);
             } catch (Throwable t) {

@@ -15,8 +15,8 @@ export const SCHOOLS: SchoolEntry[] = [
   { schoolId: 'buct', name: '北京化工大学', shortName: '北化', province: '北京', status: 'live', letter: 'B', order: 0 },
   dev('ahu', '安徽大学', '安大', '安徽', 'A', 1),
   dev('pku', '北京大学', '北大', '北京', 'B', 2),
-  // 第二所落地高校：北京第二外国语学院（拼音名次在"北京大学"之后、"北京工业大学"之前）
-  { schoolId: 'bisu', name: '北京第二外国语学院', shortName: '北二外', province: '北京', status: 'live', letter: 'B', order: 3 },
+  // 北二外档案只从签名云端包下载；APK 内只留名单占位。
+  dev('bisu', '北京第二外国语学院', '北二外', '北京', 'B', 3),
   dev('bjut', '北京工业大学', '北工大', '北京', 'B', 4),
   dev('buaa', '北京航空航天大学', '北航', '北京', 'B', 5),
   dev('bjtu', '北京交通大学', '北交大', '北京', 'B', 6),
@@ -122,83 +122,10 @@ export function findSchool(schoolId: string): SchoolEntry | undefined {
   return SCHOOLS.find((s) => s.schoolId === schoolId);
 }
 
-/**
- * 北京第二外国语学院（第二所落地高校，v2.21）。
- *
- * 依据：产品负责人提供的 BISU 教务系统页面（`北京第二外语/xskbcx_cxXsShcPdf-26.html`，正方 `zftal-ui-v5`、
- * 路径 `/jwglxt/kbcx/xskbcx_*`，与北化同属正方教务系统）与一张课表截图。
- *
- * 与北化的两点关键差异：
- *  1) **没有第二课堂** → `secondClass.enabled = false`：第二栏改名"活动材料"，只保留志愿时长 / 劳育时长，
- *     并说明不会套用北化的手册分值表（原始截图原话）。
- *  2) **节次时间不同** → 12 节时间逐条取自课表截图（第 6 节 13:20 起，第 11 节 18:30 起，与北化不一样），
- *     学期第一周周一 = 2026-09-07（截图为"第 2 周 = 9月14日~20日"）。
- *
- * 待核实（已在 PRD 里登记）：总周数（暂按 18）、校区名、以及"移动校园 / 智慧教学"两个入口的真实网址。
- * 未核实的网址一律不收录 —— 宁可少一个入口，也不能把学生引到错误站点。
- */
-export const BISU_PROFILE: SchoolProfile = {
-  schoolId: 'bisu',
-  profileVersion: 1,
-  name: '北京第二外国语学院',
-  shortName: '北二外',
-  status: 'live',
-  letter: 'B',
-  order: 3,
-  province: '北京',
-  brand: { primaryColor: '#B4443C', accentColor: '#E8A33D', iconLetter: '外' },
-  // 第三栏：北二外没有"北化在线"这类统一教学平台命名，统一叫"校园服务"（截图里的叫法）
-  tabs: { online: '校园服务' },
-  campusApps: [
-    { key: 'home', name: '学校主页', url: 'https://www.bisu.edu.cn/', icon: '🏫', desc: '学校新闻与通知公告', builtin: true },
-    { key: 'jwglxt', name: '教务处', url: 'https://jwglxt.bisu.edu.cn/', icon: '🏛', desc: '教学通知与教务服务', builtin: true },
-    { key: 'exam', name: '考试查询', url: 'https://jwglxt.bisu.edu.cn/jwglxt/kwgl/kscx_cxXsksxxIndex.html?gnmkdm=N358105&layout=default', icon: '📝', desc: '识别考试 · 写进记事本提醒', builtin: true, action: 'exam' }
-  ],
-  academic: {
-    semesterLabel: '2026-2027学年第1学期',
-    semesterStartMonday: '2026-09-07',
-    totalWeeks: 18,
-    periodCount: 12,
-    // 逐条来自产品负责人提供的北二外课表截图：上午 08:00 起、下午第 6 节 13:20、晚课第 11 节 18:30
-    periodTimes: [
-      { period: 1, start: '08:00', end: '08:45' },
-      { period: 2, start: '08:50', end: '09:35' },
-      { period: 3, start: '09:50', end: '10:35' },
-      { period: 4, start: '10:40', end: '11:25' },
-      { period: 5, start: '11:30', end: '12:15' },
-      { period: 6, start: '13:20', end: '14:05' },
-      { period: 7, start: '14:10', end: '14:55' },
-      { period: 8, start: '15:10', end: '15:55' },
-      { period: 9, start: '16:00', end: '16:45' },
-      { period: 10, start: '16:50', end: '17:35' },
-      { period: 11, start: '18:30', end: '19:15' },
-      { period: 12, start: '19:20', end: '20:05' }
-    ]
-  },
-  systems: {
-    jwglxtUrl: 'https://jwglxt.bisu.edu.cn/',
-    timetableUrl: 'https://jwglxt.bisu.edu.cn/jwglxt/kbcx/xskbcx_cxXskbcxIndex.html?gnmkdm=N2151&layout=default',
-    onlinePlatformUrl: 'https://www.bisu.edu.cn/',
-    // 与北化同属正方教务系统，课表页结构一致（都靠 id="kbgrid_table_0"），复用同一个解析器
-    timetableAdapter: 'jwglxt-buct'
-  },
-  campuses: ['校本部'],
-  secondClass: {
-    enabled: false,
-    label: '活动材料',
-    blocks: [],
-    rulePack: '',
-    notice: '不会套用北京化工大学的第二课堂分值表。你仍可使用上方"志愿时长"和"劳育时长"记录本地材料，照片与数据不会上传。'
-  },
-  watermark: { schoolBadgeText: '北京第二外国语学院' },
-  dataDir: 'schools/bisu'
-};
-
 export function profileFor(schoolId: string): SchoolProfile | null {
   // 新高校 = 新增一份 profile + 一个 adapter（PRD 5.9.4）。
-  // 目前落地两所：北化（首个）、北二外（无第二课堂版本）。
+  // APK 只内置北化；其它高校即使已有适配，也必须先下载签名云端档案。
   if (schoolId === 'buct') return JSON.parse(JSON.stringify(BUCT_PROFILE));
-  if (schoolId === 'bisu') return JSON.parse(JSON.stringify(BISU_PROFILE));
   return null;
 }
 
@@ -208,6 +135,5 @@ export function profileFor(schoolId: string): SchoolProfile | null {
  * **改了内置档案的内容就要把 profileVersion +1**，否则老用户永远看不到「可更新」。
  */
 export const BUILTIN_PROFILE_VERSIONS: Record<string, number> = {
-  buct: BUCT_PROFILE.profileVersion,
-  bisu: BISU_PROFILE.profileVersion
+  buct: BUCT_PROFILE.profileVersion
 };

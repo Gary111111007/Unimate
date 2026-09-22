@@ -60,6 +60,9 @@ ok('公钥是 32 字节（Ed25519 原始公钥）',
 {
   const index = parseCatalogIndex(JSON.parse(indexText));
   ok('清单能解析', !!index && index!.schools.length >= 2, JSON.stringify(index && index.schools.map((s) => s.id)));
+  ok('北二外作为 live 云端档案出现在签名清单',
+    !!index!.schools.find((s) => s.id === 'bisu' && s.status === 'live' && s.file === 'bisu.json'),
+    JSON.stringify(index!.schools));
   ok('schemaVersion = ' + CATALOG_SCHEMA, index!.schemaVersion === CATALOG_SCHEMA);
   let hashOk = 0, urlOk = 0, liveOnly = 0, versionOk = 0;
   for (const e of index!.schools) {

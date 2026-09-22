@@ -278,6 +278,13 @@ export interface Settings {
    * 把闹钟攒到用户打开 App 时才补发。**默认开**，可在「我的 → 通知设置」一键关闭。
    */
   reminderGuard: boolean;
+  /** P3 同步只保存随机同步码与“被加密的数据密钥”；同步口令和恢复码绝不落盘。 */
+  sync?: {
+    syncId: string;
+    passwordWrap: { salt: string; iterations: number; nonce: string; ciphertext: string };
+    recoveryWrap: { salt: string; iterations: number; nonce: string; ciphertext: string };
+    lastUploadedAt?: string;
+  } | null;
 }
 
 export interface InterestEntry { schoolId: string; schoolName: string; contact: string; createdAt: string }

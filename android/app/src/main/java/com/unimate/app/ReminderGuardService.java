@@ -9,7 +9,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
@@ -31,8 +33,21 @@ public class ReminderGuardService extends Service {
     private static final int NOTIFICATION_ID = 7001;
     private static final String PREFS = "unimate_guard";
     private static final String KEY_ENABLED = "enabled";
+    /**
+     * 前台服务不能只挂一条通知：那样系统扣住 AlarmManager 时，服务本身什么也不做。
+     * 每 15 秒直接检查一次插件的持久化排期；页面和 WebView 都不需要处于打开状态。
+     */
+    private static final long SCAN_MS = 15_000L;
     /** 供"自检报告"显示：服务到底起没起来（进程内标记） */
     private static volatile boolean running = false;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable scan = new Runnable() {
+        @Override public void run() {
+            if (!running || !isEnabled(ReminderGuardService.this)) return;
+            try { ReminderHeartbeat.runOnce(ReminderGuardService.this); } catch (Throwable ignored) { }
+            handler.postDelayed(this, SCAN_MS);
+        }
+    };
 
     @Override
     public IBinder onBind(Intent intent) { return null; }
@@ -66,6 +81,10 @@ public class ReminderGuardService extends Service {
                     .build();
             startForeground(NOTIFICATION_ID, n);
             running = true;
+            // 把插件原来的闹钟换成我们自己的防积压接收器；随后立即开始独立扫描。
+            ReminderHeartbeat.hardenAll(this);
+            handler.removeCallbacks(scan);
+            handler.post(scan);
         } catch (Throwable t) {
             // 起不来就退化成普通后台（提醒会退回"打开 App 才补发"的老样子），不能因此崩掉 App
             running = false;
@@ -76,6 +95,7 @@ public class ReminderGuardService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        handler.removeCallbacks(scan);
         super.onDestroy();
     }
 

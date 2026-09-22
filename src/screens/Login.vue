@@ -6,7 +6,7 @@ import { isNativeWebView } from '../services/jwwebview.ts';
 const db = useDb();
 /**
  * 公网演示站（v2.22）：浏览器里打开时给一句明确交代 ——
- * 数据只在这台设备的浏览器里、不上传；想要通知/相机等完整能力请装 APK。
+ * 数据默认只在这台设备的浏览器里；用户主动启用换机同步时只上传端到端加密密文。
  * 评审/同学第一次打开不用猜"这是不是真能用的版本"。
  */
 const isWeb = !isNativeWebView();
@@ -43,7 +43,7 @@ async function useDemo(): Promise<void> {
 
     <div class="body">
       <div v-if="isWeb" class="demobar">
-        <b>演示站</b>：数据只存在你这台设备的浏览器里，不上传、不采集。<br />
+        <b>演示站</b>：数据默认只存在你这台设备的浏览器里，不采集；换机同步只有主动操作才上传加密密文。<br />
         装 APK（或点下方演示账号）可体验完整功能，含课前提醒、拍照水印等。
       </div>
       <div class="logo">U</div>
@@ -63,8 +63,8 @@ async function useDemo(): Promise<void> {
         <div class="diag" :class="{ bad: !db.storage.ok }">本机存储自检：{{ db.storage.ok ? '正常' : '异常' }} · {{ db.storage.detail }}</div>
         <div v-if="db.lastError" class="errbox">{{ db.lastError }}</div>
         <div class="note muted small">
-          账号与全部数据只保存在本机、不上传。App 自己不会上传任何数据：会联网的只有你主动打开的网页（教务系统等）、
-          <b>默认关闭</b>的天气（见「我的 → 天气」）与"选择高校"页每天最多一次的高校档案检查（只下载公开档案，不上传）。
+          账号与数据默认只保存在本机。会联网的功能包括你主动打开的网页（教务系统等）、<b>默认关闭</b>的天气、
+          "选择高校"页每天最多一次的高校档案检查（只下载公开档案），以及你主动操作的加密换机同步；同步只上传端到端加密密文，口令不保存、不上传。
           密码只存不可逆哈希、没有"找回"入口，忘了密码就重新建号，
           旧数据可用「我的 → 备份与恢复」导入新账号。
         </div>
