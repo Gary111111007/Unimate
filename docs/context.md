@@ -1,4 +1,4 @@
-# 项目上下文交接（压缩版 · 2026-09-21，v2.30）
+# 项目上下文交接（压缩版 · 2026-09-22，v2.31）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
@@ -11,9 +11,9 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 项 | 值 |
 | --- | --- |
 | 仓库 | `E:\Gary\北京化工大学\北化app\Work` |
-| 最新提交 | 本次 v2.30（提醒兜底心跳；前几个：`edd4678` v2.29 P2.5、`95c704f` v2.28 提醒排期、`1404130` v2.26 纯 JS 验签） |
+| 最新提交 | 本次 v2.31（修 powerStatus 缺 ok + 心跳状态可查 + 一键自检报告）；前几个：33fdb29(v2.30 兜底心跳) / edd4678(v2.29 P2.5 解析适配器) / 95c704f(v2.28 提醒排期口径) |
 | 上一个提交 | `45e5e32` — 实际是 v2.15~v2.19（提交信息误写 v2.14，已在 PRD §14.1 登记真实口径，历史不重写） |
-| 未提交（本轮） | 无 —— 纯 JS 验签 + 重新签名的下发包一起提交（v2.26） |
+| 未提交（本轮） | 无 —— v2.31 的两个 bug 修复 + 自检报告一起提交 |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages，免备案） |
 | 最新 APK | `artifacts\android\unimate-debug.apk`（v2.30，SHA `15520571…`；v2.29 `DFC2326D…`、v2.28 `60B902DF…`） |
 | 提醒口径 | 地平线 7 天；只清"过期 90 秒以上 + 账本里没有的"排期（`notify/plan.json`）；**错过的提醒不补发** |
@@ -44,7 +44,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 ## 5. 常用命令
 
 ```powershell
-npm run test:notify       # 单跑某个套件（共 20 个：test:login/parser/exam/school/share/weather/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 680 条断言）
+npm run test:notify       # 单跑某个套件（共 20 个：test:login/parser/exam/school/share/weather/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 692 条断言）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1   # 唯一正确出包方式（沙箱内跑不通，需在沙箱外）
 npx wrangler pages deploy dist --project-name unimate3                       # 部署演示站

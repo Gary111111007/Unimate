@@ -5,7 +5,7 @@ import { ref } from 'vue';
 import { guard } from './guard.ts';
 import { WIRE_DATE_RE, wireAt } from './notifyWire.ts';
 import { readJson, writeJson } from './io.ts';
-import { JwWebView, isNativeWebView, type PowerStatus } from './jwwebview.ts';
+import { JwWebView, isNativeWebView, type HeartbeatStatus, type PowerStatus } from './jwwebview.ts';
 import type { Course, NoteItem, Settings, Timetable } from '../types.ts';
 
 const CLASS_ID_BASE = 100000;
@@ -424,11 +424,21 @@ export async function reminderReadiness(): Promise<ReminderReadiness> {
 /** 厂商 / 机型 / 电池优化状态（通知设置面板显示用；桌面预览返回 ok:false） */
 export async function powerStatus(): Promise<PowerStatus> {
   try {
-    const r: PowerStatus = await guard('查电池优化', JwWebView.powerStatus(), 2500, null as any);
+    // 超时放宽到 6 秒：真机上刚启动时 JS 忙，2.5 秒会误判成"未检测"（v2.28 真机截图就是这个）
+    const r: PowerStatus = await guard('查电池优化', JwWebView.powerStatus(), 6000, null as any);
     return r || { ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: '超时' };
   } catch (e: any) {
     return { ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: (e && e.message) || String(e) };
   }
+}
+
+/** 兜底心跳状态（v2.31）：给"自检报告"用 */
+export async function heartbeatStatus(): Promise<HeartbeatStatus> {
+  const empty: HeartbeatStatus = { ok: false, armed: false, armedAt: 0, nextAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, pendingNext: false };
+  try {
+    const r: HeartbeatStatus = await guard('查心跳状态', JwWebView.heartbeatStatus(), 4000, null as any);
+    return r && r.ok ? r : empty;
+  } catch { return empty; }
 }
 
 /** 最近一次自检结果（课表页那行提示用）：只做展示，不阻塞任何流程 */
@@ -464,4 +474,56 @@ export async function openExactAlarmSettings(): Promise<string> {
 export async function fixReminderSetting(target?: '' | 'exact' | 'battery'): Promise<string> {
   const t = target || (reminderRisk.value ? reminderRisk.value.canFix : 'exact');
   return t === 'battery' ? requestIgnoreBattery() : openExactAlarmSettings();
+}
+
+/**
+ * 一键自检报告（v2.31）。
+ *
+ * 为什么要有它：提醒"到点不响"的成因全在系统侧（权限、Doze、待机桶、ROM 冻结），
+ * 光看界面截图要来回好几轮才能问清楚。这个报告把**所有判据打成一段可复制的文本**：
+ * 权限状态、精确闹钟、电池优化、机型、排期条数与前三条计划时刻、启动清理结果（含"系统没投递"的条数）、
+ * 兜底心跳有没有排上/上次补投几条。
+ */
+export async function selfCheckReport(): Promise<string> {
+  const lines: string[] = [];
+  const now = new Date();
+  lines.push('Unimate 提醒自检 · ' + now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
+    + ' ' + now.toTimeString().slice(0, 5));
+  lines.push('原生环境：' + (isNativeWebView() ? '是' : '否（桌面预览）'));
+  try {
+    const st = await LocalNotifications.scheduled();
+    lines.push('系统通知权限：' + await permissionState());
+    lines.push('插件里排期条数：' + st.length);
+    const times = st.map((n: any) => {
+      const at = n.at || (n.schedule && n.schedule.at);
+      return at ? new Date(at).getTime() : 0;
+    }).filter((t: number) => t > 0).sort((a: number, b: number) => a - b);
+    const fmt = (t: number) => {
+      const d = new Date(t);
+      return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + d.toTimeString().slice(0, 5);
+    };
+    lines.push('最早三条排期：' + (times.length ? times.slice(0, 3).map(fmt).join(' / ') + '（现在 ' + fmt(Date.now()) + '）' : '（无）'));
+  } catch (e: any) {
+    lines.push('插件里排期条数：查询失败 ' + ((e && e.message) || e));
+  }
+  lines.push('精确闹钟授权：' + await exactAlarmState());
+  try {
+    const ps = await powerStatus();
+    lines.push('电池优化豁免：' + (ps.ok ? (ps.ignoring ? '已豁免' : '未豁免') : '查询失败') + (ps.rom ? ' · 机型 ' + ps.rom : ''));
+  } catch { lines.push('电池优化豁免：查询失败'); }
+  try {
+    const hb = await heartbeatStatus();
+    lines.push('兜底心跳：' + (hb.ok ? (hb.armed
+      ? '已排（上一跳 ' + fmtMs(hb.lastRunAt) + '，下一跳 ' + fmtMs(hb.nextAt) + '）'
+      : '未排（App 启动时应该会排上；若一直未排请反馈）')
+      : '查询失败') + '；累计补投 ' + hb.totalPosted + ' 条'
+      + (hb.lastPostedCount ? '（上次补投 ' + hb.lastPostedCount + ' 条 @ ' + fmtMs(hb.lastPostedAt) + '）' : ''));
+  } catch { lines.push('兜底心跳：查询失败'); }
+  return lines.join('\n');
+}
+
+function fmtMs(t: number): string {
+  if (!t) return '—';
+  const d = new Date(t);
+  return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + d.toTimeString().slice(0, 5);
 }

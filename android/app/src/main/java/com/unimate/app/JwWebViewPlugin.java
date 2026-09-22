@@ -133,11 +133,18 @@ public class JwWebViewPlugin extends Plugin {
             ret.put("rom", romName(m));
             ret.put("hint", hint(m));
             ret.put("error", "");
+            /*
+             * 这个 ok 以前漏了（v2.31 修）：前端按 `ps.ok` 判断"这次查询成不成功"，
+             * 少了它就一直显示"未检测"，还会把「去允许后台运行」按钮藏起来 ——
+             * 真机截图里就是这个现象（机型/路径都查到了，却显示未检测）。
+             */
+            ret.put("ok", true);
         } catch (Exception e) {
             ret.put("ignoring", false);
             ret.put("exactAlarm", false);
             ret.put("manufacturer", ""); ret.put("model", ""); ret.put("rom", ""); ret.put("hint", "");
             ret.put("error", e.getMessage() == null ? "查询失败" : e.getMessage());
+            ret.put("ok", false);
         }
         call.resolve(ret);
     }
@@ -217,6 +224,26 @@ public class JwWebViewPlugin extends Plugin {
             } else { ret.put("ok", true); }
             ret.put("error", "");
         } catch (Exception e) { ret.put("ok", false); ret.put("error", e.getMessage()); }
+        call.resolve(ret);
+    }
+
+    /**
+     * 提醒兜底心跳的状态（v2.31）：让 App 能显示"心跳到底排上了没、上次补投了几条"。
+     * 光有代码不算数 —— 真机上要先能证明它真的在跑。
+     */
+    @PluginMethod
+    public void heartbeatStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            // JSObject 没有 putAll（第一次写就踩了，编译直接红）：逐个键拷过去
+            for (java.util.Map.Entry<String, Object> e : ReminderHeartbeat.status(getContext()).entrySet()) {
+                ret.put(e.getKey(), e.getValue());
+            }
+            ret.put("ok", true);
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("error", e.getMessage() == null ? "查询失败" : e.getMessage());
+        }
         call.resolve(ret);
     }
 

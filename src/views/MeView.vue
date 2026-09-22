@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
-import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery } from '../services/notify.ts';
+import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
 import { applyTheme, type ThemeMode } from '../services/theme.ts';
 import { FONT_LEVELS, applyTextZoom } from '../services/display.ts';
@@ -24,6 +24,9 @@ const exact = ref('unknown');
 const wire = ref({ ok: true, sample: '', hint: '' });
 /** 电池优化 / 厂商信息（查不到就显示"未检测"） */
 const power = ref({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '', error: '' });
+/** 兜底心跳状态（v2.31）：证明它到底有没有在跑 */
+const hb = ref({ ok: false, armed: false, nextAt: 0, lastPostedCount: 0, totalPosted: 0, lastPostedAt: 0 });
+const reportMsg = ref('');
 /** 打开「天气」面板时的开关与城市：用它判断"保存时用户是不是明确改过"（改过就允许立刻拉一次） */
 const wxOpened = ref({ enabled: false, city: '' });
 
@@ -98,6 +101,21 @@ async function fixReminder(): Promise<void> {
 }
 
 /**
+ * 一键自检报告：把"提醒为什么不响"的所有判据打成文本，复制到剪贴板。
+ * 产品负责人反馈问题时粘贴这段就够，不用来回截图问我（v2.31 加）。
+ */
+async function copySelfCheck(): Promise<void> {
+  const text = await selfCheckReport();
+  reportMsg.value = text;
+  try {
+    await navigator.clipboard.writeText(text);
+    db.notify('自检报告已复制，直接粘贴发我即可');
+  } catch {
+    db.notify('剪贴板不可用，报告已显示在下方，可长按选中复制');
+  }
+}
+
+/**
  * 天气（Net.md P0）。
  * 开关状态直接写在设置里（和别的面板一样），只有点「保存设置」才落盘；
  * 关着的时候**一次请求都不发**（`ensureWeather` 里由 `shouldRequestWeather` 兜底），
@@ -127,6 +145,7 @@ async function refreshNotifyState(): Promise<void> {
   perm.value = await permissionState();
   exact.value = await exactAlarmState();
   power.value = await powerStatus();
+  hb.value = await heartbeatStatus();
   wire.value = wireSelfCheck();
   stats.value = await scheduleStats();
   sched.value = stats.value.total;
@@ -297,7 +316,12 @@ async function copyInterests(): Promise<void> {
           <div class="row" style="justify-content: space-between; margin-top: 10px"><span class="grow small">电池优化豁免</span><span class="pill" :class="power.ignoring ? 'live' : 'danger'">{{ power.ok ? (power.ignoring ? '已豁免' : '未豁免') : '未检测' }}</span></div>
           <button v-if="power.ok && !power.ignoring" class="btn block sm grey" style="margin-top: 8px" @click="fixReminder()">去允许后台运行</button>
           <div v-if="power.rom" class="small muted" style="margin-top: 6px">机型：{{ power.rom }}{{ power.hint ? ' · ' + power.hint : '' }}</div>
-          <div class="small muted" style="margin-top: 8px">提醒依赖三件事：系统通知权限、精确闹钟授权、以及厂商后台保留策略（电池优化豁免 / 自启动）。前两项在下面直接开；第三项各品牌入口不同，本页只给路径，不主动跳系统设置。</div>
+          <div class="small muted" style="margin-top: 8px">
+            <b>精确闹钟不是自启动</b>：它只是允许 App 设"准点闹钟"的系统开关，不占后台、不影响耗电与隐私，建议开（上面那个按钮就是）。
+            电池优化豁免（允许后台运行）是第二项。<br />
+            厂商的"自启动 / 后台保留"是第三项，<b>不想开也可以</b>——代价是提醒可能晚几分钟到十几分钟，
+            App 侧的 15 分钟兜底心跳会尽量补投（下面能看到它有没有在跑）。
+          </div>
         </div>
         <div class="card" style="box-shadow: none; background: var(--soft); margin-top: 10px">
           <div class="row" style="justify-content: space-between"><span class="small">系统已排期提醒</span><b class="small">{{ sched }} 条</b></div>
@@ -311,6 +335,15 @@ async function copyInterests(): Promise<void> {
             上次启动清理：取消 {{ db.notifyCleanup.cancelled }} 条过期排期<template v-if="db.notifyCleanup.missed">，其中 <b>{{ db.notifyCleanup.missed }} 条本该响过、但系统一直没投递</b>（这就是"到点不响、一打开才补发"的直接证据）</template>。
             <template v-if="db.notifyCleanup.missed">建议按上面的「精确闹钟授权」「电池优化豁免」两项去开；App 侧另有 15 分钟兜底心跳会自动补投（最多晚 15 分钟）。</template>
           </div>
+          <!-- 兜底心跳状态（v2.31）：光有代码不算数，真机上要看得到它在跑 -->
+          <div class="row" style="justify-content: space-between; margin-top: 6px"><span class="small">兜底心跳</span>
+            <span class="pill" :class="hb.ok ? (hb.armed ? 'live' : 'danger') : 'dev'">{{ hb.ok ? (hb.armed ? '已排' : '未排') : '未检测' }}</span>
+          </div>
+          <div v-if="hb.ok" class="small muted" style="margin-top: 4px">
+            下一跳 {{ hb.nextAt ? new Date(hb.nextAt).toTimeString().slice(0, 5) : '—' }} · 累计补投 {{ hb.totalPosted }} 条<template v-if="hb.lastPostedCount">（上次 {{ hb.lastPostedCount }} 条）</template>
+          </div>
+          <button class="btn block sm grey" style="margin-top: 10px" @click="copySelfCheck()">复制自检报告（发我即可）</button>
+          <div v-if="reportMsg" class="card small" style="margin-top: 8px; background: var(--soft); box-shadow: none; white-space: pre-wrap; word-break: break-all; user-select: text">{{ reportMsg }}</div>
           <div class="row" style="gap: 8px; margin-top: 10px">
             <button class="btn sm grow" @click="test(1)">测试提醒（1 分钟）</button>
             <button class="btn sm grey grow" @click="test(2)">2 分钟</button>

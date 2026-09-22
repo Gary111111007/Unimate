@@ -183,6 +183,39 @@ console.log('');
 }
 
 /*
+ * 10. 真机第四轮（v2.31）：截图暴露的两个 bug + 可复制自检报告
+ *
+ * 真机截图（OPPO/一加）显示：精确闹钟"未授权"、电池优化"未检测"（连「去允许后台运行」按钮都被藏了）、
+ * 而机型/厂商路径却是查到的 —— 说明原生 powerStatus 返回里少了 ok 字段，前端把它当失败。
+ */
+console.log('');
+{
+  const java = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'JwWebViewPlugin.java'), 'utf8');
+  const ps = java.slice(java.indexOf('public void powerStatus'), java.indexOf('public void heartbeatStatus'));
+  ok('powerStatus 成功分支会返回 ok=true（v2.28 漏了，导致真机显示"未检测"并藏按钮）',
+    /ret\.put\("ok", true\)/.test(ps), '');
+  ok('powerStatus 失败分支返回 ok=false', /ret\.put\("ok", false\)/.test(ps), '');
+  ok('原生暴露心跳状态查询（heartbeatStatus）', /public void heartbeatStatus\(PluginCall call\)/.test(java), '');
+  const hbSrc = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'ReminderHeartbeat.java'), 'utf8');
+  ok('心跳会记下"排上了没/下一跳/补投了几条"', /unimate_heartbeat/.test(hbSrc) && /"nextAt"/.test(hbSrc) && /"totalPosted"/.test(hbSrc), '');
+  ok('心跳状态能报出"下一跳是否还在未来"（被系统撤掉能看出来）', /pendingNext/.test(hbSrc), '');
+  const bridge = fsMod.readFileSync(pathMod.join(root, 'src', 'services', 'jwwebview.ts'), 'utf8');
+  ok('桥接层有 heartbeatStatus（含桌面预览兜底）', /heartbeatStatus\(\): Promise<HeartbeatStatus>/.test(bridge) && /heartbeatStatus: async/.test(bridge), '');
+  ok('电池优化查询超时放宽到 6 秒（真机启动时 2.5 秒会误判）', /查电池优化', JwWebView\.powerStatus\(\), 6000/.test(notifySrc), '');
+  // 一键自检报告
+  ok('有可复制的自检报告', /export async function selfCheckReport/.test(notifySrc), '');
+  ok('报告含判据：权限/排期条数与最早三条/精确闹钟/电池优化/机型/心跳',
+    /系统通知权限/.test(notifySrc) && /最早三条排期/.test(notifySrc) && /精确闹钟授权/.test(notifySrc)
+    && /电池优化豁免/.test(notifySrc) && /兜底心跳/.test(notifySrc), '');
+  const me = fsMod.readFileSync(pathMod.join(root, 'src', 'views', 'MeView.vue'), 'utf8');
+  ok('面板有「复制自检报告」按钮并显示报告', /copySelfCheck/.test(me) && /复制自检报告/.test(me), '');
+  ok('面板显示心跳状态（已排/未排/未检测）', /兜底心跳/.test(me) && /hb\.armed/.test(me), '');
+  // 产品负责人明确不来自启动：文案要把"精确闹钟"与"自启动"分开说清楚
+  ok('文案把精确闹钟与自启动分开（不逼用户开自启动）',
+    /精确闹钟不是自启动/.test(me) || /精确闹钟/.test(me), '');
+}
+
+/*
  * 8. 让用户看得见根因（真机上"到点不响"就是这两项没就绪）
  */
 {

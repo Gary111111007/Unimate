@@ -5,6 +5,7 @@ import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 
 import androidx.core.app.NotificationCompat;
@@ -16,10 +17,11 @@ import com.capacitorjs.plugins.localnotifications.LocalNotificationSchedule;
 import com.capacitorjs.plugins.localnotifications.NotificationStorage;
 import com.capacitorjs.plugins.localnotifications.TimedNotificationPublisher;
 import com.getcapacitor.CapConfig;
-
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 提醒兜底心跳（v2.30）。
@@ -51,6 +53,8 @@ public class ReminderHeartbeat extends BroadcastReceiver {
     private static final String INTENT_OBJ_KEY = "LocalNotficationObject";
     private static final String INTENT_ACTION_KEY = "LocalNotificationUserAction";
     private static final String INTENT_REMOVABLE_KEY = "LocalNotificationRepeating";
+    /** 心跳自己的运行痕迹（供"一键自检报告"用） */
+    private static final String PREFS = "unimate_heartbeat";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -93,7 +97,41 @@ public class ReminderHeartbeat extends BroadcastReceiver {
             cancelPluginAlarm(context, n.getId());          // 避免插件那条闹钟稍后再投一次
             storage.deleteNotification(idStr);
         }
+        if (posted > 0) {
+            SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            sp.edit()
+                    .putLong("lastPostedAt", System.currentTimeMillis())
+                    .putInt("lastPostedCount", posted)
+                    .putInt("totalPosted", sp.getInt("totalPosted", 0) + posted)
+                    .apply();
+        }
         return posted;
+    }
+
+    /**
+     * 心跳状态（给 App 的"自检报告"用）：有没有排上、下一跳什么时候、上次补投了几条、累计几条。
+     * 没有这些数字的话，"心跳到底跑没跑"就只能靠猜。
+     */
+    public static Map<String, Object> status(Context context) {
+        Map<String, Object> o = new LinkedHashMap<>();
+        try {
+            SharedPreferences sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            long armedAt = sp.getLong("armedAt", 0);
+            long nextAt = sp.getLong("nextAt", 0);
+            long lastRunAt = sp.getLong("lastRunAt", 0);
+            long lastPostedAt = sp.getLong("lastPostedAt", 0);
+            o.put("armedAt", armedAt);
+            o.put("nextAt", nextAt);
+            o.put("lastRunAt", lastRunAt);
+            o.put("lastPostedAt", lastPostedAt);
+            o.put("lastPostedCount", sp.getInt("lastPostedCount", 0));
+            o.put("totalPosted", sp.getInt("totalPosted", 0));
+            o.put("armed", armedAt > 0);
+            o.put("pendingNext", nextAt > System.currentTimeMillis());
+        } catch (Throwable t) {
+            o.put("armed", false);
+        }
+        return o;
     }
 
     /** 用与插件一致的渠道/图标/点击载荷投一条通知 */
@@ -168,11 +206,18 @@ public class ReminderHeartbeat extends BroadcastReceiver {
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
             PendingIntent pi = PendingIntent.getBroadcast(context, REQUEST_CODE, i, flags);
+            long next = now + delay;
             try {
-                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, now + delay, pi);
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi);
             } catch (Throwable t) {
-                am.set(AlarmManager.RTC_WAKEUP, now + delay, pi);
+                am.set(AlarmManager.RTC_WAKEUP, next, pi);
             }
+            // 记下"什么时候排的、下一跳在什么时候"——自检报告里要显示出来
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putLong("armedAt", now)
+                    .putLong("lastRunAt", now)
+                    .putLong("nextAt", next)
+                    .apply();
         } catch (Throwable ignored) { }
     }
 }

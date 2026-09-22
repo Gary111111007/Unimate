@@ -29,6 +29,8 @@ export interface JwWebViewPlugin {
   /** 申请加入电池优化白名单（先试系统一键弹窗，退回设置列表页） */
   requestIgnoreBattery(): Promise<{ ok: boolean; mode: string; error: string }>;
   openExactAlarmSettings(): Promise<{ ok: boolean; error: string }>;
+  /** 提醒兜底心跳的运行状态（v2.31）：证明"它到底有没有在跑"就靠这几个数 */
+  heartbeatStatus(): Promise<HeartbeatStatus>;
   /** 界面字号：原生用 WebView textZoom，只放大文字不动布局坐标系 */
   setTextZoom(options: { percent: number }): Promise<{ ok: boolean; applied: number; error: string }>;
 }
@@ -42,6 +44,22 @@ export interface PowerStatus {
   error: string;
 }
 
+export interface HeartbeatStatus {
+  ok: boolean;
+  /** 是否已经排过至少一跳 */
+  armed: boolean;
+  armedAt: number;
+  nextAt: number;
+  lastRunAt: number;
+  /** 上一次真正补投的时间与条数 */
+  lastPostedAt: number;
+  lastPostedCount: number;
+  totalPosted: number;
+  /** 下一跳是否还在未来（排上了但被系统撤掉的话这里会是 false） */
+  pendingNext: boolean;
+  error?: string;
+}
+
 export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
   web: () => ({
     open: async (): Promise<WebViewOpenResult> => ({ ok: false, reason: 'web-unsupported' }),
@@ -50,6 +68,7 @@ export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
     powerStatus: async (): Promise<PowerStatus> => ({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '桌面预览环境无法查询电池优化状态，请在手机上查看', error: 'web-unsupported' }),
     requestIgnoreBattery: async () => ({ ok: false, mode: '', error: '桌面预览环境无法调用系统设置' }),
     openExactAlarmSettings: async () => ({ ok: false, error: '桌面预览环境无法调用系统设置' }),
+    heartbeatStatus: async (): Promise<HeartbeatStatus> => ({ ok: false, armed: false, armedAt: 0, nextAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, pendingNext: false, error: 'web-unsupported' }),
     setTextZoom: async (o: { percent: number }) => ({ ok: false, applied: o && o.percent ? o.percent : 100, error: 'web-unsupported' })
   })
 });
