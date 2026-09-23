@@ -469,6 +469,18 @@ public class JwWebViewPlugin extends Plugin {
             ret.put("entries", entries);
             ret.put("aliveCount", alive);
             ret.put("checkedCount", ids.length());
+            // v2.57：顺带数一数"补位闹钟"（+2 分钟那条）还在不在 —— 它是冻结场景下的第二道保险
+            int backup = 0;
+            for (int i = 0; i < ids.length(); i++) {
+                int id = ids.getInt(i);
+                Intent it = new Intent(getContext(), ReminderAlarmReceiver.class)
+                        .setAction(ReminderAlarmReceiver.ACTION)
+                        .putExtra(ReminderAlarmReceiver.EXTRA_ID, id);
+                int flags = PendingIntent.FLAG_NO_CREATE;
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+                if (PendingIntent.getBroadcast(getContext(), id + ReminderHeartbeat.BACKUP_OFFSET, it, flags) != null) backup++;
+            }
+            ret.put("backupCount", backup);
             ret.put("ok", true);
         } catch (Exception e) {
             ret.put("ok", false);

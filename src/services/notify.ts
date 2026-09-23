@@ -711,6 +711,7 @@ export async function selfCheckReport(): Promise<string> {
       : null;
     if (d && d.ok) {
       lines.push('闹钟条目：' + (d.aliveCount || 0) + '/' + (d.checkedCount || 0) + ' 条真的挂在系统里'
+        + (d.backupCount === undefined ? '' : '（另有 ' + d.backupCount + ' 条 2 分钟补位闹钟）')
         + '（精确闹钟可用：' + (d.exactAllowed ? '是' : '否')
         + (d.useExactAlarm === undefined ? '' : '；USE_EXACT_ALARM ' + (d.useExactAlarm ? '已授予（装上就有）' : '未授予'))
         + (d.nextAlarmAt ? '；系统"下一个闹钟"=' + fmt(d.nextAlarmAt) : '') + '）');

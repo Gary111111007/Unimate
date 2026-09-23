@@ -456,6 +456,15 @@ async function copyInterests(): Promise<void> {
           <!-- 电池优化（v2.28）：不做这一步，国产 ROM 会把后台冻住，排期根本投递不到 -->
           <div class="row" style="justify-content: space-between; margin-top: 10px"><span class="grow small">电池优化豁免</span><span class="pill" :class="power.ignoring ? 'live' : 'danger'">{{ power.ok ? (power.ignoring ? '已豁免' : '未豁免') : '未检测' }}</span></div>
           <button v-if="power.ok && !power.ignoring" class="btn block sm grey" style="margin-top: 8px" @click="fixReminder()">去允许后台运行</button>
+          <!--
+            v2.57：产品负责人明确不开"允许后台运行"、也不开厂商自启动。
+            那就**如实写明后果**，不再让他反复试（AGENTS.md 第 7 条：文案必须与实现一致）。
+          -->
+          <div v-if="power.ok && !power.ignoring" class="small muted" style="margin-top: 6px; line-height: 1.6">
+            <b>你选择不开这一项的话</b>：系统会在后台把 Unimate 冻住，提醒可能晚到（通常几分钟到十几分钟，
+            由兜底心跳补投），极端情况下要等你打开 App 才补发。想准点有两条路：开这一项，或者打开下面的
+            <b>「同步到系统日历」</b>（由系统日历 App 负责到点弹）。
+          </div>
           <div v-if="power.rom" class="small muted" style="margin-top: 6px">机型：{{ power.rom }}{{ power.hint ? ' · ' + power.hint : '' }}</div>
           <div class="small muted" style="margin-top: 8px">
             <b>精确闹钟不是自启动</b>：它只是允许 App 设"准点闹钟"的系统开关，不占后台、不影响耗电与隐私，建议开（上面那个按钮就是）。

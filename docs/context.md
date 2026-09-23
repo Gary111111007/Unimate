@@ -1,4 +1,4 @@
-# 项目上下文交接（压缩版 · 2026-09-23，v2.56）
+# 项目上下文交接（压缩版 · 2026-09-23，v2.57）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
@@ -11,14 +11,16 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 项 | 值 |
 | --- | --- |
 | 仓库 | `E:\Gary\北京化工大学\北化app\Work` |
-| 最新提交 | 本次 v2.56（**选择性把提醒写进系统日历**，默认关、关掉自动清空 —— 产品负责人不愿开"允许后台运行"的兜底）；`c3be621` v2.55（`USE_EXACT_ALARM` 装上即授予 + `setAlarmClock` + 闹钟条目自检）；`10640b5` v2.54（修 `CHANNEL_TAG` 崩溃 + 可拖动头像裁剪） |
+| 最新提交 | 本次 v2.57（**提醒最后两招**：每条提醒 +2 分钟补位闹钟 + 心跳走 `setAlarmClock`；并把"不开后台运行就会晚到"写进界面）；`eb3a727` v2.56（选择性系统日历兜底）；`c3be621` v2.55（`USE_EXACT_ALARM` 装上即授予 + `setAlarmClock`） |
 > **口径变更（v2.43，最重要的一条）**：产品负责人要求"像普通 App 那样账号登录、数据存云端"，并**明确撤销**了旧口径。
 > 现在主推**账号登录（服务器托管）**：备份存 R2、服务端持 `DATA_KEY` **能读**、忘记密码开发者可重置；
 > 端到端加密（服务器读不懂）**降为可选高级项**。`AGENTS.md` 硬规则 5 已改写 —— 旧表述（"数据默认全本地 / 只上传密文 / 服务器看不到你的数据"）**不许再写进 UI 或答辩材料**。
 | 先读哪 | 云端与 P3 的最新状态看 **`PRD.md` 开头的「当前接续摘要」** 与 **`Net.md` 的「当前云端接续摘要」**（本节只保留工程侧的通用交接） |
-| 未提交（本轮） | 无 —— v2.56 一起提交 |
+| 未提交（本轮） | 无 —— v2.57 一起提交 |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages）；**线上 = v2.39**（`assets/index-DroQga0f.js`，`catalog/` 三件套 200、`_worker.js` 生效） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.56，SHA `8E5007C0…`；v2.55 `664171BE…`、v2.54 `2588383C71…`） |
+| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.57，SHA `01809686…`；v2.56 `8E5007C0…`、v2.55 `664171BE…`） |
+| 提醒（v2.57 收尾） | ① **补位闹钟**：每条提醒再多排一个 +2 分钟的闹钟（独立请求码 `id + 500000`；投递时 `cancelBackupAlarm` 一起撤，不会重复弹），冻结场景下的第二道保险；② **心跳走 `setAlarmClock`**（被 ROM 拦则落回 allowWhileIdle），醒来就把刚过期的提醒投出去；③ 自检报告显示"另有 K 条 2 分钟补位闹钟"；④ 界面如实写明：不开「允许后台运行」→ 提醒可能晚几分钟到十几分钟，想准点只有**开那一项**或**打开系统日历兜底** |
+| 提醒的边界（写死，别再重复劳动） | 产品负责人**既不开"允许后台运行"也不开厂商自启动**。App 侧能做的已到极限（精确闹钟自动授予、闹钟确实在系统里、渠道 HIGH+声音、前台守护在跑、补位闹钟 + 心跳 + 选择性系统日历兜底）。**除非他改变主意去开那两个系统开关，否则不再为 ColorOS 冻结改 App 代码** —— 见 PRD 11.65 D 节的搁置口径 |
 | 系统日历兜底（v2.56） | 产品负责人明确"**我不想允许在后台运行**"，而 v2.55 真机报告只剩 `电池优化豁免：未豁免` 这一项。于是做**选择性写系统日历**：闹钟由**系统日历 App 持有**（系统应用不受冻结影响）。三条纪律：**默认关**（`localStorage 'unimate_calendar_sync'`）；每条事件带 `Events.CUSTOM_APP_PACKAGE` 标记，**只删自己写的**；关开关或点「清空已写入的日程」（二次确认）会全部清掉。原生方法：`calendarRequest/calendarStatus/calendarSync/calendarClear`；清单加 `READ_CALENDAR`/`WRITE_CALENDAR`（只在打开开关时才申请）。前端：`calendarSyncEnabled/setCalendarSync/syncCalendarNow/clearCalendarEvents/calendarEventsFromSchedule` + 纯函数 `calendarEventsFor`（`test:calendar` 8 条）。**接线在 `rescheduleAll()` 末尾**：开关打开时把同一批提醒写进日历 |
 | 提醒（v2.55，按业界做法） | ① 清单加 **`USE_EXACT_ALARM`**（Android 13+ 自动授予，不必用户去系统设置开；本项目侧载不走 Play 所以可声明，**上架需改回**，代码里保留 `canScheduleExactAlarms()` 为假时的降级）；② 排期**优先 `am.setAlarmClock()`**（系统"下一个闹钟"通道，不参与 Doze 攒队），只对 **24 小时内**的排期用，失败落回 `setExactAndAllowWhileIdle`；③ 自检报告新增「**闹钟条目：N/M 真的挂在系统里**」（用 `PendingIntent.FLAG_NO_CREATE`；一条都没挂时直接写明"这就是到点不响的直接原因"）+ `USE_EXACT_ALARM 是否已授予` + 系统下一个闹钟时间；④ `ReminderGuardService.onTaskRemoved()` 重新硬化排期并重启服务（对付"划掉 App 之后就不响"） |
 | 提醒真机结论（v2.53 报告） | `通知渠道：上课=HIGH(横幅) 有声音、待办=HIGH(横幅) 有声音`、`Doze 待机：否` → **渠道没问题**；但 **`精确闹钟授权：denied`**、**`电池优化豁免：未豁免`** → 到点会晚 + 系统冻结时攒到打开 App 才补发。**这两项只能用户自己去系统设置开**（App 只查状态 + 给入口，v2.28 定的口径）；厂商自启动他明确不动 → 接受"晚 10~15 分钟" |
@@ -85,7 +87,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 ## 5. 常用命令
 
 ```powershell
-npm run test:notify       # 单跑某个套件（共 23 个：test:login/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard/avatar/calendar；合计 946 条断言）
+npm run test:notify       # 单跑某个套件（共 23 个：test:login/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard/avatar/calendar；合计 951 条断言）
 node scripts\make-pages-package.mjs v2.52   # 只出可拖放目录（不压 ZIP）
 npm run check:cloud       # v2.45：线上账号链路自检（临时账号走注册→上传→下载→注销，自清理；需外网）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）

@@ -348,6 +348,26 @@ console.log('\n--- v2.53：通知渠道自检 + 一键重建 ---');
   ok('用户划掉 App 时重新硬化排期并重启守护服务（onTaskRemoved）',
     /public void onTaskRemoved\(Intent rootIntent\)/.test(guardSvc)
     && /ReminderHeartbeat\.hardenAll\(this\)/.test(guardSvc), '');
+
+  /*
+   * v2.57：产品负责人明确不开"允许后台运行"+不开自启动 —— 那 App 侧只剩两招：
+   *  ① 每条提醒再排一个 +2 分钟的**补位闹钟**（另一个 PendingIntent，冻结场景下的第二道保险；
+   *     投递后会连它一起撤掉，所以不会重复弹）；
+   *  ② **心跳也走 setAlarmClock**（"下一个闹钟"通道），醒来就把刚过期的提醒投出去。
+   * 同时界面要**如实写明**不开后台权限的后果（不许再承诺准点）。
+   */
+  ok('每条提醒都排了 +2 分钟的补位闹钟（另一个请求码）',
+    /BACKUP_OFFSET/.test(heartbeat)
+    && /id \+ BACKUP_OFFSET/.test(heartbeat)
+    && /at \+ 2 \* 60 \* 1000L/.test(heartbeat), '');
+  ok('主闹钟投递后会把补位闹钟一起撤掉（不能晚 2 分钟又弹一次）',
+    /cancelBackupAlarm\(context, id\)/.test(heartbeat), '');
+  ok('心跳也优先走 setAlarmClock，被 ROM 拦时落回 allowWhileIdle',
+    /am\.setAlarmClock\(new AlarmManager\.AlarmClockInfo\(next, null\), pi\)/.test(heartbeat)
+    && /if \(!clocked\) am\.setAndAllowWhileIdle/.test(heartbeat), '');
+  ok('自检报告显示补位闹钟条数', /另有 ' \+ d\.backupCount/.test(notify) || /backupCount/.test(notify), '');
+  ok('界面如实写明"不开后台运行"的后果，并指向两条准点方案',
+    /你选择不开这一项的话/.test(me) && /同步到系统日历/.test(me), '');
   ok('渠道 tag 改成可配置（否则被静音后只能等发新版）',
     /function channelTag\(\)/.test(notify) && /CHANNEL_TAG_KEY/.test(notify)
     && !/const CHANNEL_TAG = 'v[0-9]+'/.test(notify), '');

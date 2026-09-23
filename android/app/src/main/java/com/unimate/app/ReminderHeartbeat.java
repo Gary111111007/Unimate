@@ -42,6 +42,8 @@ import java.util.Map;
  * 进程被杀这些更常见的情况。
  */
 public class ReminderHeartbeat extends BroadcastReceiver {
+    /** v2.57：补位闹钟的请求码偏移（同一条提醒的主闹钟用 id，补位用 id + 这个偏移） */
+    static final int BACKUP_OFFSET = 500_000;
 
     /** 只给自己用的动作（manifest 里注册，exported=false） */
     public static final String ACTION = "com.unimate.app.REMINDER_TICK";
@@ -174,6 +176,7 @@ public class ReminderHeartbeat extends BroadcastReceiver {
             posted = post(context, NotificationManagerCompat.from(context), CapConfig.loadDefault(context), n);
         }
         cancelPluginAlarm(context, id);
+        cancelBackupAlarm(context, id);
         storage.deleteNotification(idStr);
         return posted;
     }
@@ -209,6 +212,27 @@ public class ReminderHeartbeat extends BroadcastReceiver {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
             PendingIntent pi = PendingIntent.getBroadcast(context, n.getId(), i, flags);
             long at = n.getSchedule().getAt().getTime();
+            /*
+             * v2.57：**给每条提醒再排一个"补位闹钟"**（+2 分钟，用不同的请求码）。
+             *
+             * 为什么：产品负责人不肯开"允许后台运行"，ROM 冻结下**主闹钟有可能被系统扣住**；
+             * 补位闹钟走的是另一条 PendingIntent，只要它被放行，就能把这条提醒补上（`deliverById`
+             * 投递后会把插件存储里那条删掉，所以补位闹钟再来一次也**不会重复弹**）。
+             * 只给 24 小时内的排期排补位，免得一次注册太多闹钟。
+             */
+            if (at - System.currentTimeMillis() <= 24L * 60 * 60 * 1000 && at + 2 * 60 * 1000L > System.currentTimeMillis()) {
+                try {
+                    PendingIntent backup = PendingIntent.getBroadcast(context, n.getId() + BACKUP_OFFSET, i, flags);
+                    long backupAt = at + 2 * 60 * 1000L;
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                        am.setExact(AlarmManager.RTC_WAKEUP, backupAt, backup);
+                    } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()) {
+                        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, backupAt, backup);
+                    } else {
+                        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, backupAt, backup);
+                    }
+                } catch (Throwable ignored) { }
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()) {
                     /*
@@ -329,6 +353,20 @@ public class ReminderHeartbeat extends BroadcastReceiver {
         } catch (Throwable ignored) { }
     }
 
+    /** v2.57：把某条提醒的**补位闹钟**也撤掉（主闹钟撤了但补位还在的话，会晚 2 分钟又弹一次） */
+    static void cancelBackupAlarm(Context context, int id) {
+        try {
+            AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) return;
+            Intent i = new Intent(context, ReminderAlarmReceiver.class)
+                    .setAction(ReminderAlarmReceiver.ACTION)
+                    .putExtra(ReminderAlarmReceiver.EXTRA_ID, id);
+            int flags = PendingIntent.FLAG_CANCEL_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+            am.cancel(PendingIntent.getBroadcast(context, id + BACKUP_OFFSET, i, flags));
+        } catch (Throwable ignored) { }
+    }
+
     /** 排下一跳。近期有排期就在其后 30 秒兜底，否则一小时一跳（省电）。 */
     public static void arm(Context context) {
         try {
@@ -352,7 +390,23 @@ public class ReminderHeartbeat extends BroadcastReceiver {
                     ? Math.max(now + 10_000L, nearest + 30_000L)
                     : now + TICK_IDLE_MS;
             try {
-                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi);
+                /*
+                 * v2.57：**心跳也走"下一个闹钟"通道**（setAlarmClock）。
+                 *
+                 * 为什么：用户不肯开"允许后台运行"，ROM 冻结下普通 allowWhileIdle 闹钟会被攒着；
+                 * setAlarmClock 是系统给闹钟类应用留的通道（状态栏会显示闹钟图标），更可能被放行 ——
+                 * 只要心跳醒来一次，runOnce 就会把刚过期、还在补投窗口内的提醒投出去。
+                 * 被 ROM 拦就落回原来的 allowWhileIdle。
+                 */
+                boolean clocked = false;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                        && (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms())) {
+                    try {
+                        am.setAlarmClock(new AlarmManager.AlarmClockInfo(next, null), pi);
+                        clocked = true;
+                    } catch (Throwable ignored) { }
+                }
+                if (!clocked) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi);
             } catch (Throwable t) {
                 am.set(AlarmManager.RTC_WAKEUP, next, pi);
             }
