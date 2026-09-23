@@ -638,8 +638,9 @@ console.log('\n--- v2.44：登录页直接取回云端课表 ---');
     && /previewCloudBackup\(bytes, db\)/.test(loginSrc) && /await adoptCloudBackup\(bytes, db, session\)/.test(loginSrc), '');
   ok('登录页取回前必过 db.confirm，且覆盖本机数据时标红',
     /await db\.confirm\(\{/.test(loginSrc) && /danger: preview\.willOverwrite/.test(loginSrc), '');
-  ok('登录页文案与实现一致：明说账号模式的数据存在云端服务器、服务端可读',
-    /数据存在云端服务器/.test(loginSrc) && /服务端持密钥可读/.test(loginSrc), '');
+  // v2.46 登录页"二合一"后，云端说明在页面底部的隐私段落里（不再单独占一张卡）
+  ok('登录页文案与实现一致：明说账号模式的备份存在云端服务器、服务端可读',
+    /备份存云端服务器/.test(loginSrc) && /服务端持密钥可读/.test(loginSrc), '');
 }
 
 /*

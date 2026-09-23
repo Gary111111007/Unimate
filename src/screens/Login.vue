@@ -12,7 +12,11 @@ const db = useDb();
  * 评审/同学第一次打开不用猜"这是不是真能用的版本"。
  */
 const isWeb = !isNativeWebView();
-const mode = ref<'login' | 'register'>('login');
+/**
+ * v2.46：登录页"二合一" —— 本机登录 / 创建本机账号 / 云端取回 三种入口收进同一张卡，
+ * 不再上下堆两张卡（产品负责人反馈"这个界面二合一一下"）。演示账号按钮保留。
+ */
+const mode = ref<'login' | 'register' | 'cloud'>('login');
 const username = ref('');
 const password = ref('');
 const displayName = ref('');
@@ -31,7 +35,7 @@ async function cloudSignIn(): Promise<void> {
   if (name.length < 3) { cloudMsg.value = '请输入 Unimate 账号'; return; }
   if (cloudPass.value.length < 8) { cloudMsg.value = '密码至少 8 个字符'; return; }
   cloudBusy.value = true;
-  cloudMsg.value = '正在登录云账号…';
+  cloudMsg.value = '正在登录云账号（服务器在境外，可能要十几秒，请勿退出）…';
   try {
     const session = await accountLogin(name, cloudPass.value);
     const meta = await accountInfo(session);
@@ -39,7 +43,7 @@ async function cloudSignIn(): Promise<void> {
       cloudMsg.value = '已登录「' + session.account + '」，但这个账号云端还没有备份。请先在旧设备上「我的 → 加密换机同步 → 上传当前数据到云端」，再回来取回。';
       return;
     }
-    cloudMsg.value = '正在下载云端备份…';
+    cloudMsg.value = '正在从云端下载备份（数据越大越慢，请勿退出）…';
     const bytes = await accountDownload(session);
     if (!bytes) { cloudMsg.value = '这个账号云端还没有备份'; return; }
     const preview = await previewCloudBackup(bytes, db);
@@ -56,7 +60,7 @@ async function cloudSignIn(): Promise<void> {
       confirmText: '取回并进入', cancelText: '取消', danger: preview.willOverwrite
     });
     if (!ok) { cloudMsg.value = '已取消'; return; }
-    cloudMsg.value = '正在恢复到本机…';
+    cloudMsg.value = '正在恢复到本机（照片多时更慢，请稍等）…';
     await adoptCloudBackup(bytes, db, session);
     cloudMsg.value = '已取回云端课表，正在进入…';
   } catch (e: any) { cloudMsg.value = e?.message || '云端登录失败，请重试'; }
@@ -91,7 +95,7 @@ async function useDemo(): Promise<void> {
 
     <div class="body">
       <div v-if="isWeb" class="demobar">
-        <b>演示站</b>：数据默认只存在你这台设备的浏览器里，不采集；换机同步只有主动操作才上传加密密文。<br />
+        <b>演示站</b>：数据默认只存在你这台设备的浏览器里，不采集；只有你自己开「账号登录」或「端到端加密同步」时才会联网备份。<br />
         装 APK（或点下方演示账号）可体验完整功能，含课前提醒、拍照水印等。
       </div>
       <div class="logo">U</div>
@@ -100,32 +104,36 @@ async function useDemo(): Promise<void> {
 
       <div class="card form">
         <div class="tabs">
-          <button :class="{ on: mode === 'login' }" @click="mode = 'login'">登录</button>
-          <button :class="{ on: mode === 'register' }" @click="mode = 'register'">创建本地账号</button>
+          <button :class="{ on: mode === 'login' }" @click="mode = 'login'">本机登录</button>
+          <button :class="{ on: mode === 'register' }" @click="mode = 'register'">创建账号</button>
+          <button :class="{ on: mode === 'cloud' }" @click="mode = 'cloud'">换机取回</button>
         </div>
-        <div class="field"><label>用户名（学号或自定义）</label><input v-model="username" placeholder="2~20 个字符" /></div>
-        <div class="field"><label>密码</label><input v-model="password" type="password" placeholder="至少 6 位" /></div>
-        <div v-if="mode === 'register'" class="field"><label>昵称（选填）</label><input v-model="displayName" placeholder="显示在课表页顶部" /></div>
-        <button class="btn block" @click="submit">{{ mode === 'login' ? '登录' : '创建并登录' }}</button>
-        <button class="btn block ghost" style="margin-top: 10px" @click="useDemo">用演示账号登录（admin / buct）</button>
 
-        <div class="cloudbox">
-          <div class="bold small">换新手机？用 Unimate 账号取回课表</div>
-          <div class="muted small" style="margin-top: 4px; line-height: 1.7">
-            输账号 + 密码 → 自动从云端取回课表、记事、二课与照片，直接进主界面（不用先在本机建号）。
-            这一步会上网，数据存在云端服务器（详见「我的 → 关于」里的隐私说明）。
+        <template v-if="mode === 'cloud'">
+          <div class="muted small" style="margin-bottom: 10px; line-height: 1.7">
+            换新手机：输「Unimate 账号 + 密码」→ 自动取回课表、记事、二课与照片，直接进主界面（不用先在本机建号）。
           </div>
-          <div class="field" style="margin-top: 10px"><label>Unimate 账号</label><input v-model.trim="cloudUser" autocomplete="off" placeholder="在旧设备的「加密换机同步」里注册的账号" /></div>
+          <div class="field"><label>Unimate 账号</label><input v-model.trim="cloudUser" autocomplete="off" placeholder="在旧设备的「加密换机同步」里注册的账号" /></div>
           <div class="field"><label>密码</label><input v-model="cloudPass" type="password" autocomplete="off" placeholder="至少 8 个字符" /></div>
-          <button class="btn block" :disabled="cloudBusy" @click="cloudSignIn">{{ cloudBusy ? '处理中…' : '取回云端课表' }}</button>
+          <button class="btn block" :disabled="cloudBusy" @click="cloudSignIn">{{ cloudBusy ? '取回中，请勿退出…' : '取回云端课表' }}</button>
+          <div class="slowhint">服务器在境外，取回通常需要十几秒到一分钟（照片越多越慢），期间请勿退出 App。</div>
           <div v-if="cloudMsg" class="cloudmsg">{{ cloudMsg }}</div>
-        </div>
+        </template>
+
+        <template v-else>
+          <div class="field"><label>用户名（学号或自定义）</label><input v-model="username" placeholder="2~20 个字符" /></div>
+          <div class="field"><label>密码</label><input v-model="password" type="password" placeholder="至少 6 位" /></div>
+          <div v-if="mode === 'register'" class="field"><label>昵称（选填）</label><input v-model="displayName" placeholder="显示在课表页顶部" /></div>
+          <button class="btn block" @click="submit">{{ mode === 'login' ? '登录' : '创建并登录' }}</button>
+        </template>
+
+        <button class="btn block ghost" style="margin-top: 10px" @click="useDemo">用演示账号登录（admin / buct）</button>
 
         <div class="diag" :class="{ bad: !db.storage.ok }">本机存储自检：{{ db.storage.ok ? '正常' : '异常' }} · {{ db.storage.detail }}</div>
         <div v-if="db.lastError" class="errbox">{{ db.lastError }}</div>
         <div class="note muted small">
           本机账号与数据默认只保存在本机。会联网的功能包括你主动打开的网页（教务系统等）、<b>默认关闭</b>的天气、
-          "选择高校"页每天最多一次的高校档案检查（只下载公开档案），以及两条**可选**的云端备份路径：
+          "选择高校"页每天最多一次的高校档案检查（只下载公开档案），以及两条<b>可选</b>的云端备份路径：
           <b>① 账号登录</b>（备份存云端服务器、服务端持密钥可读，换机输账号密码即可取回）；
           <b>② 端到端加密同步</b>（服务器只存密文，口令与恢复码不上传、不保存）。
           本机登录密码只存不可逆哈希、没有"找回"入口；忘了它可以用「取回云端课表」重来，或重新建号后用备份恢复。
@@ -150,6 +158,6 @@ async function useDemo(): Promise<void> {
 .diag.bad { background: #FDECEA; color: #7A1F1A; }
 .errbox { margin-top: 12px; background: #FDECEA; color: #7A1F1A; border-radius: 10px; padding: 10px; font-size: 11px; white-space: pre-wrap; word-break: break-all; max-height: 130px; overflow: auto; }
 .note { margin-top: 14px; line-height: 1.6; }
-.cloudbox { margin-top: 16px; padding: 12px; border: 1px dashed var(--line); border-radius: 12px; background: var(--soft); }
 .cloudmsg { margin-top: 10px; font-size: 11px; line-height: 1.7; color: var(--muted); background: var(--soft-2); border-radius: 8px; padding: 8px 10px; word-break: break-all; }
+.slowhint { margin-top: 8px; font-size: 11px; line-height: 1.6; color: var(--muted); }
 </style>

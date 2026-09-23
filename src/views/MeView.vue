@@ -49,6 +49,8 @@ const cloudMsg = ref('');
 const cloudBusy = ref(false);
 const cloudReady = ref(true);
 const cloudMeta = ref({ updatedAt: '', size: 0, sealed: true });
+/** v2.46：端到端加密那一段默认折叠（面板只留必要的），需要时不展开也能用账号模式 */
+const showAdvanced = ref(false);
 const sched = ref(0);
 const stats = ref({ total: 0, classReminders: 0, todoReminders: 0, testReminders: 0, nextFireAt: '' });
 const schedMsg = ref('');
@@ -89,7 +91,7 @@ const autoSyncText = computed(() => {
   const s = autoSyncState.value;
   if (!db.settings.cloudAccount) return '未登录云端账号';
   if (db.settings.cloudAutoSync === false) return '已关闭 —— 关掉后一次请求都不发';
-  if (s.state === 'syncing') return '正在同步…';
+  if (s.state === 'syncing') return '正在同步…（服务器在境外，可能较慢）';
   if (s.state === 'error') return '同步失败：' + s.message;
   if (s.state === 'skipped') return s.message;
   if (s.state === 'ok' && s.at) return s.message + ' · ' + agoText(s.at);
@@ -906,20 +908,14 @@ async function copyInterests(): Promise<void> {
       </template>
 
       <template v-else-if="panel === 'sync'">
-        <div class="card small" style="background: var(--soft); box-shadow: none; line-height: 1.7">
-          两种云端备份，自己选（都不需要教务系统密码；本机数据始终是完整的一份，断网照常用）：<br />
-          <b>① 账号登录（云端备份）</b>：换机输账号密码就能取回课表，忘记密码可以找开发者重置 ——
-          代价是<b>服务器持有密钥、能读到备份内容</b>。<br />
-          <b>② 端到端加密同步</b>：服务器只拿到读不懂的密文，口令不离开手机 ——
-          代价是<b>忘记口令且恢复码丢失就找不回来</b>。
-        </div>
-
-        <div class="card" style="margin-top: 10px; box-shadow: none">
+        <!--
+          v2.46：面板"只留必要的"。主内容 = 账号登录（注册/登录/上传/找回）；端到端加密整段收进下面的折叠区。
+          说明也压成一行 —— 产品负责人原话："一个界面东西太多了，仅保留必要的"。
+        -->
+        <div class="card" style="box-shadow: none">
           <div class="bold">账号登录（云端备份）</div>
           <div class="small muted" style="margin-top: 4px; line-height: 1.7">
-            像普通 App 一样：注册 / 登录后，课表等数据保存在云端服务器，<b>换台手机登录就能取回课表</b>；
-            忘记密码可以找开发者重置。<br />
-            代价要说明白：<b>服务端存的是可读取的备份</b>（落盘加密由服务端密钥完成），不再是"服务器读不懂"。
+            <b>换机只要输账号 + 密码，课表就回来了。</b>代价：<b>服务端存的是可读取的备份</b>（服务器持有密钥、可以读取）。
           </div>
           <div class="field" style="margin-top: 10px"><label>账号</label><input v-model.trim="cloudAcct" autocomplete="off" placeholder="3~64 个字符" /></div>
           <div class="field"><label>密码</label><input v-model="cloudPass" type="password" autocomplete="off" placeholder="至少 8 个字符，App 不会保存" /></div>
@@ -944,14 +940,20 @@ async function copyInterests(): Promise<void> {
               <span>改完课表自动同步到云端（默认开；关掉后一次请求都不发）</span>
             </label>
             <div class="small muted" style="margin-top: 6px; line-height: 1.6">自动同步：{{ autoSyncText }}</div>
-            <button class="btn block" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudUpload">上传当前数据到云端</button>
-            <button class="btn block ghost" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudRestore">从云端恢复到本机</button>
+            <div class="slowhint">服务器在境外，上传/取回可能较慢（十几秒到一分钟），期间请勿退出 App。</div>
+            <button class="btn block" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudRestore">从云端恢复到本机</button>
+            <button class="btn block ghost" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudUpload">上传当前数据到云端</button>
             <button class="btn block grey sm" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudLogout">退出登录</button>
             <button class="btn block grey sm" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudDeleteAccount">注销账号并删除云端数据</button>
           </template>
           <div v-if="cloudMsg" class="card small" style="margin-top: 10px; box-shadow: none; background: var(--soft)">{{ cloudMsg }}</div>
         </div>
 
+        <button class="btn block grey sm" style="margin-top: 10px" @click="showAdvanced = !showAdvanced">
+          {{ showAdvanced ? '收起高级选项' : '高级：端到端加密同步（服务器读不懂）' }}
+        </button>
+
+        <template v-if="showAdvanced">
         <div class="card" style="margin-top: 10px; box-shadow: none">
           <div class="bold">端到端加密同步（服务器读不懂）</div>
           <div class="small muted" style="margin-top: 4px; line-height: 1.7">
@@ -988,6 +990,7 @@ async function copyInterests(): Promise<void> {
           <button class="btn block" style="margin-top: 8px" :disabled="!recoverySaved || syncBusy" @click="confirmRecoveryAndUpload">确认并上传密文</button>
         </div>
         <div v-if="syncMsg" class="card small" style="margin-top: 10px; box-shadow: none; background: var(--soft)">{{ syncMsg }}</div>
+        </template>
 
         <template v-if="restoreB64">
           <div class="hairline"></div>
@@ -998,10 +1001,12 @@ async function copyInterests(): Promise<void> {
           </div>
           <button class="btn block" @click="doRestore">开始恢复</button>
         </template>
-        <div v-if="db.settings.sync" style="margin-top: 10px">
-          <button class="btn block grey sm" :disabled="syncBusy" @click="deleteCloudBackup">删除云端备份（撤回）</button>
-        </div>
-        <div class="small muted" style="margin-top: 10px; line-height: 1.7">每次上传都会同时在本机生成一份加密 .umig 文件；断网时仍可通过系统文件分享完成换机。</div>
+        <template v-if="showAdvanced">
+          <div v-if="db.settings.sync" style="margin-top: 10px">
+            <button class="btn block grey sm" :disabled="syncBusy" @click="deleteCloudBackup">删除云端备份（撤回）</button>
+          </div>
+          <div class="small muted" style="margin-top: 10px; line-height: 1.7">每次上传都会同时在本机生成一份加密 .umig 文件；断网时仍可通过系统文件分享完成换机。</div>
+        </template>
       </template>
 
       <template v-else-if="panel === 'interests'">
@@ -1054,4 +1059,6 @@ async function copyInterests(): Promise<void> {
 .pn { font-size: 12px; color: var(--muted); }
 .prow input { padding: 7px; border: 1px solid var(--line); border-radius: 8px; }
 .contact { background: var(--soft); box-shadow: none; margin-top: 12px; padding: 12px; }
+/* v2.46：账号登录卡里的"服务器在境外、可能较慢"提示（scoped 样式不跨组件，所以这里也要有一份） */
+.slowhint { margin-top: 8px; font-size: 11px; line-height: 1.6; color: var(--muted); }
 </style>
