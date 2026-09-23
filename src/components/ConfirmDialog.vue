@@ -22,11 +22,13 @@ const db = useDb();
 </template>
 
 <style scoped>
-.mask { position: fixed; inset: 0; z-index: 210; background: rgba(6, 10, 18, .58); display: flex; align-items: center; justify-content: center; padding: 22px; }
-.dlg { width: 100%; max-width: 340px; background: var(--card); border-radius: 16px; padding: 16px; box-shadow: 0 16px 40px rgba(0, 0, 0, .32); }
-.t { font-size: 16px; font-weight: 700; color: var(--text); }
+/* v2.47：确认框统一排版 —— 标题别太大、正文一行行读得下去、按钮不要顶到边上 */
+.mask { position: fixed; inset: 0; z-index: 210; background: rgba(6, 10, 18, .62); display: flex; align-items: center; justify-content: center; padding: 22px; }
+.dlg { width: 100%; max-width: 320px; background: var(--card); border-radius: 18px; padding: 18px 16px 14px; box-shadow: 0 18px 44px rgba(0, 0, 0, .34); }
+.t { font-size: 15.5px; font-weight: 700; line-height: 1.45; color: var(--text); }
 .hairline { height: 1px; background: var(--line); margin: 12px 0; }
-.b { font-size: 13px; line-height: 1.7; color: var(--text); word-break: break-all; }
-.d { margin-top: 10px; font-size: 11.5px; line-height: 1.7; color: var(--muted); }
-.row { display: flex; gap: 8px; margin-top: 16px; }
+.b { font-size: 13.5px; line-height: 1.65; color: var(--text); word-break: break-all; }
+.d { margin-top: 8px; font-size: 12px; line-height: 1.65; color: var(--muted); }
+.row { display: flex; gap: 10px; margin-top: 18px; }
+.row :deep(.btn) { min-height: 42px; font-size: 14px; }
 </style>

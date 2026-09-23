@@ -305,6 +305,8 @@ export interface Settings {
   } | null;
   /** 账号模式的自动同步（v2.45）：默认开；关掉之后一次请求都不发 */
   cloudAutoSync?: boolean;
+  /** 头像（v2.47）：本机裁剪成 1:1 后的 data URL（Android WebView 加载不了 file:// 图片，所以存 data URL） */
+  avatar?: string | null;
 }
 
 export interface InterestEntry { schoolId: string; schoolName: string; contact: string; createdAt: string }

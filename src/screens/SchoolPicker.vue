@@ -70,10 +70,11 @@ async function download(s: SchoolRow): Promise<void> {
   if (!ok) return;
   if (s.builtin) return;
   const yes = await db.confirm({
-    title: '已下载《' + s.name + '》档案',
-    body: '签名与校验和都通过，用法和内置高校一样：课表导入、记事本、提醒都能用。',
-    detail: '要不要现在就切过去？原来的课表数据仍留在这台手机里，切回来还能看到。',
-    confirmText: '现在就切过去', cancelText: '先不切', danger: false
+    // v2.47：原来这段话太长、确认框像一堵墙，改成一句问句 + 一句安心话
+    title: '《' + s.name + '》档案已下载',
+    body: '现在切到这所高校吗？',
+    detail: '校验已通过，用法和内置高校一样。原来的数据还留在本机，切回来还能看到。',
+    confirmText: '切过去', cancelText: '先不切', danger: false
   });
   if (yes) {
     await db.selectSchool(s.schoolId);
@@ -105,7 +106,7 @@ async function submitInterest(): Promise<void> {
 <template>
   <div class="screen">
     <div class="hero">
-      <div class="brand"><span class="logo">U</span><b>Unimate</b></div>
+      <div class="hero-brand"><span class="logo">U</span><b>Unimate</b></div>
       <div class="sub">高校校园学习生活一站式智能助手</div>
       <div class="slogan">正在按校落地：先做好一所，再做一百所</div>
       <div v-if="db.session" class="who">{{ db.session.displayName }}，请选择你的高校</div>
@@ -186,7 +187,13 @@ async function submitInterest(): Promise<void> {
 
 <style scoped>
 .hero { background: linear-gradient(160deg, #2E5AAC, #1B3B77); color: #fff; padding: calc(34px + var(--safe-t)) 18px 22px; }
-.brand { display: flex; align-items: center; gap: 10px; font-size: 26px; }
+/*
+ * 【v2.47 修】这里原来叫 `.brand`，而列表里的「可下载」按钮是 `class="pill brand"` ——
+ * 于是按钮吃到了这里的 26px，真机截图上「可下载」比「开发中」大出三四倍。
+ * 这就是 v2.40 `guard` 那一类**类名撞车**：scoped 样式照样会命中全局语义的类名。
+ * 现在头顶这条横幅改名 `.hero-brand`，`.pill.brand` 交回给全局 styles.css 管。
+ */
+.hero-brand { display: flex; align-items: center; gap: 10px; font-size: 26px; }
 .logo { width: 34px; height: 34px; border-radius: 10px; background: rgba(255, 255, 255, .18); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 800; }
 .sub { margin-top: 8px; font-size: 14px; opacity: .92; }
 .slogan { margin-top: 3px; font-size: 12px; opacity: .7; }

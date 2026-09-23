@@ -1,56 +1,25 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
-import { exportBackup, inspectBackup, restoreBackup, saveEncryptedMigration } from '../services/backup.ts';
-import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
-import { configFromRecovery, decryptSync, deriveAccountSyncId, encryptForSync, isTombstone, normalizeAccount, parseRecoveryCode, tombstoneBytes, type EncryptedSync, type SyncConfig } from '../services/syncCrypto.ts';
-import { downloadSyncCipher, uploadSyncCipher } from '../services/cloudSync.ts';
-import { accountDelete, accountDownload, accountInfo, accountLogin, accountSignup, cloudAccountReady } from '../services/account.ts';
-import { autoSyncState, syncNow } from '../services/cloudAutoSync.ts';
-import { guard } from '../services/guard.ts';
+// v2.47：同步/找回那一屏搬走后，这里只剩"备份与恢复"用得到的东西（guard / 加密迁移包都不再需要）
+import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
+import { base64ToBytes } from '../services/zip.ts';
 import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus, setReminderGuard, reminderGuardStatus } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
 import { applyTheme, type ThemeMode } from '../services/theme.ts';
 import { FONT_LEVELS, applyTextZoom } from '../services/display.ts';
 import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts';
 import { agoText, weatherText } from '../services/weather.ts';
+import { pickAvatar } from '../services/avatar.ts';
 
 const db = useDb();
-const panel = ref<'' | 'notify' | 'theme' | 'watermark' | 'weather' | 'backup' | 'sync' | 'about' | 'interests'>('');
+/** v2.47：`sync` 那一屏搬去主页的「账号与找回」面板（components/AccountRecovery.vue）了 */
+const panel = ref<'' | 'notify' | 'theme' | 'watermark' | 'weather' | 'backup' | 'about' | 'interests'>('');
 const perm = ref('unknown');
 const lastBackup = ref('');
 const restoreB64 = ref('');
 const restoreMode = ref<'overwrite' | 'merge'>('overwrite');
 const restoreInfo = ref('');
-const syncCode = ref('');
-const syncPass = ref('');
-const syncPassAgain = ref('');
-const syncMsg = ref('');
-const syncBusy = ref(false);
-const recoveryReveal = ref('');
-const recoverySaved = ref(false);
-const pendingUpload = ref<EncryptedSync | null>(null);
-const pendingSyncConfig = ref<SyncConfig | null>(null);
-/** 账号同步（v2.42，A 方案）：账号名会被记住（它只是用来算同步码的），口令与恢复码一样从不落盘。 */
-const acct = ref('');
-const acctPass = ref('');
-const acctPassAgain = ref('');
-const pendingUploadAccount = ref('');
-const pendingRestoreAccount = ref('');
-/**
- * 账号登录（v2.43，服务器托管）：产品负责人明确撤销了"数据只在本机/只上传密文"这条口径，
- * 要求做成普通 App 那样 —— 注册/登录后数据存云端，换台手机登录就有课表。
- * 因此这一路**服务器可以读取备份**（界面必须如实写），换来的是"忘记密码找开发者重置"。
- */
-const cloudAcct = ref('');
-const cloudPass = ref('');
-const cloudConsent = ref(false);
-const cloudMsg = ref('');
-const cloudBusy = ref(false);
-const cloudReady = ref(true);
-const cloudMeta = ref({ updatedAt: '', size: 0, sealed: true });
-/** v2.46：端到端加密那一段默认折叠（面板只留必要的），需要时不展开也能用账号模式 */
-const showAdvanced = ref(false);
 const sched = ref(0);
 const stats = ref({ total: 0, classReminders: 0, todoReminders: 0, testReminders: 0, nextFireAt: '' });
 const schedMsg = ref('');
@@ -73,30 +42,6 @@ const reportMsg = ref('');
 const wxOpened = ref({ enabled: false, city: '' });
 
 const sub = computed(() => SECOND_CLASS_BLOCKS.map((b) => b.name + ' ' + db.blockScore(b.key)).join(' · '));
-const syncStatusText = computed(() => {
-  if (!db.settings.sync) return '未开启 · 口令不保存、不上传';
-  const name = (db.settings.syncAccount || '').trim();
-  return name ? '账号 ' + name + ' · 只上传密文' : '已建立同步 · 只上传密文';
-});
-const syncPassLabel = computed(() => syncCode.value.startsWith('UM1.') ? '设置新同步口令' : '同步口令');
-const syncPrimaryText = computed(() => syncBusy.value ? '处理中…' : (db.settings.sync ? '加密并更新云端备份' : '建立同步并生成恢复码'));
-const acctMatchesCurrent = computed(() => {
-  const cfg = db.settings.sync;
-  if (!cfg || !acct.value.trim()) return false;
-  try { return cfg.syncId === deriveAccountSyncId(acct.value); } catch { return false; }
-});
-const acctPrimaryText = computed(() => syncBusy.value ? '处理中…' : (acctMatchesCurrent.value ? '上传/更新到我的账号' : '用账号同步（建立并上传）'));
-/** v2.45：云账号自动同步的状态文案（状态本身由 services/cloudAutoSync.ts 维护） */
-const autoSyncText = computed(() => {
-  const s = autoSyncState.value;
-  if (!db.settings.cloudAccount) return '未登录云端账号';
-  if (db.settings.cloudAutoSync === false) return '已关闭 —— 关掉后一次请求都不发';
-  if (s.state === 'syncing') return '正在同步…（服务器在境外，可能较慢）';
-  if (s.state === 'error') return '同步失败：' + s.message;
-  if (s.state === 'skipped') return s.message;
-  if (s.state === 'ok' && s.at) return s.message + ' · ' + agoText(s.at);
-  return '改动课表后会自动上传（15 秒内多次改动合成一次）';
-});
 
 async function toggleAutoSync(e: Event): Promise<void> {
   db.settings.cloudAutoSync = (e.target as HTMLInputElement).checked;
@@ -107,28 +52,9 @@ async function open(name: typeof panel.value): Promise<void> {
   panel.value = name;
   if (name === 'notify') { await refreshNotifyState(); }
   if (name === 'weather') wxOpened.value = { enabled: db.settings.weatherEnabled, city: (db.settings.weatherCity || '').trim() };
-  if (name === 'sync') {
-    syncCode.value = db.settings.sync?.syncId || '';
-    acct.value = db.settings.syncAccount || '';
-    cloudAcct.value = db.settings.cloudAccount?.name || '';
-    cloudReady.value = await cloudAccountReady();
-    if (db.settings.cloudAccount) cloudMeta.value = await accountInfo(db.settings.cloudAccount).catch(() => cloudMeta.value);
-  }
 }
 
-function closePanel(): void {
-  if (panel.value === 'sync') {
-    syncPass.value = '';
-    syncPassAgain.value = '';
-    acctPass.value = '';
-    acctPassAgain.value = '';
-    recoveryReveal.value = '';
-    recoverySaved.value = false;
-    pendingUpload.value = null;
-    pendingUploadAccount.value = '';
-  }
-  panel.value = '';
-}
+function closePanel(): void { panel.value = ''; }
 
 async function test(minutes: number): Promise<void> {
   const r = await scheduleTest(minutes);
@@ -261,342 +187,31 @@ function onVisible(): void {
 }
 onMounted(() => document.addEventListener('visibilitychange', onVisible));
 onUnmounted(() => document.removeEventListener('visibilitychange', onVisible));
+
+/**
+ * 头像（v2.47）：从相册选一张，本机裁成 1:1 再存成 data URL。
+ * 用户取消时 `pickAvatar()` 返回 null，这里什么都不做（不算错误）。
+ */
+async function changeAvatar(): Promise<void> {
+  const picked = await pickAvatar();
+  if (!picked) return;
+  db.settings.avatar = picked;
+  await db.saveData();
+  db.notify('头像已更新');
+}
+
+/** 恢复默认头像 = 删掉自己设的那张，回到昵称首字（属撤销，不弹确认框） */
+async function clearAvatar(): Promise<void> {
+  db.settings.avatar = null;
+  await db.saveData();
+  db.notify('已恢复默认头像');
+}
+
 async function doExport(): Promise<void> {
   const r = await exportBackup(db.profile!.schoolId, db.profile!.name, db.session!.username,
     'schools/' + db.profile!.schoolId + '/users/' + db.session!.accountId, db.accounts, db.session!.accountId);
   lastBackup.value = r.path + '（' + (r.size / 1024).toFixed(0) + ' KB）';
   db.notify('备份已生成：' + r.fileName);
-}
-
-function syncBase(): string {
-  return 'schools/' + db.profile!.schoolId + '/users/' + db.session!.accountId;
-}
-
-async function makeSyncBackup(): Promise<EncryptedSync | null> {
-  if (syncPass.value.length < 10) { syncMsg.value = '同步口令至少 10 个字符'; return null; }
-  if (syncPass.value !== syncPassAgain.value) { syncMsg.value = '两次输入的同步口令不一致'; return null; }
-  const made = await guard('生成同步备份', exportBackup(db.profile!.schoolId, db.profile!.name, db.session!.username,
-    syncBase(), db.accounts, db.session!.accountId), 60_000, null);
-  if (!made) { syncMsg.value = '生成本地备份超时，请重试'; return null; }
-  return encryptForSync(made.bytes, syncPass.value, db.settings.sync || undefined);
-}
-
-async function finishSyncUpload(pack: EncryptedSync, account = ''): Promise<void> {
-  const previous = db.settings.sync;
-  await uploadSyncCipher(pack.config.syncId, pack.bytes);
-  const local = await guard('保存加密迁移包', saveEncryptedMigration(pack.bytes, pack.config.syncId), 15_000, null);
-  db.settings.sync = pack.config;
-  if (account) db.settings.syncAccount = account;
-  await db.saveData();
-  syncCode.value = pack.config.syncId;
-  syncMsg.value = '已上传端到端加密备份' + (local ? '；本机同时保存 ' + local.fileName : '');
-  syncPass.value = '';
-  syncPassAgain.value = '';
-  acctPass.value = '';
-  acctPassAgain.value = '';
-  pendingUpload.value = null;
-  pendingUploadAccount.value = '';
-  recoveryReveal.value = '';
-  recoverySaved.value = false;
-  db.notify('加密同步完成');
-
-  // 从"随机同步码"切到"账号同步"会另起一份云端备份，旧那份留在桶里既没用又占地方。
-  // 销毁旧密文是破坏性操作，按硬规则必须二次确认（用户说不要就留着）。
-  if (previous && previous.syncId !== pack.config.syncId) {
-    const drop = await db.confirm({
-      title: '要顺手销毁旧的云端备份吗？',
-      body: '这次是把同步方式换成了账号，云端多出一份旧同步码的密文（' + previous.syncId.slice(0, 6) + '…）。',
-      detail: '销毁 = 用一条"已删除"标记覆盖旧对象（R2 不开版本控制，原密文即被抹掉），旧同步码/旧恢复码从此失效。' +
-        '选"取消"就留着，不影响本次账号同步。',
-      confirmText: '销毁旧的那份', cancelText: '留着', danger: true
-    });
-    if (drop) {
-      try {
-        await uploadSyncCipher(previous.syncId, tombstoneBytes());
-        syncMsg.value += '；旧的云端备份已销毁';
-      } catch (e: any) { syncMsg.value += '；旧云端备份销毁失败：' + (e?.message || '未知原因'); }
-    }
-  }
-}
-
-async function prepareSyncUpload(): Promise<void> {
-  if (syncBusy.value) return;
-  syncBusy.value = true;
-  syncMsg.value = '正在本地加密…';
-  try {
-    const pack = await makeSyncBackup();
-    if (!pack) return;
-    if (pack.recoveryCode) {
-      pendingUpload.value = pack;
-      recoveryReveal.value = pack.recoveryCode;
-      syncPass.value = '';
-      syncPassAgain.value = '';
-      syncMsg.value = '先把恢复码另存到安全位置；确认保存后才能上传。';
-      return;
-    }
-    syncMsg.value = '正在上传密文…';
-    await finishSyncUpload(pack);
-  } catch (e: any) { syncMsg.value = e?.message || '同步失败，请重试'; }
-  finally { syncBusy.value = false; }
-}
-
-async function confirmRecoveryAndUpload(): Promise<void> {
-  if (!pendingUpload.value || !recoverySaved.value || syncBusy.value) return;
-  syncBusy.value = true;
-  syncMsg.value = '正在上传密文…';
-  try { await finishSyncUpload(pendingUpload.value, pendingUploadAccount.value); }
-  catch (e: any) { syncMsg.value = e?.message || '上传失败，请重试'; }
-  finally { syncBusy.value = false; }
-}
-
-/**
- * 账号同步（v2.42，A 方案）：用"账号 + 口令"代替要抄的同步码。
- * 账号名在本机算出同步码，口令不出手机 —— 云端仍然只有密文。
- */
-/**
- * 端到端加密模式的"上传/更新"（v2.42 的 A 方案：账号名派生同步码）。
- * 【v2.45 改名】原来叫 `accountUpload`，与 `services/account.ts` 的 `accountUpload`（云账号上传）重名 ——
- * 和 v2.40 的 `guard` 一样，编译会把 import 改名，调用点悄悄指错。现在 `test:order` 能扫出这类重名。
- */
-async function accountSyncUpload(): Promise<void> {
-  if (syncBusy.value) return;
-  const account = normalizeAccount(acct.value);
-  if (account.length < 3) { syncMsg.value = '账号至少 3 个字符（换机时要用同一个账号）'; return; }
-  if (acctPass.value.length < 10) { syncMsg.value = '口令至少 10 个字符 —— 账号可猜，口令是唯一的秘密'; return; }
-  if (!acctMatchesCurrent.value && acctPass.value !== acctPassAgain.value) { syncMsg.value = '两次输入的口令不一致'; return; }
-  syncBusy.value = true;
-  syncMsg.value = '正在本地加密…';
-  try {
-    const made = await guard('生成同步备份', exportBackup(db.profile!.schoolId, db.profile!.name, db.session!.username,
-      syncBase(), db.accounts, db.session!.accountId), 60_000, null);
-    if (!made) { syncMsg.value = '生成本地备份超时，请重试'; return; }
-    const pack = await encryptForSync(made.bytes, acctPass.value, db.settings.sync || undefined, account);
-    if (pack.recoveryCode) {
-      pendingUpload.value = pack;
-      pendingUploadAccount.value = account;
-      recoveryReveal.value = pack.recoveryCode;
-      acctPass.value = '';
-      acctPassAgain.value = '';
-      syncMsg.value = '先把恢复码另存到安全位置；确认保存后会上传密文。';
-      return;
-    }
-    await finishSyncUpload(pack, account);
-  } catch (e: any) { syncMsg.value = e?.message || '账号同步失败，请重试'; }
-  finally { syncBusy.value = false; }
-}
-
-/** 换机：输账号 + 口令 → 自动定位云端那份密文 → 解密 → 预览 → 二次确认恢复 */
-async function accountFetch(): Promise<void> {
-  if (syncBusy.value) return;
-  const account = normalizeAccount(acct.value);
-  if (account.length < 3) { syncMsg.value = '请输入要找回的账号'; return; }
-  if (acctPass.value.length < 10) { syncMsg.value = '口令至少 10 个字符'; return; }
-  syncBusy.value = true;
-  syncMsg.value = '正在下载并在本机解密…';
-  try {
-    const syncId = deriveAccountSyncId(account);
-    const cipher = await downloadSyncCipher(syncId);
-    if (isTombstone(cipher)) throw new Error('这个账号的云端备份已被删除，请重新上传一份');
-    const opened = await decryptSync(cipher, syncId, acctPass.value);
-    const info = await inspectBackup(opened.backup);
-    pendingSyncConfig.value = { syncId, passwordWrap: opened.envelope.passwordWrap,
-      recoveryWrap: opened.envelope.recoveryWrap, lastUploadedAt: opened.envelope.createdAt };
-    pendingRestoreAccount.value = account;
-    restoreB64.value = bytesToBase64(opened.backup);
-    restoreInfo.value = '账号 ' + account + ' 的云端加密备份 · ' + info.manifest.exportedAt + ' · 课表 ' + info.manifest.counts.courses +
-      ' 条 / 记事 ' + info.manifest.counts.notes + ' 条 / 二课 ' + info.manifest.counts.records + ' 条 / 照片 ' + info.manifest.counts.photos + ' 张';
-    syncMsg.value = '解密与完整性校验通过。请在下方选择“覆盖”或“合并”，再点开始恢复。';
-    acctPass.value = '';
-    acctPassAgain.value = '';
-  } catch (e: any) { syncMsg.value = e?.message || '找回失败，请重试'; }
-  finally { syncBusy.value = false; }
-}
-
-/** 删除云端备份（撤回/注销）：二次确认后用墓碑覆盖，密文随之销毁 */
-async function deleteCloudBackup(): Promise<void> {
-  if (syncBusy.value) return;
-  const cfg = db.settings.sync;
-  if (!cfg) { syncMsg.value = '本机还没有同步设置'; return; }
-  const ok = await db.confirm({
-    title: '确认删除云端加密备份？',
-    body: '云端那份备份会被一条“已删除”标记覆盖，原密文随之销毁；换机将无法再从云端找回课表。',
-    detail: '本机数据不受影响，本机保存的 .umig 文件也不受影响。删除后想继续用云端同步，需要再上传一份。',
-    confirmText: '确定删除云端备份', cancelText: '取消，留着', danger: true
-  });
-  if (!ok) return;
-  syncBusy.value = true;
-  syncMsg.value = '正在删除云端备份…';
-  try {
-    await uploadSyncCipher(cfg.syncId, tombstoneBytes());
-    syncMsg.value = '云端备份已删除（本机数据与本机 .umig 未受影响）';
-    db.notify('云端备份已删除');
-  } catch (e: any) { syncMsg.value = e?.message || '删除失败，请重试'; }
-  finally { syncBusy.value = false; }
-}
-
-async function copyRecoveryCode(): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(recoveryReveal.value);
-    db.notify('恢复码已复制，请另存到安全位置');
-  } catch { syncMsg.value = '无法自动复制，请长按恢复码手动复制'; }
-}
-
-/* ---------------------------------------------------------------------------
- * 账号登录（v2.43，服务器托管）：普通 App 的做法
- * 注册/登录 → 备份正文存云端（服务器持有落盘密钥、可以读取）→ 换台手机登录就有课表。
- * 代价：忘记密码虽然可以找开发者重置，但"服务器读不到你的数据"这条就不再成立了 —— 界面如实写明。
- * ------------------------------------------------------------------------- */
-
-function cloudSession() { return db.settings.cloudAccount || null; }
-
-async function cloudAfterLogin(): Promise<void> {
-  const session = cloudSession();
-  if (!session) return;
-  cloudPass.value = '';
-  cloudAcct.value = session.name;
-  cloudMsg.value = '已登录：' + session.name;
-  try {
-    const meta = await accountInfo(session);
-    cloudMeta.value = meta;
-    db.settings.cloudAccount = { ...session, updatedAt: meta.updatedAt, size: meta.size };
-    await db.saveData();
-    if (!meta.size) {
-      cloudMsg.value = '已登录 ' + session.name + '。这个账号云端还没有备份，点「上传当前数据到云端」就能把课表存上去。';
-      return;
-    }
-    await cloudRestore();
-  } catch (e: any) { cloudMsg.value = (e?.message || '读取云端信息失败') + '（已登录，可稍后重试）'; }
-}
-
-async function cloudSignup(): Promise<void> {
-  if (cloudBusy.value) return;
-  if (!cloudConsent.value) { cloudMsg.value = '请先勾选上面的同意项（数据会存到云端服务器）'; return; }
-  if (cloudAcct.value.trim().length < 3) { cloudMsg.value = '账号至少 3 个字符'; return; }
-  if (cloudPass.value.length < 8) { cloudMsg.value = '密码至少 8 个字符'; return; }
-  cloudBusy.value = true;
-  cloudMsg.value = '正在注册…';
-  try {
-    const session = await accountSignup(cloudAcct.value.trim(), cloudPass.value);
-    db.settings.cloudAccount = { ...session };
-    await db.saveData();
-    cloudMsg.value = '注册成功，正在把当前数据打包上传…';
-    await cloudUpload();
-  } catch (e: any) { cloudMsg.value = e?.message || '注册失败，请重试'; }
-  finally { cloudBusy.value = false; }
-}
-
-async function cloudLogin(): Promise<void> {
-  if (cloudBusy.value) return;
-  if (!cloudConsent.value) { cloudMsg.value = '请先勾选上面的同意项（数据会存到云端服务器）'; return; }
-  if (cloudAcct.value.trim().length < 3) { cloudMsg.value = '请输入账号'; return; }
-  if (cloudPass.value.length < 8) { cloudMsg.value = '密码至少 8 个字符'; return; }
-  cloudBusy.value = true;
-  cloudMsg.value = '正在登录…';
-  try {
-    const session = await accountLogin(cloudAcct.value.trim(), cloudPass.value);
-    db.settings.cloudAccount = { ...session };
-    await db.saveData();
-    await cloudAfterLogin();
-  } catch (e: any) { cloudMsg.value = e?.message || '登录失败，请重试'; }
-  finally { cloudBusy.value = false; }
-}
-
-async function cloudUpload(): Promise<void> {
-  const session = cloudSession();
-  if (!session || cloudBusy.value) return;
-  cloudBusy.value = true;
-  cloudMsg.value = '正在打包并上传…';
-  try {
-    // v2.45：手动上传与自动同步共用同一条流水线（force 忽略指纹），口径不会两样
-    const result = await syncNow();
-    await db.saveData();   // 把 lastHash/updatedAt 落盘
-    cloudMeta.value = { updatedAt: db.settings.cloudAccount?.updatedAt || '', size: db.settings.cloudAccount?.size || 0, sealed: cloudMeta.value.sealed };
-    if (result.state === 'error') { cloudMsg.value = result.message; return; }
-    cloudMsg.value = '已上传到云端（' + Math.round((db.settings.cloudAccount?.size || 0) / 1024) + ' KB）· ' +
-      (cloudMeta.value.sealed ? '服务端落盘加密已开启' : '注意：服务端未设落盘密钥，靠 R2 自带静态加密');
-    db.notify('已上传到云端账号');
-  } catch (e: any) { cloudMsg.value = e?.message || '上传失败，请重试'; }
-  finally { cloudBusy.value = false; }
-}
-
-/** 云端 → 本机：下载后仍走"预览 → 覆盖/合并 → 二次确认"，不因为自动就跳过确认 */
-async function cloudRestore(): Promise<void> {
-  const session = cloudSession();
-  if (!session || cloudBusy.value) return;
-  cloudBusy.value = true;
-  cloudMsg.value = '正在从云端下载…';
-  try {
-    const bytes = await accountDownload(session);
-    if (!bytes) { cloudMsg.value = '这个账号云端还没有备份'; return; }
-    const info = await inspectBackup(bytes);
-    restoreB64.value = bytesToBase64(bytes);
-    restoreInfo.value = '账号 ' + session.name + ' 的云端备份 · ' + info.manifest.exportedAt + ' · 课表 ' +
-      info.manifest.counts.courses + ' 条 / 记事 ' + info.manifest.counts.notes + ' 条 / 二课 ' +
-      info.manifest.counts.records + ' 条 / 照片 ' + info.manifest.counts.photos + ' 张';
-    cloudMsg.value = '云端备份已下载并校验通过。请在下方选择「覆盖」或「合并」，再点开始恢复。';
-  } catch (e: any) { cloudMsg.value = e?.message || '下载失败，请重试'; }
-  finally { cloudBusy.value = false; }
-}
-
-async function cloudLogout(): Promise<void> {
-  db.settings.cloudAccount = null;
-  await db.saveData();
-  cloudPass.value = '';
-  cloudMeta.value = { updatedAt: '', size: 0, sealed: true };
-  cloudMsg.value = '已退出登录（云端那份备份还留着，下次登录还能取回）';
-}
-
-async function cloudDeleteAccount(): Promise<void> {
-  const session = cloudSession();
-  if (!session || cloudBusy.value) return;
-  const ok = await db.confirm({
-    title: '确认注销账号并删除云端数据？',
-    body: '账号「' + session.name + '」与它在云端的备份会被一起删除，删掉之后没有任何办法找回。',
-    detail: '本机上的课表等数据不受影响（只是不再与云端关联）。如果要保留云端那份，请点「取消」。',
-    confirmText: '确定注销并删除', cancelText: '取消，留着', danger: true
-  });
-  if (!ok) return;
-  cloudBusy.value = true;
-  cloudMsg.value = '正在注销…';
-  try {
-    await accountDelete(session);
-    db.settings.cloudAccount = null;
-    await db.saveData();
-    cloudMeta.value = { updatedAt: '', size: 0, sealed: true };
-    cloudMsg.value = '账号与云端数据已删除';
-    db.notify('账号已注销');
-  } catch (e: any) { cloudMsg.value = e?.message || '注销失败，请重试'; }
-  finally { cloudBusy.value = false; }
-}
-
-async function fetchSyncBackup(): Promise<void> {
-  if (syncBusy.value) return;
-  const entered = syncCode.value.trim();
-  if (!entered) { syncMsg.value = '请输入同步码或完整恢复码'; return; }
-  const usingRecovery = entered.startsWith('UM1.');
-  if (syncPass.value.length < 10) {
-    syncMsg.value = usingRecovery ? '请设置一个至少 10 个字符的新同步口令' : '同步口令至少 10 个字符';
-    return;
-  }
-  syncBusy.value = true;
-  syncMsg.value = '正在下载并在本机解密…';
-  try {
-    const syncId = usingRecovery ? parseRecoveryCode(entered).syncId : entered;
-    const cipher = await downloadSyncCipher(syncId);
-    const opened = await decryptSync(cipher, entered, syncPass.value);
-    const info = await inspectBackup(opened.backup);
-    pendingSyncConfig.value = usingRecovery
-      ? await configFromRecovery(cipher, entered, syncPass.value)
-      : { syncId, passwordWrap: opened.envelope.passwordWrap, recoveryWrap: opened.envelope.recoveryWrap,
-          lastUploadedAt: opened.envelope.createdAt };
-    restoreB64.value = bytesToBase64(opened.backup);
-    restoreInfo.value = '云端加密备份 · ' + info.manifest.exportedAt + ' · 课表 ' + info.manifest.counts.courses +
-      ' 条 / 记事 ' + info.manifest.counts.notes + ' 条 / 二课 ' + info.manifest.counts.records + ' 条 / 照片 ' + info.manifest.counts.photos + ' 张';
-    syncMsg.value = '解密与完整性校验通过。请在下方选择“覆盖”或“合并”，再点开始恢复。';
-    syncPass.value = '';
-    syncPassAgain.value = '';
-  } catch (e: any) { syncMsg.value = e?.message || '下载恢复失败'; }
-  finally { syncBusy.value = false; }
 }
 
 async function pickBackup(e: Event): Promise<void> {
@@ -636,15 +251,6 @@ async function doRestore(): Promise<void> {
   }
   await restoreBackup(base64ToBytes(restoreB64.value), b, merge);
   await db.loadUserData();
-  if (pendingSyncConfig.value) {
-    db.settings.sync = pendingSyncConfig.value;
-    // 用账号找回的，把账号名也记住 —— 它只是"在本机算同步码"的参数，不是秘密
-    if (pendingRestoreAccount.value) db.settings.syncAccount = pendingRestoreAccount.value;
-    await db.saveData();
-    syncCode.value = pendingSyncConfig.value.syncId;
-    pendingSyncConfig.value = null;
-    pendingRestoreAccount.value = '';
-  }
   restoreB64.value = ''; restoreInfo.value = '';
   db.notify('恢复完成' + (merge ? '（合并）' : kept));
 }
@@ -693,10 +299,18 @@ async function copyInterests(): Promise<void> {
 <template>
   <div class="scroll">
     <div class="card me">
-      <div class="avatar">{{ (db.session?.displayName || 'U').slice(0, 1) }}</div>
+      <!-- v2.47：头像是用户自己从相册选的（本机裁成 1:1），点一下就能换 -->
+      <div class="avatar" @click="changeAvatar()">
+        <img v-if="db.settings.avatar" :src="db.settings.avatar" alt="头像" />
+        <template v-else>{{ (db.session?.displayName || 'U').slice(0, 1) }}</template>
+      </div>
       <div class="grow">
         <div class="title">{{ db.session?.displayName }}</div>
         <div class="small muted">{{ db.session?.username }} · {{ db.profile?.name }}</div>
+        <div class="avactions">
+          <button class="alink" @click="changeAvatar()">{{ db.settings.avatar ? '换头像' : '设置头像' }}</button>
+          <button v-if="db.settings.avatar" class="alink" @click="clearAvatar()">恢复默认</button>
+        </div>
       </div>
       <span v-if="db.session?.isDemo" class="pill warn">演示模式</span>
     </div>
@@ -725,7 +339,6 @@ async function copyInterests(): Promise<void> {
 <div class="li" @click="open('watermark')"><span class="ico">💧</span><div class="grow"><div class="bold">拍照水印</div><div class="small muted">自主开关水印内容与样式</div></div><span>›</span></div>
       <div class="li" @click="open('weather')"><span class="ico">🌤️</span><div class="grow"><div class="bold">天气</div><div class="small muted">{{ db.settings.weatherEnabled ? '已开启 · 课表页顶部一行天气' : '默认关闭 · 打开后课表页顶部显示一行天气' }}</div></div><span>›</span></div>
       <div class="li" @click="open('backup')"><span class="ico">💾</span><div class="grow"><div class="bold">备份与恢复</div><div class="small muted">导出 / 导入 .unimate.zip</div></div><span>›</span></div>
-      <div class="li" @click="open('sync')"><span class="ico">🔐</span><div class="grow"><div class="bold">加密换机同步</div><div class="small muted">{{ syncStatusText }}</div></div><span>›</span></div>
       <div class="li" @click="open('interests')"><span class="ico">🏫</span><div class="grow"><div class="bold">意向清单</div><div class="small muted">已提交意向的高校（本机 {{ db.interests.length }} 条）</div></div><span>›</span></div>
       <div class="li" @click="open('about')"><span class="ico">ℹ️</span><div class="grow"><div class="bold">关于 Unimate</div><div class="small muted">版本、定位与隐私说明</div></div><span>›</span></div>
     </div>
@@ -743,7 +356,7 @@ async function copyInterests(): Promise<void> {
 
   <div v-if="panel" class="mask" @click.self="closePanel">
     <div class="sheet">
-      <div class="row"><div class="title grow">{{ { notify: '通知设置', watermark: '拍照水印', weather: '天气', backup: '备份与恢复', sync: '加密换机同步', about: '关于 Unimate', interests: '意向清单' }[panel] }}</div><button class="btn sm ghost" @click="closePanel">关闭</button></div>
+      <div class="row"><div class="title grow">{{ { notify: '通知设置', watermark: '拍照水印', weather: '天气', backup: '备份与恢复', about: '关于 Unimate', interests: '意向清单' }[panel] }}</div><button class="btn sm ghost" @click="closePanel">关闭</button></div>
       <div class="hairline"></div>
 
       <template v-if="panel === 'notify'">
@@ -907,107 +520,6 @@ async function copyInterests(): Promise<void> {
         <div class="small muted">备份包含课表、记事、第二课堂记录与照片，请妥善保管，不要随意外发。</div>
       </template>
 
-      <template v-else-if="panel === 'sync'">
-        <!--
-          v2.46：面板"只留必要的"。主内容 = 账号登录（注册/登录/上传/找回）；端到端加密整段收进下面的折叠区。
-          说明也压成一行 —— 产品负责人原话："一个界面东西太多了，仅保留必要的"。
-        -->
-        <div class="card" style="box-shadow: none">
-          <div class="bold">账号登录（云端备份）</div>
-          <div class="small muted" style="margin-top: 4px; line-height: 1.7">
-            <b>换机只要输账号 + 密码，课表就回来了。</b>代价：<b>服务端存的是可读取的备份</b>（服务器持有密钥、可以读取）。
-          </div>
-          <div class="field" style="margin-top: 10px"><label>账号</label><input v-model.trim="cloudAcct" autocomplete="off" placeholder="3~64 个字符" /></div>
-          <div class="field"><label>密码</label><input v-model="cloudPass" type="password" autocomplete="off" placeholder="至少 8 个字符，App 不会保存" /></div>
-          <label class="row small" style="margin-top: 4px">
-            <input v-model="cloudConsent" type="checkbox" />
-            <span>我同意把课表、记事、二课材料与照片上传到云端备份（服务器持有密钥、可以读取，用于换机与找回）</span>
-          </label>
-          <button class="btn block" style="margin-top: 10px" :disabled="cloudBusy || !cloudConsent" @click="cloudLogin">登录</button>
-          <button class="btn block ghost" style="margin-top: 8px" :disabled="cloudBusy || !cloudConsent" @click="cloudSignup">注册并上传当前数据</button>
-          <div v-if="!cloudReady" class="small muted" style="margin-top: 8px">
-            提示：服务器上的账号接口还没部署（需要重新部署 Worker + 拖一次 Pages 包）。
-          </div>
-          <template v-if="db.settings.cloudAccount">
-            <div class="hairline" style="margin: 12px 0"></div>
-            <div class="small muted" style="line-height: 1.7">
-              已登录：<b>{{ db.settings.cloudAccount.name }}</b>
-              <template v-if="cloudMeta.updatedAt"><br />云端备份：{{ cloudMeta.updatedAt }} · {{ Math.round(cloudMeta.size / 1024) }} KB ·
-                {{ cloudMeta.sealed ? '落盘加密已开启' : '未设落盘密钥' }}</template>
-            </div>
-            <label class="row small" style="margin-top: 10px">
-              <input type="checkbox" :checked="db.settings.cloudAutoSync !== false" @change="toggleAutoSync" />
-              <span>改完课表自动同步到云端（默认开；关掉后一次请求都不发）</span>
-            </label>
-            <div class="small muted" style="margin-top: 6px; line-height: 1.6">自动同步：{{ autoSyncText }}</div>
-            <div class="slowhint">服务器在境外，上传/取回可能较慢（十几秒到一分钟），期间请勿退出 App。</div>
-            <button class="btn block" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudRestore">从云端恢复到本机</button>
-            <button class="btn block ghost" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudUpload">上传当前数据到云端</button>
-            <button class="btn block grey sm" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudLogout">退出登录</button>
-            <button class="btn block grey sm" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudDeleteAccount">注销账号并删除云端数据</button>
-          </template>
-          <div v-if="cloudMsg" class="card small" style="margin-top: 10px; box-shadow: none; background: var(--soft)">{{ cloudMsg }}</div>
-        </div>
-
-        <button class="btn block grey sm" style="margin-top: 10px" @click="showAdvanced = !showAdvanced">
-          {{ showAdvanced ? '收起高级选项' : '高级：端到端加密同步（服务器读不懂）' }}
-        </button>
-
-        <template v-if="showAdvanced">
-        <div class="card" style="margin-top: 10px; box-shadow: none">
-          <div class="bold">端到端加密同步（服务器读不懂）</div>
-          <div class="small muted" style="margin-top: 4px; line-height: 1.7">
-            另一条路：不发密码给服务器，用"账号 + 口令"在本机算出同步码。云端只有密文，
-            <b>但忘记口令且恢复码丢失就没人能救</b>。隐私优先就选这条。
-          </div>
-          <div class="field" style="margin-top: 10px"><label>账号</label><input v-model.trim="acct" autocomplete="off" placeholder="3~64 个字符，随便起（别用学号当口令）" /></div>
-          <div class="field"><label>口令</label><input v-model="acctPass" type="password" autocomplete="off" placeholder="至少 10 个字符，App 不会保存" /></div>
-          <div v-if="!acctMatchesCurrent" class="field"><label>再次输入口令</label><input v-model="acctPassAgain" type="password" autocomplete="off" placeholder="两次要一致" /></div>
-          <button class="btn block" :disabled="syncBusy" @click="accountSyncUpload">{{ acctPrimaryText }}</button>
-          <button class="btn block ghost" style="margin-top: 8px" :disabled="syncBusy" @click="accountFetch">用账号找回课表（换机）</button>
-          <div v-if="db.settings.syncAccount" class="small muted" style="margin-top: 8px">
-            当前账号：<b>{{ db.settings.syncAccount }}</b> · 只上传密文，云端读不懂
-          </div>
-        </div>
-
-        <div class="card" style="margin-top: 10px; box-shadow: none; background: var(--soft)">
-          <div class="bold small">恢复码 / 同步码（兜底手段）</div>
-          <div class="small muted" style="margin-top: 4px; line-height: 1.7">
-            忘了账号或口令时，用当初保存的恢复码照样能把课表拿回来。
-          </div>
-          <div class="field" style="margin-top: 10px"><label>同步码或完整恢复码</label><input v-model.trim="syncCode" autocomplete="off" placeholder="粘贴恢复码（UM1.…）或同步码" /></div>
-          <div class="field"><label>{{ syncPassLabel }}</label><input v-model="syncPass" type="password" autocomplete="off" placeholder="至少 10 个字符，App 不会保存" /></div>
-          <div class="field"><label>再次输入口令</label><input v-model="syncPassAgain" type="password" autocomplete="off" placeholder="上传时需一致" /></div>
-          <button class="btn block ghost" :disabled="syncBusy" @click="prepareSyncUpload">{{ syncPrimaryText }}</button>
-          <button class="btn block ghost" style="margin-top: 8px" :disabled="syncBusy || !syncCode" @click="fetchSyncBackup">用同步码下载、解密并预览</button>
-        </div>
-
-        <div v-if="recoveryReveal" class="card" style="margin-top: 10px; box-shadow: none; background: var(--soft)">
-          <div class="bold small">恢复码（只在本机本次显示）</div>
-          <div class="small" style="margin-top: 6px; word-break: break-all; user-select: text">{{ recoveryReveal }}</div>
-          <button class="btn block ghost sm" style="margin-top: 8px" @click="copyRecoveryCode">复制恢复码</button>
-          <label class="row small" style="margin-top: 10px"><input v-model="recoverySaved" type="checkbox" /> <span>我已把恢复码另存到安全位置</span></label>
-          <button class="btn block" style="margin-top: 8px" :disabled="!recoverySaved || syncBusy" @click="confirmRecoveryAndUpload">确认并上传密文</button>
-        </div>
-        <div v-if="syncMsg" class="card small" style="margin-top: 10px; box-shadow: none; background: var(--soft)">{{ syncMsg }}</div>
-        </template>
-
-        <template v-if="restoreB64">
-          <div class="hairline"></div>
-          <div class="card small" style="background: var(--soft); box-shadow: none">{{ restoreInfo }}</div>
-          <div class="chips" style="margin: 10px 0">
-            <button class="chip sm" :class="{ on: restoreMode === 'overwrite' }" @click="restoreMode = 'overwrite'">覆盖（自动留底）</button>
-            <button class="chip sm" :class="{ on: restoreMode === 'merge' }" @click="restoreMode = 'merge'">合并（按 id）</button>
-          </div>
-          <button class="btn block" @click="doRestore">开始恢复</button>
-        </template>
-        <template v-if="showAdvanced">
-          <div v-if="db.settings.sync" style="margin-top: 10px">
-            <button class="btn block grey sm" :disabled="syncBusy" @click="deleteCloudBackup">删除云端备份（撤回）</button>
-          </div>
-          <div class="small muted" style="margin-top: 10px; line-height: 1.7">每次上传都会同时在本机生成一份加密 .umig 文件；断网时仍可通过系统文件分享完成换机。</div>
-        </template>
-      </template>
 
       <template v-else-if="panel === 'interests'">
         <div v-if="!db.interests.length" class="empty small">还没有提交意向。可在"选择高校"页点击任意开发中的高校提交。</div>
@@ -1031,18 +543,19 @@ async function copyInterests(): Promise<void> {
           <div class="small muted">首个落地高校：{{ db.profile?.name }} · v1.0.0</div>
         </div>
         <div class="hairline"></div>
+        <!--
+          v2.47：这一页以前写成了"开发说明书"（框架怎么复制、签名算法是什么、验签流程…），
+          产品负责人原话："很多东西是给我看的，不是给用户看的"。现在只留用户要知道的：
+          这些数据在哪、联网时发了什么、怎么关掉。
+        -->
         <div class="small" style="line-height: 1.8">
-          <b>我们想做的事：</b>把大学里高频却分散的"课表、待办、第二课堂材料、在线教学平台、教务系统"收进一个 App，并做成<b>可复制到不同高校的框架</b>——每所学校的差异收敛到一份高校档案与一个数据适配器，先做好北化，再按校推进。<br /><br />
-          <b>隐私：</b>本机数据默认不对外发送；<b>教务系统的账号密码不读取、不保存、不代填</b>；不使用第三方地图 Key；无埋点、无上报。<br />
-          App 自己的联网功能有三类：<b>天气</b>（默认关闭，开关在「我的 → 天气」）：<b>开启天气后会向 Open-Meteo 发送你的大致位置用于查询天气，不发送其他信息</b>，关掉开关后一次请求都不发；<br />
-          <b>高校档案更新</b>：在「选择高校」页每天最多检查一次，只从本项目自己的站点下载<b>公开的学校档案</b>（校名、官网地址、节次表），<b>不上传任何信息</b>；下载内容带 Ed25519 签名，验签不过一律不安装。<br />
-          <b>账号登录（可选，普通 App 模式）</b>：注册并登录后，课表、记事、二课材料与照片会备份到云端服务器（Cloudflare，境外节点），
-          <b>服务端持有落盘密钥、可以读取这些内容</b>，用于换机取回与找回；你的<b>密码原文不上传</b>（本地派生校验值）。
-          不想要这一项就别开它。<br />
-          <b>端到端加密同步（可选）</b>：仅在你点上传或下载时联网；密文经 <b>unimate3.pages.dev</b> 中转后保存在 Cloudflare R2。服务器只保存 AES-256-GCM 密文，
-          <b>同步账号、口令和恢复码不上传、不保存</b>（账号名只在本机用于推算备份位置）。口令与恢复码遗失后无法找回 —— 因为服务端没有钥匙。<br />
-          （你在「北化通」里打开的教务/教学系统网页属于你主动访问，不由 App 上传数据。）<br /><br />
-          <b>声明：</b>本项目为学生自制演示作品，与学校官方无关；第二课堂分数为自评记录，非学校认定结果。
+          <b>你的数据：</b>课表、记事、二课材料都存在这台手机上。<b>教务系统的账号密码 App 从不读取、不保存、不代填</b>，也没有埋点上报。<br />
+          <b>会联网的功能（都可以不用）：</b><br />
+          · <b>天气</b>（默认关闭，开关在「我的 → 天气」）：<b>开启天气后会向 Open-Meteo 发送你的大致位置用于查询天气，不发送其他信息</b>；关掉后一次请求都不发，打开后 30 分钟最多更新一次；<br />
+          · <b>高校档案更新</b>：在「选择高校」页每天最多检查一次，只下载公开的学校信息，<b>不上传任何信息</b>；内容带 Ed25519 签名，<b>验签不过一律不安装</b>；<br />
+          · <b>账号登录</b>（可选）：登录后课表等会备份到云端，<b>服务器持有密钥、可以读取这份备份</b>（所以换机能取回、忘了密码能找回）；密码原文不会上传；<br />
+          · <b>端到端加密同步</b>（可选）：服务器只拿到读不懂的密文，口令和恢复码不上传 —— 代价是忘记口令且恢复码丢失就找不回来。<br />
+          <b>声明：</b>学生自制演示作品，与学校官方无关；第二课堂分数为自评记录，非学校认定结果。
         </div>
       </template>
     </div>
@@ -1051,7 +564,10 @@ async function copyInterests(): Promise<void> {
 
 <style scoped>
 .me { display: flex; gap: 12px; align-items: center; }
-.avatar { width: 46px; height: 46px; border-radius: 14px; background: var(--brand); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 21px; font-weight: 700; }
+.avatar { width: 46px; height: 46px; border-radius: 14px; background: var(--brand); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 21px; font-weight: 700; overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avactions { display: flex; gap: 12px; margin-top: 4px; }
+.alink { font-size: 11px; color: var(--brand); padding: 0; }
 .ico { font-size: 19px; }
 .logo { width: 54px; height: 54px; margin: 4px auto 8px; border-radius: 16px; background: linear-gradient(135deg, #2E5AAC, #4E7BD6); color: #fff; font-size: 30px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
 .periods { max-height: 240px; overflow: auto; }

@@ -5,6 +5,7 @@ import SchoolPicker from './screens/SchoolPicker.vue';
 import Login from './screens/Login.vue';
 import Main from './screens/Main.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
+import AccountRecovery from './components/AccountRecovery.vue';
 import { ensurePermission, permissionState, refreshReminderRisk } from './services/notify.ts';
 import { bootTrace } from './services/guard.ts';
 import { initCloudAutoSync } from './services/cloudAutoSync.ts';
@@ -163,6 +164,8 @@ onMounted(async () => {
   </template>
 
   <ConfirmDialog />
+  <!-- v2.47：账号与找回（从「我的」挪到主页入口；面板自己判断开不开） -->
+  <AccountRecovery />
 
   <div class="toasts">
     <div v-if="db.toast" class="toast" @click="showErr = !showErr">{{ db.toast }}</div>

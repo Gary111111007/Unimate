@@ -59,6 +59,12 @@ ok('没有未定义的 CSS 变量', missing.length === 0, missing.join('\n      
  * `.field { margin-bottom }` 这类无害的重复声明也算成事故。
  */
 const globalCls = new Map<string, { position: string; display: string }>();
+/**
+ * 【v2.47 新增】全局工具类的字号。真实事故：选校页头顶横幅写了 `.brand { font-size: 26px }`，
+ * 而列表里的「可下载」按钮是 `class="pill brand"` —— 按钮吃到 26px，真机上比「开发中」大三四倍。
+ * 与 v2.40 的 `guard` 重名、v2.14 的 `.block` 定位冲突是同一类：**同名就静默覆盖**。
+ */
+const globalFont = new Map<string, string>();
 const ruleRe = /\.([A-Za-z][\w-]*)([^{}]*)\{([^{}]*)\}/g;
 const stylesSrc = readFileSync(join(root, 'styles.css'), 'utf8');
 // 只取"工具类区"，不含文件末尾的 [data-theme='dark'] 覆盖区：
@@ -72,9 +78,11 @@ for (const m of utilitySrc.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
   if (!names.length) continue;
   const pos = (m[2].match(/(?:^|;)\s*position\s*:\s*([\w-]+)/) || [])[1] || '';
   const disp = (m[2].match(/(?:^|;)\s*display\s*:\s*([\w-]+)/) || [])[1] || '';
+  const font = (m[2].match(/(?:^|;)\s*font-size\s*:\s*([^;]+)/) || [])[1]?.trim() || '';
   for (const cls of names) {
     const prev = globalCls.get(cls) || { position: '', display: '' };
     globalCls.set(cls, { position: pos || prev.position, display: disp || prev.display });
+    if (font && !globalFont.has(cls)) globalFont.set(cls, font);
   }
 }
 
@@ -102,12 +110,45 @@ function collisionsOf(file: string, raw: string): string[] {
       if (pos !== g.position) bad.push(cls + ' 的 position:' + pos + '（全局为 ' + (g.position || '未设置') + '）');
     }
   }
+  /*
+   * 同名字号冲突（v2.47）：**同一个元素**上既有全局工具类（带字号，如 .pill = 11px）、
+   * 又有本组件的类（带另一个字号，如 .brand = 26px）—— 后者会把前者的字号悄悄盖掉。
+   * 「可下载」按钮就是这样从 11px 变成 26px 的（真机截图里大出三四倍）。
+   */
+  const scopedFont = new Map<string, string>();
+  for (const m of style.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const f = (m[2].match(/(?:^|;)\s*font-size\s*:\s*([^;]+)/) || [])[1]?.trim();
+    if (!f) continue;
+    for (const cm of m[1].matchAll(/\.([A-Za-z][\w-]*)/g)) if (!scopedFont.has(cm[1])) scopedFont.set(cm[1], f);
+  }
+  for (const m of tpl.matchAll(/\sclass="([^"]*)"/g)) {
+    const list = m[1].split(/\s+/).filter((t) => /^[A-Za-z][\w-]*$/.test(t));
+    for (const g of list) {
+      const gf = globalFont.get(g);
+      if (!gf) continue;
+      for (const s of list) {
+        if (s === g) continue;
+        const sf = scopedFont.get(s);
+        /*
+         * 只在**差得明显**时报警（默认 1.4 倍以上）。
+         * 理由：`class="small emptysem"` 这种「用自己专属的类微调 0.5px」是正常写法（HoursPanel 就是这样），
+         * 而 26px 盖掉 11px（2.4 倍）只会出现在"两个不同语境复用了同一个类名"的时候 —— 那才是事故。
+         */
+        const a = parseFloat(gf); const b = sf ? parseFloat(sf) : NaN;
+        if (sf && Number.isFinite(a) && Number.isFinite(b) && Math.max(a / b, b / a) >= 1.4) {
+          bad.push(s + ' 的字号 ' + sf + ' 会盖掉同一元素上的全局类 .' + g + '（' + gf + '）—— 换个专属类名，别让两个语境共用一个类');
+        }
+      }
+    }
+  }
   return bad;
 }
 
 // 先自证检查器真的能抓到（否则"全绿"没有意义）
 const selfTest = collisionsOf('self.vue', '<template><i class="btn block"></i></template><style scoped>.block { position: absolute; }</style>');
 ok('冲突检查器能抓到同名定位冲突（自证）', selfTest.length === 1, JSON.stringify(selfTest));
+const selfTest2 = collisionsOf('self2.vue', '<template><i class="pill brand"></i></template><style scoped>.brand { font-size: 26px; }</style>');
+ok('冲突检查器能抓到同名字号冲突（v2.47「可下载」那个 bug 的自证）', selfTest2.length === 1, JSON.stringify(selfTest2));
 
 const clashes: string[] = [];
 for (const f of files) {
@@ -115,7 +156,7 @@ for (const f of files) {
   const bad = collisionsOf(f, readFileSync(f, 'utf8'));
   for (const b of bad) clashes.push(relative(root, f) + '  ' + b);
 }
-ok('组件 scoped 样式没有和全局工具类抢同名定位属性', clashes.length === 0, clashes.join('\n        '));
+ok('组件 scoped 样式没有和全局工具类抢同名定位属性 / 字号', clashes.length === 0, clashes.join('\n        '));
 
 /*
  * 课表网格的字号补偿（v2.15 真机截图驱动）。

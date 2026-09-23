@@ -57,7 +57,9 @@ function defaultSettings(p: SchoolProfile): Settings {
     // 账号登录（v2.43，服务器托管）：只存账号名 + 会话令牌；密码不落盘
     cloudAccount: null,
     // 账号模式的自动同步（v2.45）：默认开，可在「加密换机同步」面板关掉
-    cloudAutoSync: true
+    cloudAutoSync: true,
+    // 头像（v2.47）：默认没有，用户自己从相册选一张（本机裁 1:1）
+    avatar: null
   };
 }
 
@@ -291,7 +293,15 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   }
 
 // ---------------- 全局二次确认（产品硬性要求：App 内所有删除必须二次确认） ----------------
-const confirmReq = ref<(ConfirmRequest & { resolve: (ok: boolean) => void }) | null>(null);
+  const confirmReq = ref<(ConfirmRequest & { resolve: (ok: boolean) => void }) | null>(null);
+
+  /**
+   * 「账号与找回」面板（v2.47）：产品负责人要求把它从「我的」挪到主页一个很小的入口，
+   * 所以开关状态放在 store 里，主页那一行小字和 App 层挂着的面板共用它。
+   */
+  const recoveryOpen = ref(false);
+  function openRecovery(): void { recoveryOpen.value = true; }
+  function closeRecovery(): void { recoveryOpen.value = false; }
 
 /** 弹出统一的确认框，返回用户是否确认。所有删除路径都必须走这里。 */
 function confirm(opts: Partial<ConfirmRequest> & { title: string; body: string }): Promise<boolean> {
@@ -873,6 +883,8 @@ function hourTotal(kind: HourKind): number {
   return {
     booted, screen, profile, accounts, session, interests, timetables, courses, notes, records, hours, materials, settings, focus,
     activeTab, activeSheet, toast, toastSeq, busy, lastError, storage, activeTimetable, currentWeek, confirmReq, confirm, answerConfirm,
+    /** v2.47：主页那行小字「账号找回」与面板共用这套开关 */
+    recoveryOpen, openRecovery, closeRecovery,
     notifyCleanup,
     boot, selectSchool, applyProfile, changeSchool, addInterest, ensureDemoAccount, register, login, logout, switchSchool,
     loadUserData, saveData, seedDemo, resetDemo, notify,

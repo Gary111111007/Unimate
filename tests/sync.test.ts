@@ -68,7 +68,9 @@ const jsCipher = gcm(jsBits, vectorNonce, vectorAad).encrypt(vectorPlain);
 ok('WebCrypto 与纯 JS 生成逐字节相同 AES-GCM 密文', Buffer.from(nativeCipher).equals(Buffer.from(jsCipher)));
 
 console.log('--- P3 界面、隐私与云端边界 ---');
-const me = read('src/views/MeView.vue');
+// v2.47：同步/找回那一屏从「我的」搬到了主页入口的 components/AccountRecovery.vue，
+// 所以下面所有"界面里有没有这些字"的断言，两个文件一起看。
+const me = read('src/views/MeView.vue') + read('src/components/AccountRecovery.vue');
 const login = read('src/screens/Login.vue');
 const cloud = read('src/services/cloudSync.ts');
 const syncCryptoSource = read('src/services/syncCrypto.ts');
@@ -77,8 +79,10 @@ ok('设置页有加密换机同步入口', me.includes('加密换机同步') && 
 ok('恢复前仍走统一二次确认', /await db\.confirm\(\{/.test(me) && /开始恢复/.test(me));
 ok('口令输入禁止浏览器自动填充', (me.match(/autocomplete="off"/g) || []).length >= 3);
 // v2.42 起关于页还要点名"账号"：账号同步上线后，只说"口令和恢复码"就不够了
+// v2.47：关于页按产品负责人要求精简（只留用户要知道的），话术跟着改成更短的句子，要点不变
 ok('关于页如实写明可选密文上传（含账号同步）',
-  me.includes('服务器只保存 AES-256-GCM 密文') && me.includes('同步账号、口令和恢复码不上传、不保存'));
+  me.includes('服务器只拿到读不懂的密文') && me.includes('口令和恢复码不上传')
+  && me.includes('服务器持有密钥、可以读取这份备份'));
 // v2.43/v2.44 起登录页同时挂着两条路径，文案必须都写出来、且不许出现"绝不上传"这类绝对话术
 ok('登录页如实说明两条可选云端路径（账号登录可读 / 端到端只存密文）',
   login.includes('账号登录') && login.includes('端到端加密同步') && login.includes('服务器只存密文')
@@ -387,11 +391,12 @@ console.log('\n--- v2.42：账号同步（A 方案）---');
   }
 
   // 界面与存储接线（光有算法、没接上也没用）
-  const me = read('src/views/MeView.vue');
+  const me = read('src/views/MeView.vue') + read('src/components/AccountRecovery.vue');
   // v2.45 把端到端那条的 `accountUpload` 改名成 `accountSyncUpload`：它和云账号上传重名，
   // 属于 v2.40 `guard` 那一类"编译期悄悄改 import 名"的雷（现在的 test:order 会扫出来）
+  // v2.47：这一屏搬进 components/AccountRecovery.vue，函数名也改成更直白的 e2eeUpload / e2eeFetch
   ok('界面：端到端账号同步的三个动作都接上了（上传 / 找回 / 删除云端备份）',
-    /async function accountSyncUpload\(/.test(me) && /async function accountFetch\(/.test(me) && /async function deleteCloudBackup\(/.test(me), '');
+    /async function e2eeUpload\(/.test(me) && /async function e2eeFetch\(/.test(me) && /async function deleteCloudBackup\(/.test(me), '');
   ok('界面：账号找回走"下载 → 解密 → 预览 → 覆盖/合并 → 二次确认"同一条链路',
     /const syncId = deriveAccountSyncId\(account\)/.test(me) && /downloadSyncCipher\(syncId\)/.test(me)
     && /decryptSync\(cipher, syncId, acctPass\.value\)/.test(me), '');
@@ -400,10 +405,9 @@ console.log('\n--- v2.42：账号同步（A 方案）---');
   ok('界面：换同步方式时销毁旧云端备份也要二次确认',
     /要顺手销毁旧的云端备份吗/.test(me), '');
   ok('文案与实现一致：不再写"直传 Cloudflare R2"（正文已改走 pages.dev 中转）',
-    !/直传 Cloudflare R2/.test(me)
-    && /密文经 <b>unimate3\.pages\.dev<\/b> 中转后保存在 Cloudflare R2/.test(me), '');
-  ok('隐私文案说清"账号/口令/恢复码不上传、不保存"',
-    /同步账号、口令和恢复码不上传、不保存/.test(me), '');
+    !/直传 Cloudflare R2/.test(me) && !/unimate3\.pages\.dev/.test(read('src/views/MeView.vue')), '');
+  ok('隐私文案说清"口令/恢复码不上传、不保存"（端到端那条路）',
+    /口令和恢复码不上传/.test(me), '');
   const types = read('src/types.ts');
   const dbSrc = read('src/stores/db.ts');
   ok('设置里只多存一个账号名（口令绝不落盘）',
@@ -556,18 +560,23 @@ console.log('\n--- v2.43：账号登录（服务器托管）---');
   ok('客户端只发送 verifier，不发送密码原文',
     /deriveAuthVerifier\(account, password\)/.test(accountSrc) && !/JSON\.stringify\(\{[^}]*password/.test(accountSrc), '');
 
-  const me3 = read('src/views/MeView.vue');
-  ok('界面：账号登录的六个动作都接上了',
-    ['cloudLogin', 'cloudSignup', 'cloudUpload', 'cloudRestore', 'cloudLogout', 'cloudDeleteAccount']
+  const me3 = read('src/views/MeView.vue') + read('src/components/AccountRecovery.vue');
+  // v2.47：账号登录/注册搬去登录页，「账号与找回」面板留下取回与云端管理，函数名也跟着改直白
+  ok('界面：账号取回与云端管理的动作都接上了',
+    ['fetchFromCloud', 'uploadNow', 'logoutCloud', 'deleteCloudAccount']
       .every((fn) => new RegExp('function ' + fn + '\\(').test(me3)), '');
   ok('界面：注册/登录前必须勾选"同意上传到云端"（不能默认同意）',
-    /v-model="cloudConsent"/.test(me3) && /disabled="cloudBusy \|\| !cloudConsent"/.test(me3), '');
+    /v-model="cloudConsent"/.test(read('src/screens/Login.vue')) && /!cloudConsent/.test(read('src/screens/Login.vue')), '');
   ok('界面：注销账号走 db.confirm 二次确认（硬规则 1）',
-    /async function cloudDeleteAccount[\s\S]{0,600}db\.confirm\(/.test(me3), '');
+    /async function deleteCloudAccount[\s\S]{0,600}db\.confirm\(/.test(me3), '');
   ok('界面：如实写明"服务器持有密钥、可以读取"（口径变了，文案必须跟着变）',
     /服务器持有密钥、可以读取/.test(me3) && /服务端存的是可读取的备份/.test(me3), '');
-  ok('界面：云端恢复仍然要过"预览 → 覆盖/合并 → 二次确认"',
-    /await inspectBackup\(bytes\)/.test(me3) && /restoreB64\.value = bytesToBase64\(bytes\)/.test(me3), '');
+  // v2.47：云端取回改走"预览(previewCloudBackup) → db.confirm → adoptCloudBackup"，
+  // 本机文件那条走"inspectBackup → db.confirm → restoreBackup" —— 两条都必须先预览再二次确认
+  ok('界面：云端恢复仍然要过"预览 → 二次确认 → 落地"',
+    /await previewCloudBackup\(bytes, db\)/.test(me3) && /await db\.confirm\(\{/.test(me3)
+    && /await adoptCloudBackup\(bytes, db, session\)/.test(me3)
+    && /await inspectBackup\(base64ToBytes\(b64\)\)/.test(me3), '');
   ok('设置里只存账号名/令牌，不存密码',
     /cloudAccount\?: \{/.test(read('src/types.ts')) && /cloudAccount: null/.test(read('src/stores/db.ts'))
     && !/cloudPassword|cloudPass:/ .test(read('src/types.ts') + read('src/stores/db.ts')), '');
@@ -741,7 +750,7 @@ console.log('\n--- v2.45：改完自动同步（账号模式）---');
   const appSrc = read('src/App.vue');
   ok('App 启动时注册自动同步（放在开屏之后，卡住也不影响进 App）',
     /initCloudAutoSync\(db\)/.test(appSrc) && appSrc.indexOf('splashDone.value = true') < appSrc.indexOf('initCloudAutoSync(db)'), '');
-  const meSrc = read('src/views/MeView.vue');
+  const meSrc = read('src/views/MeView.vue') + read('src/components/AccountRecovery.vue');
   ok('面板有自动同步开关 + 状态行（文案说清"关掉后一次请求都不发"）',
     /toggleAutoSync/.test(meSrc) && /cloudAutoSync !== false/.test(meSrc) && /关掉后一次请求都不发/.test(meSrc), '');
   ok('手动上传与自动同步共用同一条流水线（syncNow），口径不会两样',
