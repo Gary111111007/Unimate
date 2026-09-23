@@ -116,6 +116,25 @@ export async function inspectBackup(bytes: Uint8Array): Promise<ImportPreview> {
   return { manifest, entries: items.length };
 }
 
+/**
+ * 取出备份里的本机账号记录（`account/profile.json`）。
+ *
+ * v2.44：开机登录页的"用 Unimate 账号登录并取回课表"靠它 —— 备份里带着原设备的
+ * `id / username / passwordHash / salt`，所以换机后**连本机密码都还是原来那个**，
+ * 数据目录也对得上（`schools/<schoolId>/users/<accountId>`）。
+ * 老备份或第三方构造的包可能没有这一段，那就返回 null，由调用方新建一个账号来承载。
+ */
+export function readBackupProfile(bytes: Uint8Array): Account | null {
+  const items = readZip(bytes);
+  const f = items.find((i) => i.name === 'account/profile.json');
+  if (!f) return null;
+  try {
+    const acc = JSON.parse(new TextDecoder().decode(f.data)) as Account;
+    if (!acc || typeof acc.id !== 'string' || typeof acc.username !== 'string') return null;
+    return acc;
+  } catch { return null; }
+}
+
 export async function restoreBackup(bytes: Uint8Array, userBase: string, merge: boolean): Promise<void> {
   const items = readZip(bytes);
   const current = merge ? {

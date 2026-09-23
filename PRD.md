@@ -1,6 +1,6 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v2.43 ｜ 日期 2026-09-23 ｜ 状态：北二外云端档案已上线；P3 真机上传已验证通过；`$ is not a function`（v2.40）、"上传加密备份失败"（v2.41）都已修；**v2.43 按产品负责人要求改成"账号登录 + 服务器托管"（旧口径"数据只在本机/只上传密文"已撤销）**，端到端加密保留为可选高级项
+> 版本 v2.44 ｜ 日期 2026-09-23 ｜ 状态：北二外云端档案已上线；P3 真机上传已验证通过；`$ is not a function`（v2.40）、"上传加密备份失败"（v2.41）都已修；**v2.43 按产品负责人要求改成"账号登录 + 服务器托管"（旧口径已撤销）；v2.44 又把云账号登录搬到开机登录页 —— 装完 APK 输账号密码就能取回课表**
 > 口径变更：App 自己的联网功能现在有**三类**：天气（默认关闭）、高校档案更新，以及用户主动操作的
 > **账号登录（v2.43 起为主推）**：备份存云端、服务端持密钥可读（见 11.51）；
 > **端到端加密同步（可选）**：只上传 AES-256-GCM 密文，口令与恢复码不保存、不上传（见 11.45）。
@@ -29,14 +29,15 @@
 | **真机上传已通过（v2.41）** | 产品负责人重拖 v2.41 上传包并装 v2.41 APK 后，截图显示：**「已上传端到端加密备份；本机同时保存 unimate-encrypted-_dPqEWjq-20260922-2224.umig」** —— 这是 P3 上传第一次在真机上真正跑通（`$ is not a function`、直传 R2 两道墙都过了）。 |
 | **口径变更（v2.43）** | 产品负责人 2026-09-23 明确："我还是要做成账号登录的形式……我撤销数据不存在本地以及其他的相关协议。" → **旧版"数据只在本机 / 只上传密文 / 服务器看不到你的数据"一律作废**，改为**账号登录 + 服务器托管**为主推；端到端加密（A 方案 / 随机同步码）**保留为可选高级项**，两条路并存、用户自己选。详见 11.51。 |
 | 账号登录（v2.43） | 新增账号 API：注册 / 登录 / 账号信息 / 备份上传下载 / 注销。备份正文存 R2，落盘用 Worker secret `DATA_KEY` 做 AES-256-GCM（**服务端持钥匙、可读、可帮着重置**）；密码原文不上传（本地 210k PBKDF2 → verifier），服务端只存 `sha256(盐 + verifier)`；账号记录与数据对象都在**既有 R2 桶**里（`acct/`、`data/` 前缀），不用新建 D1/KV，但 **Worker 需要重新 deploy**。**未验证（真机）**。 |
-| 待办的唯一主线 | ① **重新部署 Worker**（`cd cloudflare\sync-worker` → `npx wrangler secret put DATA_KEY` → `npm run deploy`）；② 拖放 v2.43 Pages 上传包（前端 bundle + 中继转发表都变了）；③ 覆盖安装 v2.43 APK（不要卸载）→「我的 → 加密换机同步 → 账号登录」注册并上传；④ 第二台设备（或清数据后）登录同一账号，验证"登录 → 自动下载 → 预览 → 覆盖/合并 → 二次确认恢复"。 |
-| 提醒链路 | v2.35 起 `ReminderAlarmReceiver` 接管插件排期并用精确闹钟到点直接投递，守护服务每 15 秒扫一次持久化排期；**这一版（v2.43 APK）里就包含它**，装同一次包即可顺带复验提醒。产品负责人已齐"精确闹钟 + 电池优化豁免"两项（明确不动厂商自启动）。 |
+| 登录页直连云账号（v2.44） | 产品负责人要的"一个登录就全好"已落地：**开机登录页新增「换新手机？用 Unimate 账号取回课表」** —— 输云账号 + 密码 → 拉云端备份 → 显示学校/时间/条数 → 二次确认 → 新建或接管本机账号 → 装好课表直接进主界面。备份里带着原账号记录（`account/profile.json`），所以**换机后连本机密码都还是原来那个**。详见 11.52。 |
+| 待办的唯一主线 | ① **重新部署 Worker**（`cd cloudflare\sync-worker` → `npx wrangler secret put DATA_KEY` → `npm run deploy`）；② 拖放 **v2.44** Pages 上传包；③ 覆盖安装 **v2.44** APK（不要卸载）→「我的 → 加密换机同步 → 账号登录」注册并上传；④ **另一台设备：开机登录页直接用云账号取回课表**（不用先建本机账号），验"下载 → 摘要 → 二次确认 → 进主界面"。 |
+| 提醒链路 | v2.35 起 `ReminderAlarmReceiver` 接管插件排期并用精确闹钟到点直接投递，守护服务每 15 秒扫一次持久化排期；**这一版（v2.44 APK）里就包含它**，装同一次包即可顺带复验提醒。产品负责人已齐"精确闹钟 + 电池优化豁免"两项（明确不动厂商自启动）。 |
 
 当前交付物：
 
-- APK（v2.43，**待产品负责人真机复验账号登录**）：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，SHA-256 `5C93310DA337E85099D38128AF45E1ED01E1DCC33E42401BA39AA82084C5B073`。
-- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.43-upload`](artifacts/cloudflare/unimate-cloudflare-v2.43-upload)（根目录含 `_worker.js`）——**需要重拖一次**（本次前端 bundle 与中继转发表都变了）。
-- Pages ZIP 归档：`artifacts/cloudflare/unimate-cloudflare-v2.43.zip`（Pages 网页不直接接受 ZIP，要拖放解压目录）。
+- APK（v2.44，**待产品负责人真机复验**）：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，SHA-256 `1F147943EC7F4A237AA6E9CF9DE00D82B05FAED37EB95611C98E772D54309009`。
+- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.44-upload`](artifacts/cloudflare/unimate-cloudflare-v2.44-upload)（根目录含 `_worker.js`）——**拖这一个就行**（v2.43 与 v2.44 的 `_worker.js` 相同，前端 bundle 是新的）。
+- Pages ZIP 归档：`artifacts/cloudflare/unimate-cloudflare-v2.44.zip`（Pages 网页不直接接受 ZIP，要拖放解压目录）。
 - **Worker 需要重新部署一次**（账号 API 是新增的）：`cd cloudflare\sync-worker` → `npx wrangler secret put DATA_KEY`（自定一串随机字符，也可以先不设，界面会如实提示"未设落盘密钥"）→ `npm run deploy`。其余 secret 不要动。
 - Worker 已在线，**不要再上传 Worker ZIP，不要把任何 secret 值写进 PRD/聊天/截图**。
 
@@ -2976,6 +2977,53 @@ v2.40 装到真机后：**「建立同步并生成恢复码」成功了**（`$ i
 
 ---
 
+### 11.52 第四十一轮（v2.44，2026-09-23）：把云账号登录搬到开机登录页
+
+11.51 交付后，产品负责人指出还差一步（也正是他要的体验）：*"你先继续干"* —— 于是把"账号登录 → 取回课表"
+从「我的 → 加密换机同步」搬到了**开机登录页**。旧流程是"先建本机账号 → 进 App → 再登云账号 → 再恢复"，
+新流程是"**装完 APK，输云账号 + 密码 → 课表自己回来 → 直接进主界面**"。
+
+#### A. 关键发现：备份里本来就带着原账号
+
+`exportBackup()` 会把 `account/profile.json` 打进包里（`id / username / displayName / passwordHash / salt`）。
+于是换机时可以**接管原账号**，而不是新造一个：
+
+- 本机账号 id 沿用原 id → 数据目录 `schools/<schoolId>/users/<accountId>` 与旧设备一致，真的是"同一份"；
+- **连本机密码都还是原来那个**（哈希和盐一起搬过来），用户不用记两套密码；
+- 万一备份里没有这一段（老版本/第三方包），就新建一个账号承载，并给它一个随机本机口令。
+
+#### B. 落地流程（`src/services/cloudAdopt.ts`）
+
+1. `inspectBackup` 读清单（学校、时间、条数）+ `readBackupProfile` 取原账号；
+2. **学校档案缺失就拦住**：提示"请先在「选择高校」页下载这所高校的档案" —— 绝不把数据写进一个不存在的学校目录；
+3. 本机账号：接管（同 id）或新建（重名自动加后缀）；
+4. `session` 指向该账号 → `selectSchool(schoolId, true)`（内部完成绑定学校、读数据、切主界面）；
+5. `restoreBackup(bytes, base, false)` 把课表/记事/二课/照片/设置写进这个账号目录 → 再 `loadUserData()`；
+6. 把云账号会话存进 `settings.cloudAccount`（进 App 后不用再登一次）+ `persistManifest()`；
+7. **任何一步失败都退回登录页**，不让用户对着空课表发懵。
+
+为什么不写进 store：`stores/db.ts ⇄ services/backup.ts` 会形成模块循环（backup.ts 要用 db.ts 的 `APP_VERSION`/`SCHEMA_VERSION`），
+所以这一个文件只做**编排**，只用 store 已经暴露的能力（`accounts` / `session` / `screen` / `selectSchool` / `loadUserData` / `persistManifest`）。
+
+#### C. 登录页（`src/screens/Login.vue`）
+
+- 本机账号卡片下方新增「**换新手机？用 Unimate 账号取回课表**」：账号 + 密码 + `取回云端课表`；
+- 流程：云登录 → 读云端信息（没有备份就直接说明去旧设备上传）→ 下载 → 摘要确认框（学校/时间/条数/照片数）→ 落地 → 进主界面；
+- **覆盖本机已有数据时确认框标红**（硬规则 1），全新设备则是"取回并进入"；
+- 页面文案与实现同步（硬规则 7）：明确写出两条可选云端路径 —— ①账号登录（数据存云端服务器、服务端持密钥可读）②端到端加密同步（服务器只存密文）。
+
+#### D. 验证
+
+- **已验证（本机自动化）**：`test:sync` 122 → **134 条**。新增：从真 ZIP 里取出原账号记录 / 没有该段时返回 null / 摘要字段齐全 /
+  学校缺档案时给出提示而不是硬恢复 / 已有同 id 账号且有数据时预览标记"要覆盖" / 落地流程四个步骤与失败退回登录页 / 登录页接线与二次确认。
+  全套 **21 套件 858 条**全绿。
+- **已验证（构建产物）**：APK `1F147943…`（6.67 MB），包内 bundle 与 `dist` 逐字节一致（`index-CvkkeMPW.js`）；
+  反查新串（`换新手机？用 Unimate 账号取回课表`、`取回云端课表`、`数据存在云端服务器`、`服务端持密钥可读`）都在，
+  `workers.dev`/secret/私钥字符串全为 0；`apksigner verify` 通过。**注**：Gradle 守护进程第四次占住输出管道，APK 已产出（12:50:05），第 6 步由我手工复核。
+- **未验证（真机）**：登录页取回整条链路（含"换机后本机密码不变"这一点）；提醒链路。
+
+---
+
 ### 11.4 已安装的 Codex Skill（需求第 8 项，已完成)
 
 | Skill | 位置 | 用途 | 状态 |
@@ -3087,6 +3135,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 本次 v2.41 提交 | 2026-09-22 | v2.41 | **密文正文搬上 pages.dev 中转**（详见 11.49）：真机点「确认并上传密文」报"上传加密备份失败" —— 预签名成功、卡在**直传 R2**（桶 CORS 缺 `https://localhost`，且大陆到 R2 S3 域名的可达性不受我们控制）。`cloudflare/pages/_worker.js` 新增 `/v1/put`、`/v1/get`：边缘代取 15 分钟短链、代传代取 R2；客户端**中转优先、直传兜底**；桶 `cors.json` 补 `https://localhost`；`test:sync` 44→**66 条**（新增打桩上游 Worker 与 R2 的**行为**验证），全套 **21 套件 790 条** | Pages 上传包**待重传**（中转端点必须先在线上存在）；APK `5FCDAC5D…`；真机上传/双机恢复待复验 |
 | 本次 v2.42 提交 | 2026-09-22 | v2.42 | **账号同步（A 方案）**（详见 11.50）：产品负责人拍板"账号密码的体验 + 云端仍只有密文"。新增 `deriveAccountSyncId/normalizeAccount`（账号名在本机派生 22 字符同步码）、`encryptForSync(…, account)`（恢复码里的同步码段同步改写，否则换机查空）、墓碑 `tombstoneBytes/isTombstone`（删除云端备份 = 覆盖销毁）；`MeView.vue` 同步面板重做成"账号同步（推荐）"+ "恢复码兜底"两张卡，新增「用账号找回课表（换机）」与「删除云端备份（撤回）」；`types.ts`/`db.ts` 只多存账号名（口令仍不落盘）；顺手把**已与实现不符**的文案"直传 Cloudflare R2"改成"经 unimate3.pages.dev 中转"（AGENTS.md 第 7 条）；`test:sync` 66→**91 条**，全套 **21 套件 815 条** | 真机上传已由产品负责人在 v2.41 上验证通过（截图：已上传端到端加密备份）；APK `E8ABA42C…`；账号同步待真机复验 |
 | 本次 v2.43 提交 | 2026-09-23 | v2.43 | **账号登录 + 服务器托管（口径变更）**（详见 11.51）：产品负责人撤销"数据只在本机/只上传密文"，要求做成普通 App。服务端新增 `/v1/signup`、`/v1/login`、`GET /v1/account`、`PUT|GET /v1/backup`、`DELETE /v1/account`（账号记录与数据对象都放既有 R2 桶，`acct/`、`data/` 前缀，不新建 D1/KV）；落盘用 Worker secret `DATA_KEY` 做 AES-256-GCM（**服务端持钥匙、可读**），`/health` 回 `atRest` 供界面如实提示；密码原文不上传（本地 210k PBKDF2 → verifier，服务端只存 `sha256(盐+verifier)`）；`src/services/account.ts` + `MeView.vue` 新增「账号登录（云端备份）」卡片（注册/登录/上传/恢复/退出/注销，登录后自动读取云端并进入"预览→覆盖/合并→二次确认"），注销走 `db.confirm`；`AGENTS.md` 硬规则 5 改写（旧口径作废、端到端降为可选、保留数据出境提醒）；`_worker.js` 中继转发表与预检补 `Authorization`/`PUT`/`DELETE`；`test:sync` 91→**122 条**，全套 **21 套件 846 条** | **Worker 需要重新 deploy**（新增账号 API）+ 建议 `npx wrangler secret put DATA_KEY`；APK `5C93310D…`；真机注册/登录取回待复验 |
+| 本次 v2.44 提交 | 2026-09-23 | v2.44 | **把云账号登录搬到开机登录页**（详见 11.52）：登录页新增「换新手机？用 Unimate 账号取回课表」——账号+密码 → 拉云端备份 → 摘要 → 二次确认（覆盖本机数据时标红）→ 接管/新建本机账号 → 装好课表直接进主界面。新增 `src/services/cloudAdopt.ts`（编排层：`readBackupProfile` 取原账号 → 学校缺档案就拦住 → 接管/新建本机账号 → `selectSchool` 绑定 → `restoreBackup` → 重新读数据 → 存云会话；失败退回登录页）与 `backup.ts` 的 `readBackupProfile`（**备份里本来带着 `id/username/passwordHash/salt`，所以换机后本机密码不变**）；`test:sync` 122→**134 条**，全套 **21 套件 858 条** | APK `1F147943…`；Pages 用 v2.44 包（`_worker.js` 与 v2.43 相同）；真机待复验 |
 
 ### 14.2 依赖与环境变更
 
@@ -3153,6 +3202,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | 2026-09-22 | `5FCDAC5D…`（真机确认） | **v2.41 真机上传通过**：产品负责人重拖 Pages 上传包并覆盖安装后，界面显示"已上传端到端加密备份；本机同时保存 unimate-encrypted-_dPqEWjq-20260922-2224.umig" —— P3 上传第一次在真机上跑通 |
 | 2026-09-22 | `E8ABA42C…` | v2.42：**账号同步（A 方案）**：账号名在本机派生同步码，换机输"账号 + 口令"即可找回；口令/恢复码/明文仍不上传不落盘；新增"删除云端备份（撤回）"（墓碑覆盖，二次确认）。全套 **21 套件 815 条**全绿（`test:sync` 91）；APK 6.66 MB，`apksigner verify` 与 6 步完整性校验通过；包内 bundle 与 `dist` 逐字节一致；反查新串（账号同步（推荐）/ 用账号找回课表（换机）/ 删除云端备份（撤回）/ unimate-account-v1 / `/v1/put`）都在，**旧文案 `直传 Cloudflare R2` 为 0** |
 | 2026-09-23 | `5C93310D…` | v2.43：**账号登录 + 服务器托管**（口径变更）：账号 API 五个端点、落盘加密 `DATA_KEY`、客户端「账号登录（云端备份）」卡片、注销二次确认、中继预检补 `Authorization`/`PUT`/`DELETE`。全套 **21 套件 846 条**全绿（`test:sync` 122，含打桩 R2 的注册→上传→下载→注销真实链路；顺带抓出并修掉 `crypto.subtle.encrypt` 传裸字节的真 bug）；包内 bundle 与 `dist` 逐字节一致（`index-D8M8Kdcb.js`）；反查新串都在、`workers.dev`/secret/私钥字符串全为 0；`apksigner verify` 通过。**注**：Gradle 守护进程第三次占住输出管道，APK 已产出，第 6 步由我手工复核 |
+| 2026-09-23 | `1F147943…` | v2.44：**云账号登录搬到开机登录页**：`src/services/cloudAdopt.ts`（接管/新建本机账号 → 绑定高校 → 恢复数据 → 存云会话，失败退回登录页）+ `backup.ts` 的 `readBackupProfile`（备份自带原账号 → 换机后本机密码不变）+ 登录页「换新手机？用 Unimate 账号取回课表」。全套 **21 套件 858 条**全绿（`test:sync` 134）；包内 bundle 与 `dist` 逐字节一致（`index-CvkkeMPW.js`）；反查新串都在、敏感串全为 0；`apksigner verify` 通过。**注**：Gradle 守护进程第四次占住输出管道，APK 已产出（12:50:05），第 6 步由我手工复核 |
 
 > 出包唯一正确方式：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1`（11→17 步全套测试 + 构建 + APK 内容反查；红一条不出包）。
 > 沙箱内跑该脚本会因 Node/Gradle 拿不到用户信息而失败，需在沙箱外执行 —— 这是环境限制，不是工程问题。
@@ -3272,6 +3322,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| v2.44 | 2026-09-23 | **把云账号登录搬到开机登录页 —— "一个登录就全好"**（详见 11.52）—— 11.51 交付后产品负责人指出还差这一步（"你先继续干"）。做法：登录页新增「换新手机？用 Unimate 账号取回课表」（账号+密码 → 拉云端备份 → 显示学校/时间/条数 → 二次确认 → 直接进主界面，不用先建本机账号）。关键发现：`exportBackup()` 本来就把 `account/profile.json`（含 `id/username/passwordHash/salt`）打进包，所以换机可以**接管原账号**：数据目录与旧设备一致，**连本机密码都还是原来那个**；没有这一段就新建账号承载。新增 `src/services/cloudAdopt.ts` 做编排（不写进 store：`db.ts ⇄ backup.ts` 会形成模块循环）：学校档案缺失就拦住（绝不写进不存在的学校目录）→ 接管/新建本机账号 → 绑定学校 → `restoreBackup` → 重新读数据 → 存云会话；**任一步失败都退回登录页**。`test:sync` 122→**134 条**（含"备份里取原账号""缺档案拦截""要覆盖时预览标红"），全套 **21 套件 858 条**全绿；APK `1F147943…`；真机待复验。 |
 | v2.43 | 2026-09-23 | **账号登录 + 服务器托管：产品负责人撤销"数据只在本机/只上传密文"**（详见 11.51）—— 原话"我还是要做成账号登录的形式，你这个太麻烦了，我撤销数据不存在本地以及其他的相关协议"。做法：服务端新增账号 API（注册/登录/账号信息/备份上传下载/注销），账号记录与数据对象都放**既有 R2 桶**（`acct/`、`data/`），**不新建 D1/KV**；落盘用 Worker secret `DATA_KEY` 做 AES-256-GCM —— 也就是**服务端持钥匙、能读**，换来"换机登录就有课表"和"忘记密码开发者可重置"；`/health` 回 `atRest`，界面如实显示"落盘加密已开启 / 未设落盘密钥"。仍然坚持的两条：**密码原文不上传**（本地 210k PBKDF2 → verifier，服务端只存 `sha256(盐+verifier)`）、**注销要真删且走二次确认**。客户端新增「账号登录（云端备份）」卡片（登录后自动读取云端 → 预览 → 覆盖/合并 → 二次确认恢复），端到端加密同步**降为可选高级项**（代码与测试全保留）。口径变更同步写进 `AGENTS.md` 硬规则 5：旧表述作废，并保留"Cloudflare 在境外、账号模式构成数据出境"的提醒。`test:sync` 91→**122 条**（打桩 R2 跑通注册→上传→下载→注销全链，抓出并修掉 `crypto.subtle.encrypt` 传裸字节的真 bug），全套 **21 套件 846 条**全绿；APK `5C93310D…`；**Worker 需重新 deploy**、Pages 需重拖；真机待复验。 |
 | v2.42 | 2026-09-22 | **账号同步（A 方案）：账号密码的体验 + 云端仍只有密文**（详见 11.50）—— 产品负责人问"能不能像普通 App 那样绑账号、云端存、换机登录就自动有课表"。先答清了合规：**写个告知+同意不够**（还要能撤回、能注销真删、最小必要、加密存储，且**我们的云端在境外，一旦存明文就构成数据出境**；今天能放 Cloudflare 的唯一理由就是"服务器上只有乱码"）。随后按他拍板的 **A 方案**实现：账号名在**本机**参与派生（`base64url(sha256('unimate-account-v1\0'+归一化账号)[0..16])`，22 字符，与随机同步码同一命名空间，**云端接口一行没改**），换机只要输"账号 + 口令"即可自动定位、下载、解密、二次确认恢复；口令/恢复码/明文仍不上传不落盘（本地只多存账号名 `settings.syncAccount`）；账号模式下**恢复码里的同步码段同步改写**，否则恢复码在别的手机查空；新增「删除云端备份（撤回）」（墓碑覆盖销毁原密文，二次确认）与"换同步方式时销毁旧备份"的二次确认；代价如实写进界面（**忘记口令且恢复码丢失 = 找不回来**、账号可猜所以口令是唯一秘密）。顺手修掉与实现不符的文案"直传 Cloudflare R2"→"经 unimate3.pages.dev 中转"。`test:sync` 66→**91 条**（含打桩上游 Worker 与 R2 的完整"上传→换机找回→口令错拒绝→墓碑销毁"链路），全套 **21 套件 815 条**全绿；APK `E8ABA42C…`；真机复验待产品负责人执行。 |
 | v2.41 | 2026-09-22 | **真机上传失败的下一道墙：密文正文也搬上 pages.dev**（详见 11.49）—— v2.40 装到真机后「建立同步并生成恢复码」已成功（`$ is not a function` 消了），但「确认并上传密文」报「上传加密备份失败，请检查网络后重试」。该文案来自**拿到短链之后直传 R2** 的那次 fetch，所以预签名是好的、卡在直传：① `cloudflare/sync-worker/cors.json` 的 origins 只有 `http://localhost` / `https://unimate3.pages.dev`，**缺 APK 的来源 `https://localhost`**（与 v2.39 同一个坑，只是从 Worker 的 `APP_ORIGINS` 换到了桶 CORS，v2.39 只修了前者）；② 大陆移动网络到 `*.r2.cloudflarestorage.com` 的可达性不受我们控制。改法：Pages `_worker.js` 新增 `POST /v1/put`（代取短链 → 代 PUT）与 `POST /v1/get`（代 GET → 正文原样返回），**手机全程只与 pages.dev 通信**；代 PUT 带与签名一致的 `Content-Type`、透传 `CF-Connecting-IP` 保限频、上限 30 MB、404/502 分支齐全；客户端**中转优先、直传兜底**（老版 Pages 仍可按原路走）；桶 `cors.json` 补 `https://localhost`（直传兜底的前提，需执行一次 `wrangler r2 bucket cors set`）。`test:sync` 44→**66 条**（新增**打桩上游 Worker 与 R2 的行为验证**：字节一致、Content-Type 一致、剥 Origin、403、正文带回、静态资源分流），全套 **21 套件 790 条**全绿；APK `5FCDAC5D…`（包内 bundle 与 `dist` 逐字节一致 `B3BA47C1…`）；**Pages 上传包待重传**；真机上传/双机恢复待复验。 |

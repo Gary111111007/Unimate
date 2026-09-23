@@ -79,7 +79,10 @@ ok('口令输入禁止浏览器自动填充', (me.match(/autocomplete="off"/g) |
 // v2.42 起关于页还要点名"账号"：账号同步上线后，只说"口令和恢复码"就不够了
 ok('关于页如实写明可选密文上传（含账号同步）',
   me.includes('服务器只保存 AES-256-GCM 密文') && me.includes('同步账号、口令和恢复码不上传、不保存'));
-ok('登录页不再宣称绝不上传', login.includes('同步只上传端到端加密密文'));
+// v2.43/v2.44 起登录页同时挂着两条路径，文案必须都写出来、且不许出现"绝不上传"这类绝对话术
+ok('登录页如实说明两条可选云端路径（账号登录可读 / 端到端只存密文）',
+  login.includes('账号登录') && login.includes('端到端加密同步') && login.includes('服务器只存密文')
+  && !/绝不上传|不会上传任何/.test(login));
 ok('Android WebView 优先使用标准 WebCrypto', /subtle\.deriveBits/.test(syncCryptoSource) &&
   /subtle\.encrypt/.test(syncCryptoSource) && /subtle\.decrypt/.test(syncCryptoSource));
 ok('WebCrypto 调用有超时与纯 JS 兼容兜底', /cryptoTimeout/.test(syncCryptoSource) &&
@@ -569,6 +572,71 @@ console.log('\n--- v2.43：账号登录（服务器托管）---');
     /'\/v1\/signup', '\/v1\/login', '\/v1\/account', '\/v1\/backup'/.test(read('cloudflare/pages/_worker.js'))
     && /Access-Control-Allow-Headers', 'Content-Type, Authorization'/.test(read('cloudflare/pages/_worker.js'))
     && /GET,POST,PUT,DELETE,OPTIONS/.test(read('cloudflare/pages/_worker.js')), '');
+}
+
+/*
+ * v2.44：开机登录页"用 Unimate 账号取回课表" —— 产品负责人要的"一个登录就全好"。
+ */
+console.log('\n--- v2.44：登录页直接取回云端课表 ---');
+{
+  const { makeZip } = await import('../src/services/zip.ts');
+  const { inspectBackup, readBackupProfile } = await import('../src/services/backup.ts');
+  const { adoptBlockedReason, previewCloudBackup } = await import('../src/services/cloudAdopt.ts');
+  const enc2 = new TextEncoder();
+  const savedAccount: any = {
+    id: 'acc-0001', username: 'zhixiaohui', displayName: '智小汇', isDemo: false,
+    passwordHash: 'deadbeef', salt: 'cafe', createdAt: '2026-09-23 08:00', lastLoginAt: ''
+  };
+  const manifest: any = {
+    app: 'Unimate', version: '1.0.0', schemaVersion: 1, exportedAt: '2026-09-23 12:00',
+    schoolId: 'buct', schoolName: '北京化工大学', username: 'zhixiaohui',
+    counts: { timetables: 1, courses: 3, notes: 2, records: 0, photos: 0 }, files: []
+  };
+  const withProfile = makeZip([
+    { name: 'BACKUP_MANIFEST.json', data: enc2.encode(JSON.stringify(manifest)) },
+    { name: 'account/profile.json', data: enc2.encode(JSON.stringify(savedAccount)) },
+    { name: 'account/timetable/courses.json', data: enc2.encode('[{"id":"c1"}]') }
+  ]);
+  const noProfile = makeZip([{ name: 'BACKUP_MANIFEST.json', data: enc2.encode(JSON.stringify(manifest)) }]);
+
+  ok('能从备份里取出原账号记录（换机后连本机密码都还是原来那个）',
+    readBackupProfile(withProfile)?.id === 'acc-0001' && readBackupProfile(withProfile)?.username === 'zhixiaohui', '');
+  ok('老备份/第三方包没有 profile.json 时返回 null（由调用方新建本机账号承载）',
+    readBackupProfile(noProfile) === null, '');
+
+  const previewInfo = await inspectBackup(withProfile);
+  ok('确认框需要的摘要（学校、时间、条数）都拿得到',
+    previewInfo.manifest.schoolName === '北京化工大学' && previewInfo.manifest.counts.courses === 3, '');
+
+  // 学校档案缺失必须拦住：否则会把数据"恢复"到一个不存在的学校目录
+  const noSchool: any = { profileOf: () => null, accounts: [], timetables: [] };
+  const hasSchool: any = { profileOf: () => ({}), accounts: [], timetables: [] };
+  ok('本机没有这所学校的档案时给出明确提示，而不是硬恢复',
+    /北京化工大学/.test(adoptBlockedReason(previewInfo.manifest, noSchool))
+    && adoptBlockedReason(previewInfo.manifest, hasSchool) === '', '');
+  ok('本机已有同 id 账号且有数据时，预览会标记"要覆盖"（提醒调用方去二次确认）',
+    (await previewCloudBackup(withProfile, { ...hasSchool, timetables: [{}], accounts: [{ id: 'acc-0001' }] } as any)).willOverwrite === true
+    && (await previewCloudBackup(withProfile, hasSchool as any)).willOverwrite === false, '');
+
+  const adoptSrc = read('src/services/cloudAdopt.ts');
+  ok('落地流程：接管/新建本机账号 → 绑定高校 → 恢复数据 → 重新读数据',
+    /db\.accounts\.push\(account\)/.test(adoptSrc) && /selectSchool\(manifest\.schoolId, true\)/.test(adoptSrc)
+    && /restoreBackup\(bytes, base, false\)/.test(adoptSrc) && /await db\.loadUserData\(\)/.test(adoptSrc), '');
+  ok('落地流程把云账号会话一起存下（进主界面后不用再登一次）',
+    /db\.settings\.cloudAccount = \{ \.\.\.cloud \}/.test(adoptSrc), '');
+  ok('落地流程自己不做破坏性操作（覆盖确认交给调用方的 db.confirm）',
+    !/remove\(/.test(adoptSrc) && /writeJson\('accounts\.json'/.test(adoptSrc), '');
+  ok('落地流程把学校绑到账号上、并且恢复失败会退回登录页（不留空课表）',
+    /account\.schoolId = manifest\.schoolId/.test(adoptSrc) && /db\.screen = 'login'/.test(adoptSrc), '');
+
+  const loginSrc = read('src/screens/Login.vue');
+  ok('登录页接上了"取回云端课表"：登录 → 读信息 → 下载 → 预览 → 确认 → 落地',
+    /accountLogin\(name, cloudPass\.value\)/.test(loginSrc) && /accountDownload\(session\)/.test(loginSrc)
+    && /previewCloudBackup\(bytes, db\)/.test(loginSrc) && /await adoptCloudBackup\(bytes, db, session\)/.test(loginSrc), '');
+  ok('登录页取回前必过 db.confirm，且覆盖本机数据时标红',
+    /await db\.confirm\(\{/.test(loginSrc) && /danger: preview\.willOverwrite/.test(loginSrc), '');
+  ok('登录页文案与实现一致：明说账号模式的数据存在云端服务器、服务端可读',
+    /数据存在云端服务器/.test(loginSrc) && /服务端持密钥可读/.test(loginSrc), '');
 }
 
 console.log('\n通过：' + pass + ' 条 P3 同步断言');

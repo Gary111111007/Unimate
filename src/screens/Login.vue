@@ -2,6 +2,8 @@
 import { ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { isNativeWebView } from '../services/jwwebview.ts';
+import { accountDownload, accountInfo, accountLogin } from '../services/account.ts';
+import { adoptBlockedReason, adoptCloudBackup, previewCloudBackup } from '../services/cloudAdopt.ts';
 
 const db = useDb();
 /**
@@ -14,6 +16,52 @@ const mode = ref<'login' | 'register'>('login');
 const username = ref('');
 const password = ref('');
 const displayName = ref('');
+/**
+ * v2.44：开机登录页也能直接用 Unimate 账号取回课表 —— 产品负责人要的"一个登录就全好"。
+ * 换新手机：装 APK → 这里输云账号 + 密码 → 云端备份自动取回 → 直接进主界面。
+ */
+const cloudUser = ref('');
+const cloudPass = ref('');
+const cloudMsg = ref('');
+const cloudBusy = ref(false);
+
+async function cloudSignIn(): Promise<void> {
+  if (cloudBusy.value) return;
+  const name = cloudUser.value.trim();
+  if (name.length < 3) { cloudMsg.value = '请输入 Unimate 账号'; return; }
+  if (cloudPass.value.length < 8) { cloudMsg.value = '密码至少 8 个字符'; return; }
+  cloudBusy.value = true;
+  cloudMsg.value = '正在登录云账号…';
+  try {
+    const session = await accountLogin(name, cloudPass.value);
+    const meta = await accountInfo(session);
+    if (!meta.size) {
+      cloudMsg.value = '已登录「' + session.account + '」，但这个账号云端还没有备份。请先在旧设备上「我的 → 加密换机同步 → 上传当前数据到云端」，再回来取回。';
+      return;
+    }
+    cloudMsg.value = '正在下载云端备份…';
+    const bytes = await accountDownload(session);
+    if (!bytes) { cloudMsg.value = '这个账号云端还没有备份'; return; }
+    const preview = await previewCloudBackup(bytes, db);
+    const blocked = adoptBlockedReason(preview.manifest, db);
+    if (blocked) { cloudMsg.value = blocked; return; }
+    const m = preview.manifest;
+    const ok = await db.confirm({
+      title: preview.willOverwrite ? '确认用云端备份覆盖本机数据？' : '确认取回这份云端备份？',
+      body: '来自「' + m.schoolName + '」的账号 ' + m.username + ' · 备份时间 ' + m.exportedAt +
+        ' · 课表 ' + m.counts.courses + ' 条 / 记事 ' + m.counts.notes + ' 条 / 二课 ' + m.counts.records + ' 条 / 照片 ' + m.counts.photos + ' 张。',
+      detail: preview.willOverwrite
+        ? '本机这个账号已经有数据，取回会用云端那份覆盖它（原账号口令不变）。'
+        : '取回后会新建/接管本机账号并直接把课表装好；本机原有其它账号的数据不受影响。',
+      confirmText: '取回并进入', cancelText: '取消', danger: preview.willOverwrite
+    });
+    if (!ok) { cloudMsg.value = '已取消'; return; }
+    cloudMsg.value = '正在恢复到本机…';
+    await adoptCloudBackup(bytes, db, session);
+    cloudMsg.value = '已取回云端课表，正在进入…';
+  } catch (e: any) { cloudMsg.value = e?.message || '云端登录失败，请重试'; }
+  finally { cloudBusy.value = false; }
+}
 
 async function submit(): Promise<void> {
   const u = username.value.trim();
@@ -60,13 +108,27 @@ async function useDemo(): Promise<void> {
         <div v-if="mode === 'register'" class="field"><label>昵称（选填）</label><input v-model="displayName" placeholder="显示在课表页顶部" /></div>
         <button class="btn block" @click="submit">{{ mode === 'login' ? '登录' : '创建并登录' }}</button>
         <button class="btn block ghost" style="margin-top: 10px" @click="useDemo">用演示账号登录（admin / buct）</button>
+
+        <div class="cloudbox">
+          <div class="bold small">换新手机？用 Unimate 账号取回课表</div>
+          <div class="muted small" style="margin-top: 4px; line-height: 1.7">
+            输账号 + 密码 → 自动从云端取回课表、记事、二课与照片，直接进主界面（不用先在本机建号）。
+            这一步会上网，数据存在云端服务器（详见「我的 → 关于」里的隐私说明）。
+          </div>
+          <div class="field" style="margin-top: 10px"><label>Unimate 账号</label><input v-model.trim="cloudUser" autocomplete="off" placeholder="在旧设备的「加密换机同步」里注册的账号" /></div>
+          <div class="field"><label>密码</label><input v-model="cloudPass" type="password" autocomplete="off" placeholder="至少 8 个字符" /></div>
+          <button class="btn block" :disabled="cloudBusy" @click="cloudSignIn">{{ cloudBusy ? '处理中…' : '取回云端课表' }}</button>
+          <div v-if="cloudMsg" class="cloudmsg">{{ cloudMsg }}</div>
+        </div>
+
         <div class="diag" :class="{ bad: !db.storage.ok }">本机存储自检：{{ db.storage.ok ? '正常' : '异常' }} · {{ db.storage.detail }}</div>
         <div v-if="db.lastError" class="errbox">{{ db.lastError }}</div>
         <div class="note muted small">
-          账号与数据默认只保存在本机。会联网的功能包括你主动打开的网页（教务系统等）、<b>默认关闭</b>的天气、
-          "选择高校"页每天最多一次的高校档案检查（只下载公开档案），以及你主动操作的加密换机同步；同步只上传端到端加密密文，口令不保存、不上传。
-          密码只存不可逆哈希、没有"找回"入口，忘了密码就重新建号，
-          旧数据可用「我的 → 备份与恢复」导入新账号。
+          本机账号与数据默认只保存在本机。会联网的功能包括你主动打开的网页（教务系统等）、<b>默认关闭</b>的天气、
+          "选择高校"页每天最多一次的高校档案检查（只下载公开档案），以及两条**可选**的云端备份路径：
+          <b>① 账号登录</b>（备份存云端服务器、服务端持密钥可读，换机输账号密码即可取回）；
+          <b>② 端到端加密同步</b>（服务器只存密文，口令与恢复码不上传、不保存）。
+          本机登录密码只存不可逆哈希、没有"找回"入口；忘了它可以用「取回云端课表」重来，或重新建号后用备份恢复。
         </div>
       </div>
     </div>
@@ -88,4 +150,6 @@ async function useDemo(): Promise<void> {
 .diag.bad { background: #FDECEA; color: #7A1F1A; }
 .errbox { margin-top: 12px; background: #FDECEA; color: #7A1F1A; border-radius: 10px; padding: 10px; font-size: 11px; white-space: pre-wrap; word-break: break-all; max-height: 130px; overflow: auto; }
 .note { margin-top: 14px; line-height: 1.6; }
+.cloudbox { margin-top: 16px; padding: 12px; border: 1px dashed var(--line); border-radius: 12px; background: var(--soft); }
+.cloudmsg { margin-top: 10px; font-size: 11px; line-height: 1.7; color: var(--muted); background: var(--soft-2); border-radius: 8px; padding: 8px 10px; word-break: break-all; }
 </style>
