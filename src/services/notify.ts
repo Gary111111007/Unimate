@@ -140,6 +140,95 @@ export async function rebuildNotifyChannels(): Promise<{ ok: boolean; tag: strin
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * v2.56：**选择性**把提醒写进系统日历（默认关）
+ *
+ * 为什么需要：国产 ROM 不给"允许后台运行"时会把 App 冻住，连系统闹钟回调都要排队，
+ * 于是提醒只能等用户打开 App 才补发。写进系统日历后**闹钟由系统日历 App 持有**，
+ * 我们被冻住照样到点弹 —— 这是课程表类 App 通行的兜底做法。
+ *
+ * 三条纪律（产品负责人明确要求"不要做成默认的"）：
+ *  1) **默认关**：本机没这个标记就是关，一次都不写；
+ *  2) 写进去的每一条都带 CUSTOM_APP_PACKAGE 标记，删除时只删自己写的，绝不碰用户自己的日程；
+ *  3) 关掉开关或点「清空已写入的日程」→ 把标记过的全部删掉。
+ * ------------------------------------------------------------------------- */
+const CALENDAR_FLAG_KEY = 'unimate_calendar_sync';
+/** 只写未来这些天内的提醒（避免一次往日历里塞几百条） */
+export const CALENDAR_HORIZON_DAYS = 21;
+
+export function calendarSyncEnabled(): boolean {
+  try { return localStorage.getItem(CALENDAR_FLAG_KEY) === '1'; } catch { return false; }
+}
+
+export interface CalendarEventInput { id: number; title: string; at: number; durationMin?: number }
+
+/** 纯函数：从提醒列表挑出该写进日历的那些（未来的、在地平线内的）—— 可单测 */
+export function calendarEventsFor(
+  reminders: { id: number; title: string; body: string; at: number }[],
+  now = Date.now(), horizonDays = CALENDAR_HORIZON_DAYS
+): { id: number; title: string; at: number; durationMin: number }[] {
+  const horizon = now + horizonDays * 86400 * 1000;
+  return reminders
+    .filter((r) => r.at > now && r.at <= horizon)
+    .sort((a, b) => a.at - b.at)
+    .map((r) => ({ id: r.id, title: r.body ? r.body : r.title, at: r.at, durationMin: 10 }));
+}
+
+export async function calendarStatus(): Promise<{ ok: boolean; available: boolean; permission: string; written: number; calendar: string; error: string }> {
+  const empty = { ok: false, available: false, permission: 'unknown', written: 0, calendar: '', error: '' };
+  if (!isNativeWebView()) return { ...empty, error: '桌面预览不适用' };
+  try {
+    const r: any = await guard('查系统日历', JwWebView.calendarStatus(), 5000, null);
+    if (!r) return { ...empty, error: '查询失败' };
+    return { ok: !!r.ok, available: !!r.available, permission: String(r.permission || 'unknown'),
+      written: Number(r.written || 0), calendar: String(r.calendar || ''), error: String(r.error || '') };
+  } catch (e: any) { return { ...empty, error: (e && e.message) || '查询失败' }; }
+}
+
+/** 打开/关闭"同步到系统日历"。打开时先要权限；关掉时**顺手清空已写入的日程**。 */
+export async function setCalendarSync(on: boolean): Promise<{ ok: boolean; error: string; removed: number }> {
+  try {
+    if (!on) {
+      try { localStorage.setItem(CALENDAR_FLAG_KEY, '0'); } catch { /* 隐私模式 */ }
+      const cleared = await clearCalendarEvents();
+      return { ok: true, error: '', removed: cleared.removed };
+    }
+    if (!isNativeWebView()) return { ok: false, error: '桌面预览不支持写系统日历', removed: 0 };
+    const asked: any = await guard('申请日历权限', JwWebView.calendarRequest(), 30_000, null);
+    if (!asked || !asked.granted) return { ok: false, error: '没有日历权限（可在系统设置里给 Unimate 开"日历"权限）', removed: 0 };
+    const st = await calendarStatus();
+    if (!st.available) return { ok: false, error: '这台设备上没有可写入的日历（可能没装日历应用）', removed: 0 };
+    try { localStorage.setItem(CALENDAR_FLAG_KEY, '1'); } catch { /* 隐私模式 */ }
+    return { ok: true, error: '', removed: 0 };
+  } catch (e: any) { return { ok: false, error: (e && e.message) || '设置失败', removed: 0 }; }
+}
+
+export async function syncCalendarNow(events: CalendarEventInput[]): Promise<{ ok: boolean; written: number; error: string }> {
+  if (!isNativeWebView()) return { ok: false, written: 0, error: '桌面预览不适用' };
+  try {
+    const r: any = await guard('写系统日历', JwWebView.calendarSync({ events }), 20_000, null);
+    if (!r || !r.ok) return { ok: false, written: 0, error: (r && r.error) || '写入失败' };
+    return { ok: true, written: Number(r.written || 0), error: '' };
+  } catch (e: any) { return { ok: false, written: 0, error: (e && e.message) || '写入失败' }; }
+}
+
+export async function clearCalendarEvents(): Promise<{ ok: boolean; removed: number; error: string }> {
+  if (!isNativeWebView()) return { ok: false, removed: 0, error: '桌面预览不适用' };
+  try {
+    const r: any = await guard('清空系统日历', JwWebView.calendarClear(), 15_000, null);
+    if (!r || !r.ok) return { ok: false, removed: 0, error: (r && r.error) || '清空失败' };
+    return { ok: true, removed: Number(r.removed || 0), error: '' };
+  } catch (e: any) { return { ok: false, removed: 0, error: (e && e.message) || '清空失败' }; }
+}
+
+/** 直接按"当前真正排着的提醒"生成日历条目 —— 与通知同一批，避免两套口径 */
+export async function calendarEventsFromSchedule(): Promise<CalendarEventInput[]> {
+  try {
+    const all = await pendingList();
+    return calendarEventsFor(all.map((n) => ({ id: n.id, title: n.title, body: n.body, at: n.at || 0 })));
+  } catch { return []; }
+}
+
 /** v2.53：把渠道的真实状态读出来（自检报告用） */
 export async function notifyChannelState(): Promise<{
   ok: boolean; enabled: boolean; dozing: boolean; error: string;
@@ -383,6 +472,21 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
     result.scheduled = Math.min(list.length, 64);
     // 记账：只记真正排进去的那些（多的那部分下次打开时会因为"账本里没有"被清掉）
     await savePlan(list.slice(0, 64).map((x) => ({ id: x.id, at: (x.schedule.at as Date).getTime(), kind: x.extra.k })));
+    /*
+     * v2.56：**选择性**把同一批提醒写进系统日历（默认关，见 calendarSyncEnabled()）。
+     *
+     * 为什么要这么做：国产 ROM 不给"允许后台运行"时会把 App 冻住，连系统闹钟回调都排队，
+     * 于是提醒只能等 App 被打开时补发。写进系统日历后，**闹钟归系统日历 App 持有**，
+     * 我们被冻住也不影响它到点弹通知 —— 这是课程表类 App 通行的兜底做法。
+     * 失败不影响通知排期（两条路互为备份），所以这里只记录错误、不抛。
+     */
+    if (calendarSyncEnabled()) {
+      const events = calendarEventsFor(list.slice(0, 64).map((x) => ({
+        id: x.id, title: x.title, body: x.body, at: (x.schedule.at as Date).getTime()
+      })));
+      const cs = await syncCalendarNow(events);
+      if (!cs.ok) result.error = (result.error ? result.error + '；' : '') + '写系统日历失败：' + cs.error;
+    }
     return result;
   } catch (e: any) {
     result.error = (e && (e.message || String(e))) || '未知错误';

@@ -109,6 +109,16 @@
       仍然降级到 setAndAllowWhileIdle）。
     -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!--
+      v2.56：把提醒写进系统日历（**选择性功能，默认关**）。
+      为什么需要：产品负责人不愿意开"允许后台运行"，于是国产 ROM 会把后台的 App 冻住，
+      闹钟回调排队 → 提醒只能等他打开 App 才补发。写进系统日历后，**闹钟由系统日历 App 持有**
+      （系统应用，不受我们被冻结影响），到点由它弹通知 —— 课程表类 App 通行的兜底做法。
+      权限只在用户**主动打开「同步到系统日历」**时才申请；关掉开关会删除所有由本 App 写入的日程
+      （靠 Events.CUSTOM_APP_PACKAGE 认领，绝不碰用户自己的日程）。
+    -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <!-- 提醒类 App 的标准做法：请求加入电池优化白名单。
          查证结论：不豁免电池优化时，国产 ROM 上 AlarmManager 排的通知会根本不显示。 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />

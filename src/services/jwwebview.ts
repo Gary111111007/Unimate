@@ -42,6 +42,11 @@ export interface JwWebViewPlugin {
     ok: boolean; exactAllowed?: boolean; useExactAlarm?: boolean; nextAlarmAt?: number;
     entries?: Record<string, boolean>; aliveCount?: number; checkedCount?: number; error?: string;
   }>;
+  /* v2.56：选择性写系统日历（默认关，用户点开关才用） */
+  calendarRequest(): Promise<{ granted: boolean }>;
+  calendarStatus(): Promise<{ ok: boolean; permission?: string; available?: boolean; written?: number; calendar?: string; error?: string }>;
+  calendarSync(payload: { events: { id: number; title: string; at: number; durationMin?: number }[] }): Promise<{ ok: boolean; written?: number; calendar?: string; error?: string }>;
+  calendarClear(): Promise<{ ok: boolean; removed?: number; error?: string }>;
   /**
    * 读**真正排着**的通知（v2.32）。必须自己实现：Capacitor 的 `LocalNotifications.scheduled()`
    * 在 Android 上没实现（调用会抛 "not implemented on android"），只有原生直读插件存储才准。
@@ -112,6 +117,10 @@ export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
     heartbeatStatus: async (): Promise<HeartbeatStatus> => ({ ok: false, armed: false, armedAt: 0, nextAt: 0, lastScanAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, lastDroppedAt: 0, lastDroppedCount: 0, totalDropped: 0, pendingNext: false, error: 'web-unsupported' }),
     notifyChannelStatus: async () => ({ ok: false, enabled: false, dozing: false, channels: {}, error: 'web-unsupported' }),
     alarmDiagnostics: async () => ({ ok: false, exactAllowed: true, useExactAlarm: false, nextAlarmAt: 0, entries: {}, aliveCount: 0, checkedCount: 0, error: 'web-unsupported' }),
+    calendarRequest: async () => ({ granted: false }),
+    calendarStatus: async () => ({ ok: false, permission: 'denied', available: false, written: 0, calendar: '', error: 'web-unsupported' }),
+    calendarSync: async () => ({ ok: false, written: 0, error: 'web-unsupported' }),
+    calendarClear: async () => ({ ok: false, removed: 0, error: 'web-unsupported' }),
     pendingNotifications: async (): Promise<PendingNotifications> => ({ ok: false, items: [], error: 'web-unsupported' }),
     hardenNotifications: async () => ({ ok: false, count: 0, error: 'web-unsupported' }),
     setReminderGuard: async (o: { enabled: boolean }) => ({ ok: false, enabled: !!o.enabled, running: false, error: 'web-unsupported' }),

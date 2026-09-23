@@ -4,7 +4,7 @@ import { useDb } from '../stores/db.ts';
 // v2.47：同步/找回那一屏搬走后，这里只剩"备份与恢复"用得到的东西（guard / 加密迁移包都不再需要）
 import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
 import { base64ToBytes } from '../services/zip.ts';
-import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus, setReminderGuard, reminderGuardStatus, rebuildNotifyChannels } from '../services/notify.ts';
+import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus, setReminderGuard, reminderGuardStatus, rebuildNotifyChannels, calendarSyncEnabled, calendarStatus, setCalendarSync, clearCalendarEvents, syncCalendarNow, calendarEventsFromSchedule } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
 import { applyTheme, type ThemeMode } from '../services/theme.ts';
 import { FONT_LEVELS, applyTextZoom } from '../services/display.ts';
@@ -181,6 +181,9 @@ async function refreshNotifyState(): Promise<void> {
   wire.value = wireSelfCheck();
   stats.value = await scheduleStats();
   sched.value = stats.value.total;
+  // v2.56：日历同步的状态（开关打开时应该有条数；日历不可用时也能看出来）
+  calSync.value = calendarSyncEnabled();
+  await refreshCalendarState();
 }
 
 function onVisible(): void {
@@ -201,6 +204,58 @@ async function rebuildChannels(): Promise<void> {
   } catch { /* 重排失败不影响渠道本身 */ }
   await refreshNotifyState();
   db.notify('通知渠道已重建（' + r.tag + '）并重排提醒；请再测一条 2 分钟提醒');
+}
+
+/**
+ * v2.56：**同步到系统日历**（选择性功能，默认关）。
+ *
+ * 为什么做：产品负责人不愿意开"允许后台运行"，国产 ROM 就会把后台的 App 冻住 ——
+ * 闹钟回调排队，提醒只能等打开 App 才补发。写进系统日历后，闹钟由**系统日历 App**持有，
+ * 我们不跑也照样到点弹通知。代价是日程会出现在日历里，所以做成开关、默认关、可一键清空。
+ */
+const calSync = ref(calendarSyncEnabled());
+const calState = ref({ available: false, written: 0, calendar: '', permission: 'unknown' });
+const calMsg = ref('');
+
+async function refreshCalendarState(): Promise<void> {
+  const st = await calendarStatus();
+  calState.value = { available: st.available, written: st.written, calendar: st.calendar, permission: st.permission };
+}
+
+async function toggleCalendarSync(e: Event): Promise<void> {
+  const on = (e.target as HTMLInputElement).checked;
+  calMsg.value = on ? '正在申请日历权限…' : '正在清空已写入的日程…';
+  const r = await setCalendarSync(on);
+  if (!r.ok) {
+    calSync.value = !on;          // 没成功就把开关拨回去，不能骗人
+    calMsg.value = r.error;
+    await refreshCalendarState();
+    return;
+  }
+  calSync.value = on;
+  if (on) {
+    // 立刻把当前未来三周的提醒写进去
+    const upcoming = await calendarEventsFromSchedule();
+    const w = await syncCalendarNow(upcoming);
+    calMsg.value = w.ok ? '已写入系统日历 ' + w.written + ' 条（未来三周内的提醒）' : '写入失败：' + w.error;
+  } else {
+    calMsg.value = '已关闭并清空（删掉 ' + r.removed + ' 条由 Unimate 写入的日程）';
+  }
+  await refreshCalendarState();
+  db.notify(on ? '已开启同步到系统日历' : '已关闭同步到系统日历');
+}
+
+async function clearCalendarNow(): Promise<void> {
+  const ok = await db.confirm({
+    title: '清空 Unimate 写进日历的提醒？',
+    body: '只会删除由 Unimate 写入的日程（我们靠应用标记认领），你自己的日程不受影响。',
+    detail: '清空后如果开关还开着，下次改课表会重新写入。',
+    confirmText: '确定清空', danger: true
+  });
+  if (!ok) return;
+  const r = await clearCalendarEvents();
+  calMsg.value = r.ok ? '已清空 ' + r.removed + ' 条' : '清空失败：' + r.error;
+  await refreshCalendarState();
 }
 onMounted(() => document.addEventListener('visibilitychange', onVisible));
 onUnmounted(() => document.removeEventListener('visibilitychange', onVisible));
@@ -439,6 +494,28 @@ async function copyInterests(): Promise<void> {
             关掉也能用，只是提醒可能晚到，或等你打开 App 时才补发。
           </div>
           <button class="btn block sm grey" style="margin-top: 10px" @click="copySelfCheck()">复制自检报告（发我即可）</button>
+          <!-- v2.56：选择性写系统日历（默认关）。国产 ROM 不给"允许后台运行"时的兜底：闹钟由系统日历持有 -->
+          <div class="hairline" style="margin: 12px 0"></div>
+          <label class="row small" style="align-items: flex-start">
+            <input type="checkbox" :checked="calSync" @change="toggleCalendarSync" />
+            <span>
+              <b>同步到系统日历（默认关）</b><br />
+              打开后，未来三周的提醒会写成<b>系统日历里的日程</b>，由日历 App 到点弹通知 ——
+              这样即使 Unimate 被系统冻住，提醒也能准点。代价：这些日程会出现在你的日历里（标题就是提醒内容）。
+              关掉开关会**自动删除**由 Unimate 写入的日程；也可手动清空。
+            </span>
+          </label>
+          <div class="small muted" style="margin-top: 6px; line-height: 1.6">
+            状态：{{ calSync ? '已开启' : '已关闭' }}
+            <template v-if="calState.calendar"> · 写入日历：{{ calState.calendar }}</template>
+            <template v-if="calSync || calState.written"> · 已写入 {{ calState.written }} 条</template>
+            <template v-if="!calState.available"> · 这台设备没有可写入的日历</template>
+          </div>
+          <div class="row" style="gap: 8px; margin-top: 8px">
+            <button class="btn sm grow ghost" :disabled="!calSync" @click="toggleCalendarSync({ target: { checked: true } } as any)">立即重新写入</button>
+            <button class="btn sm grow grey" :disabled="!calState.written" @click="clearCalendarNow">清空已写入的日程</button>
+          </div>
+          <div v-if="calMsg" class="small muted" style="margin-top: 6px">{{ calMsg }}</div>
           <button class="btn block sm ghost" style="margin-top: 8px" @click="rebuildChannels()">重建通知渠道（到点不响时先点这个）</button>
           <div class="small muted" style="margin-top: 6px; line-height: 1.6">
             如果自检报告里"通知渠道"显示<b>不是 HIGH(横幅)</b>或<b>无声</b>，说明渠道被系统静音/降级了 —— 点上面这个按钮换一条新渠道，

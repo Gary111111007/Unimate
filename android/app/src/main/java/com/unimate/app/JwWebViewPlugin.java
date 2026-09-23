@@ -5,6 +5,11 @@ import android.content.Intent;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.ContentResolver;
+import android.content.ContentUris;
+import android.content.ContentValues;
+import android.database.Cursor;
+import android.provider.CalendarContract;
 import android.os.PowerManager;
 import android.webkit.CookieManager;
 import androidx.activity.result.ActivityResult;
@@ -23,7 +28,11 @@ import com.capacitorjs.plugins.localnotifications.NotificationStorage;
  * 只读取指定容器的 outerHTML（默认 #kbgrid_table_0），不读取表单内容、不读取 Cookie 值、
  * 不代填账号密码 —— 对应 PRD 5.4.8 与第 10.8 节质量红线。
  */
-@CapacitorPlugin(name = "JwWebView")
+@CapacitorPlugin(name = "JwWebView", permissions = {
+        // v2.56：**选择性**把提醒写进系统日历才需要这两个权限；默认关，用户点开关时才申请。
+        @com.getcapacitor.annotation.Permission(alias = "calendar", strings = {
+                android.Manifest.permission.READ_CALENDAR, android.Manifest.permission.WRITE_CALENDAR })
+})
 public class JwWebViewPlugin extends Plugin {
 
     public static final String EXTRA_URL = "unimate:url";
@@ -247,6 +256,180 @@ public class JwWebViewPlugin extends Plugin {
      * DEFAULT 只是安静地躺进通知栏（用户会以为"根本没提醒"），NONE 则直接丢弃。
      * 所以这里把渠道的真实 importance / 有没有声音 / 是否被屏蔽读出来，再带上 Doze 待机状态。
      */
+    /* ---------------------------------------------------------------------
+     * v2.56：**选择性**把提醒写进系统日历
+     *
+     * 背景：产品负责人不愿意开"允许后台运行"，于是国产 ROM 会在后台把 App 冻住，
+     * 连系统闹钟回调都要排队 —— 提醒只能等他打开 App 才补发。
+     * 写进系统日历后，**闹钟由系统日历 App 持有**（那是系统应用，不受我们被冻结影响），
+     * 到点由它弹通知。这是课程表类 App 通行的兜底做法。
+     *
+     * 三条纪律：默认关；每条都带 CUSTOM_APP_PACKAGE 标记；删除只删自己写的。
+     * ------------------------------------------------------------------- */
+
+    @PluginMethod
+    public void calendarRequest(PluginCall call) {
+        JSObject ret = new JSObject();
+        if (getPermissionState("calendar") == com.getcapacitor.PermissionState.GRANTED) {
+            ret.put("granted", true);
+            call.resolve(ret);
+            return;
+        }
+        requestPermissionForAlias("calendar", call, "calendarPermCallback");
+    }
+
+    @com.getcapacitor.annotation.PermissionCallback
+    private void calendarPermCallback(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("granted", getPermissionState("calendar") == com.getcapacitor.PermissionState.GRANTED);
+        call.resolve(ret);
+    }
+
+    /** 找一个可写入的日历（优先主日历）。找不到返回 -1。 */
+    private long pickWritableCalendarId() {
+        try {
+            Cursor c = getContext().getContentResolver().query(
+                    CalendarContract.Calendars.CONTENT_URI,
+                    new String[] { CalendarContract.Calendars._ID, CalendarContract.Calendars.IS_PRIMARY },
+                    CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL + " >= ?",
+                    new String[] { String.valueOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) },
+                    CalendarContract.Calendars.IS_PRIMARY + " DESC");
+            if (c == null) return -1;
+            try {
+                if (c.moveToFirst()) return c.getLong(0);
+            } finally { c.close(); }
+        } catch (Throwable ignored) { }
+        return -1;
+    }
+
+    private String calendarName(long id) {
+        try {
+            Cursor c = getContext().getContentResolver().query(
+                    ContentUris.withAppendedId(CalendarContract.Calendars.CONTENT_URI, id),
+                    new String[] { CalendarContract.Calendars.CALENDAR_DISPLAY_NAME }, null, null, null);
+            if (c == null) return "";
+            try { if (c.moveToFirst()) return c.getString(0) == null ? "" : c.getString(0); }
+            finally { c.close(); }
+        } catch (Throwable ignored) { }
+        return "";
+    }
+
+    /** 已经写进去多少条（按 CUSTOM_APP_PACKAGE 认领，绝不会数到用户自己的日程） */
+    private int countOwnEvents() {
+        try {
+            Cursor c = getContext().getContentResolver().query(
+                    CalendarContract.Events.CONTENT_URI, new String[] { CalendarContract.Events._ID },
+                    CalendarContract.Events.CUSTOM_APP_PACKAGE + " = ?",
+                    new String[] { getContext().getPackageName() }, null);
+            if (c == null) return 0;
+            try { return c.getCount(); } finally { c.close(); }
+        } catch (Throwable ignored) { return 0; }
+    }
+
+    private int deleteOwnEvents() {
+        try {
+            return getContext().getContentResolver().delete(
+                    CalendarContract.Events.CONTENT_URI,
+                    CalendarContract.Events.CUSTOM_APP_PACKAGE + " = ?",
+                    new String[] { getContext().getPackageName() });
+        } catch (Throwable ignored) { return 0; }
+    }
+
+    @PluginMethod
+    public void calendarStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            boolean granted = getPermissionState("calendar") == com.getcapacitor.PermissionState.GRANTED;
+            long id = granted ? pickWritableCalendarId() : -1;
+            ret.put("permission", granted ? "granted" : "denied");
+            ret.put("available", id > 0);
+            ret.put("calendar", id > 0 ? calendarName(id) : "");
+            ret.put("written", granted ? countOwnEvents() : 0);
+            ret.put("ok", true);
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("error", e.getMessage() == null ? "查询失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void calendarClear(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            ret.put("removed", deleteOwnEvents());
+            ret.put("ok", true);
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("error", e.getMessage() == null ? "清空失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * 把一批提醒写进系统日历：**先删掉我们上次写的全部**，再写新的（全量覆盖，避免残留旧课）。
+     * 每条事件：开始=提醒时刻、时长 10 分钟、HAS_ALARM=1、并在 Reminders 里加一条"准点提醒"。
+     */
+    @PluginMethod
+    public void calendarSync(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            if (getPermissionState("calendar") != com.getcapacitor.PermissionState.GRANTED) {
+                ret.put("ok", false);
+                ret.put("error", "没有日历权限");
+                call.resolve(ret);
+                return;
+            }
+            long calId = pickWritableCalendarId();
+            if (calId <= 0) {
+                ret.put("ok", false);
+                ret.put("error", "没有可写入的日历");
+                call.resolve(ret);
+                return;
+            }
+            ContentResolver cr = getContext().getContentResolver();
+            deleteOwnEvents();
+            com.getcapacitor.JSArray events = call.getArray("events", new com.getcapacitor.JSArray());
+            int written = 0;
+            for (int i = 0; i < events.length(); i++) {
+                com.getcapacitor.JSObject e;
+                try { e = com.getcapacitor.JSObject.fromJSONObject(events.getJSONObject(i)); } catch (Throwable t) { continue; }
+                Long at = e.getLong("at");
+                String title = e.getString("title");
+                Long duration = e.getLong("durationMin");
+                if (at == null || title == null) continue;
+                long end = at + (duration == null ? 10 : duration) * 60 * 1000L;
+                ContentValues v = new ContentValues();
+                v.put(CalendarContract.Events.CALENDAR_ID, calId);
+                v.put(CalendarContract.Events.TITLE, title);
+                v.put(CalendarContract.Events.DESCRIPTION, "由 Unimate 写入（「我的 → 通知设置 → 同步到系统日历」）；关掉那个开关会自动清空");
+                v.put(CalendarContract.Events.DTSTART, at);
+                v.put(CalendarContract.Events.DTEND, end);
+                v.put(CalendarContract.Events.EVENT_TIMEZONE, java.util.TimeZone.getDefault().getID());
+                v.put(CalendarContract.Events.HAS_ALARM, 1);
+                // 标记：删除时靠它认领，绝不会碰用户自己的日程
+                v.put(CalendarContract.Events.CUSTOM_APP_PACKAGE, getContext().getPackageName());
+                v.put(CalendarContract.Events.CUSTOM_APP_URI, "unimate://reminder/" + (e.getInteger("id") == null ? i : e.getInteger("id")));
+                android.net.Uri uri = cr.insert(CalendarContract.Events.CONTENT_URI, v);
+                if (uri == null) continue;
+                long eventId = ContentUris.parseId(uri);
+                ContentValues r = new ContentValues();
+                r.put(CalendarContract.Reminders.EVENT_ID, eventId);
+                r.put(CalendarContract.Reminders.MINUTES, 0);
+                r.put(CalendarContract.Reminders.METHOD, CalendarContract.Reminders.METHOD_ALERT);
+                cr.insert(CalendarContract.Reminders.CONTENT_URI, r);
+                written++;
+            }
+            ret.put("written", written);
+            ret.put("calendar", calendarName(calId));
+            ret.put("ok", true);
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("error", e.getMessage() == null ? "写入失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
     /**
      * 闹钟条目自检（v2.55）。
      *
