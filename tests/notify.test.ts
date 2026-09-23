@@ -79,7 +79,8 @@ const code = stripComments(notifySrc);
 //     写 notificationChannelId 会被静默忽略，通知全部落到 importance=3 的默认渠道：
 //     没有横幅、没有声音 —— 用户看到的就是"到点了什么都没弹"。
 ok('不再使用插件不认的 notificationChannelId', !code.includes('notificationChannelId'), 'notify.ts 里仍有该字段');
-ok('排期用插件真正读的 channelId', (code.match(/channelId:\s*'(class|todo)-' \+ CHANNEL_TAG/g) || []).length >= 4,
+// v2.53 起 tag 是函数 channelTag()（渠道被静音时可以一键换新 tag），所以这里跟着改
+ok('排期用插件真正读的 channelId', (code.match(/channelId:\s*'(class|todo)-' \+ channelTag\(\)/g) || []).length >= 4,
   String((code.match(/channelId:/g) || []).length) + ' 处 channelId');
 
 // 6.2 渠道必须有声音。Android 8+ 渠道不设 sound 就是静音渠道，
@@ -322,6 +323,31 @@ console.log('\n--- v2.53：通知渠道自检 + 一键重建 ---');
   ok('渠道 tag 改成可配置（否则被静音后只能等发新版）',
     /function channelTag\(\)/.test(notify) && /CHANNEL_TAG_KEY/.test(notify)
     && !/const CHANNEL_TAG = 'v[0-9]+'/.test(notify), '');
+  /*
+   * 【v2.54 真机事故】把 `const CHANNEL_TAG` 改成 `channelTag()` 时，4 处调用点漏改 ——
+   * 真机上点「测试提醒」直接报 `CHANNEL_TAG is not defined`（vite 不做类型检查，单测也没扫到）。
+   * 这里给"高风险模块里的全大写标识符"加一道自查：用到了就必须在本文件里声明或 import 过。
+   */
+  {
+    const declared = new Set<string>();
+    for (const m of notify.matchAll(/(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g)) declared.add(m[1]);
+    for (const m of notify.matchAll(/import\s+\{([^}]*)\}/g)) {
+      for (const part of m[1].split(',')) declared.add((part.split(/\s+as\s+/).pop() || '').trim());
+    }
+    // 注释与字符串里出现的名字不算使用（文档里会写 ROM、HIGH、AGENTS 这些词）
+    const codeOnly = notify
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/\/\/[^\n]*/g, ' ')
+      .replace(/`[^`]*`/g, ' ')
+      .replace(/'[^'\n]*'/g, ' ')
+      .replace(/"[^"\n]*"/g, ' ');
+    const allowed = new Set(['JSON', 'NaN', 'URL']);
+    const used = new Set<string>();
+    for (const m of codeOnly.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)) used.add(m[1]);
+    const undefinedNames = [...used].filter((n) => !declared.has(n) && !allowed.has(n));
+    ok('notify.ts 里没有"用了但没声明"的全大写标识符（v2.54 的 CHANNEL_TAG 事故）',
+      undefinedNames.length === 0, undefinedNames.join(','));
+  }
 }
 
 console.log('\n结果：' + pass + ' 通过 / ' + fails.length + ' 失败');

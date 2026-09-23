@@ -332,7 +332,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           list.push({
             id, title: '上课提醒',
             body: '还有 ' + settings.classReminderMinutes + ' 分钟：' + c.name + (c.room ? ' · ' + c.room : ''),
-            schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, channelId: 'class-' + CHANNEL_TAG,
+            schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, channelId: 'class-' + channelTag(),
             extra: { k: 'c', id: c.id, w },
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
@@ -353,7 +353,7 @@ export async function rescheduleAll(courses: Course[], timetables: Timetable[], 
           seen.add(String(id));
           list.push({
             id, title: '待办提醒', body: n.title + '（' + n.remindAt.slice(5, 16) + '）',
-            schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, channelId: 'todo-' + CHANNEL_TAG,
+            schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, channelId: 'todo-' + channelTag(),
             extra: { k: 'n', id: n.id },
             smallIcon: 'ic_stat_icon', autoCancel: true
           });
@@ -405,7 +405,7 @@ export async function scheduleTest(minutes: number): Promise<{ ok: boolean; at: 
       notifications: [{
         id: TEST_ID, title: 'Unimate 测试提醒',
         body: '这条是 ' + minutes + ' 分钟前设置的，收到就说明提醒链路正常',
-        schedule: { at: atTime(when), allowWhileIdle: true }, channelId: 'todo-' + CHANNEL_TAG, smallIcon: 'ic_stat_icon', autoCancel: true
+        schedule: { at: atTime(when), allowWhileIdle: true }, channelId: 'todo-' + channelTag(), smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     }), 8000, undefined);
     if (isNativeWebView()) await guard('接管测试提醒', JwWebView.hardenNotifications(), 6000, undefined);
@@ -423,7 +423,7 @@ export async function scheduleDemoPing(): Promise<boolean> {
     await guard('单条排期', LocalNotifications.schedule({
       notifications: [{
         id: DEMO_ID, title: 'Uni 提醒', body: '演示通知：Uni 已经准备好提醒你啦',
-        schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, channelId: 'todo-' + CHANNEL_TAG, smallIcon: 'ic_stat_icon', autoCancel: true
+        schedule: { at: atTime(new Date(fire)), allowWhileIdle: true }, channelId: 'todo-' + channelTag(), smallIcon: 'ic_stat_icon', autoCancel: true
       }]
     }), 8000, undefined);
     if (isNativeWebView()) await guard('接管演示提醒', JwWebView.hardenNotifications(), 6000, undefined);

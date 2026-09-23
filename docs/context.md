@@ -1,4 +1,4 @@
-# 项目上下文交接（压缩版 · 2026-09-23，v2.53）
+# 项目上下文交接（压缩版 · 2026-09-23，v2.54）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
@@ -11,14 +11,17 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 项 | 值 |
 | --- | --- |
 | 仓库 | `E:\Gary\北京化工大学\北化app\Work` |
-| 最新提交 | 本次 v2.53（**提醒渠道自检 + 一键重建渠道**：把"渠道被静音/降级"这条最易漏的成因做成可读数、可自救；原生新增 `notifyChannelStatus`，报告多"通知渠道 / Doze 待机"两行）；`b949d3c` v2.52（Pages 只出目录 + P4/P5 工位）；`ec85720` v2.51（用户自己改密码） |
+| 最新提交 | 本次 v2.54（**修 v2.53 自己引入的 `CHANNEL_TAG is not defined` 崩溃** + **头像可拖动裁剪框**（新增 `AvatarCropper.vue` 与 `test:avatar`））；`b0b2df8` v2.53（提醒渠道自检 + 一键重建渠道）；`b949d3c` v2.52（Pages 只出目录 + P4/P5 工位） |
 > **口径变更（v2.43，最重要的一条）**：产品负责人要求"像普通 App 那样账号登录、数据存云端"，并**明确撤销**了旧口径。
 > 现在主推**账号登录（服务器托管）**：备份存 R2、服务端持 `DATA_KEY` **能读**、忘记密码开发者可重置；
 > 端到端加密（服务器读不懂）**降为可选高级项**。`AGENTS.md` 硬规则 5 已改写 —— 旧表述（"数据默认全本地 / 只上传密文 / 服务器看不到你的数据"）**不许再写进 UI 或答辩材料**。
 | 先读哪 | 云端与 P3 的最新状态看 **`PRD.md` 开头的「当前接续摘要」** 与 **`Net.md` 的「当前云端接续摘要」**（本节只保留工程侧的通用交接） |
-| 未提交（本轮） | 无 —— v2.53 一起提交 |
+| 未提交（本轮） | 无 —— v2.54 一起提交 |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages）；**线上 = v2.39**（`assets/index-DroQga0f.js`，`catalog/` 三件套 200、`_worker.js` 生效） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.53，SHA `6892471364…`；v2.51 `FA808010…`） |
+| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.54，SHA `2588383C71…`；v2.53 `6892471364…`、v2.51 `FA808010…`） |
+| 提醒真机结论（v2.53 报告） | `通知渠道：上课=HIGH(横幅) 有声音、待办=HIGH(横幅) 有声音`、`Doze 待机：否` → **渠道没问题**；但 **`精确闹钟授权：denied`**、**`电池优化豁免：未豁免`** → 到点会晚 + 系统冻结时攒到打开 App 才补发。**这两项只能用户自己去系统设置开**（App 只查状态 + 给入口，v2.28 定的口径）；厂商自启动他明确不动 → 接受"晚 10~15 分钟" |
+| 头像（v2.54） | `components/AvatarCropper.vue`：固定 1:1 取景框 + **拖动图片** + 滑杆放大（1~4 倍）→ `cropToAvatar()` 裁 256×256 data URL。裁剪数学是纯函数 `cropRectFor()`（`services/avatar.ts`），配 `tests/avatar.test.ts` 12 条（含"拖过头不能露黑边"） |
+| 新增测试套件登记 | `test:avatar` 已同时登记进 `package.json` 与 `scripts/build-apk.ps1`（后者用 node 按字节插入，**必须保住 1 个 UTF-8 BOM**；本次踩过"BOM 叠成 3 个"，已修） |
 | 提醒渠道（v2.53） | Android 8+ 的**横幅与声音由渠道 importance 决定**，而**应用级通知权限 granted 不代表渠道没被静音**（渠道创建后不可改）。原生 `notifyChannelStatus` 读 `importance/sound/blocked` + Doze `isDeviceIdleMode`；自检报告多两行；「我的 → 通知设置」新增「**重建通知渠道**」（tag 存 localStorage，点一下换 `class-<新tag>`/`todo-<新tag>` 建 HIGH+铃声新渠道、删旧渠道、**随后必须 `rescheduleAll()` 把排期搬过去**，否则旧排期引用已删渠道会被系统静默丢弃） |
 | Pages 交付 | **只有目录**：`node scripts\make-pages-package.mjs v2.52` → `artifacts\cloudflare\unimate-cloudflare-v2.52-upload`（15 文件 / 0.7 MB，根目录含 `_worker.js`）。**v2.52 起不再压 ZIP**（历史 ZIP 留档仍在 `artifacts/`） |
 | P4 / P5 工位 | [`p4-parser/`](../p4-parser/README.md)、[`p5-assistant/`](../p5-assistant/README.md)：**不参与构建**，各含 README（目标/红线/交付物/验收/接口约定）+ `NOTES.md`。**不许直接改 `src/`、`android/`、`cloudflare/`**，需要主工程配合就写进 `NOTES.md`，由产品负责人整合 |

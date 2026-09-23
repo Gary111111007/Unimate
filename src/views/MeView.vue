@@ -10,7 +10,8 @@ import { applyTheme, type ThemeMode } from '../services/theme.ts';
 import { FONT_LEVELS, applyTextZoom } from '../services/display.ts';
 import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts';
 import { agoText, weatherText } from '../services/weather.ts';
-import { pickAvatar } from '../services/avatar.ts';
+import { pickAvatarRaw } from '../services/avatar.ts';
+import AvatarCropper from '../components/AvatarCropper.vue';
 
 const db = useDb();
 /** v2.47：`sync` 那一屏搬去主页的「账号与找回」面板（components/AccountRecovery.vue）了 */
@@ -208,10 +209,17 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisible));
  * 头像（v2.47）：从相册选一张，本机裁成 1:1 再存成 data URL。
  * 用户取消时 `pickAvatar()` 返回 null，这里什么都不做（不算错误）。
  */
+/** v2.54：选图后**先打开裁剪界面**（自己拖动取景），确认才落盘 */
+const cropSrc = ref('');
 async function changeAvatar(): Promise<void> {
-  const picked = await pickAvatar();
-  if (!picked) return;
-  db.settings.avatar = picked;
+  const raw = await pickAvatarRaw();
+  if (!raw) return;
+  cropSrc.value = raw;
+}
+
+async function avatarCropped(dataUrl: string): Promise<void> {
+  cropSrc.value = '';
+  db.settings.avatar = dataUrl;
   await db.saveData();
   db.notify('头像已更新');
 }
@@ -369,6 +377,9 @@ async function copyInterests(): Promise<void> {
       <button class="btn block ghost" style="margin-top: 8px" @click="db.changeSchool()">切换学校</button>
     </div>
   </div>
+
+  <!-- v2.54：头像裁剪（拖动取景 + 滑杆缩放），确认后才写进设置 -->
+  <AvatarCropper v-if="cropSrc" :src="cropSrc" @done="avatarCropped" @cancel="cropSrc = ''" />
 
   <div v-if="panel" class="mask" @click.self="closePanel">
     <div class="sheet">
