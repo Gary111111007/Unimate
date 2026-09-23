@@ -31,6 +31,12 @@ export interface JwWebViewPlugin {
   openExactAlarmSettings(): Promise<{ ok: boolean; error: string }>;
   /** 提醒兜底心跳的运行状态（v2.31）：证明"它到底有没有在跑"就靠这几个数 */
   heartbeatStatus(): Promise<HeartbeatStatus>;
+  /** v2.53：通知渠道的真实 importance / 声音 / 是否屏蔽 + Doze 状态（自检报告用） */
+  notifyChannelStatus(payload: { ids: string[] }): Promise<{
+    ok: boolean; enabled?: boolean; dozing?: boolean;
+    channels?: Record<string, { exists?: boolean; importance?: number; sound?: boolean; vibration?: boolean; blocked?: boolean }>;
+    error?: string;
+  }>;
   /**
    * 读**真正排着**的通知（v2.32）。必须自己实现：Capacitor 的 `LocalNotifications.scheduled()`
    * 在 Android 上没实现（调用会抛 "not implemented on android"），只有原生直读插件存储才准。
@@ -99,6 +105,7 @@ export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
     requestIgnoreBattery: async () => ({ ok: false, mode: '', error: '桌面预览环境无法调用系统设置' }),
     openExactAlarmSettings: async () => ({ ok: false, error: '桌面预览环境无法调用系统设置' }),
     heartbeatStatus: async (): Promise<HeartbeatStatus> => ({ ok: false, armed: false, armedAt: 0, nextAt: 0, lastScanAt: 0, lastRunAt: 0, lastPostedAt: 0, lastPostedCount: 0, totalPosted: 0, lastDroppedAt: 0, lastDroppedCount: 0, totalDropped: 0, pendingNext: false, error: 'web-unsupported' }),
+    notifyChannelStatus: async () => ({ ok: false, enabled: false, dozing: false, channels: {}, error: 'web-unsupported' }),
     pendingNotifications: async (): Promise<PendingNotifications> => ({ ok: false, items: [], error: 'web-unsupported' }),
     hardenNotifications: async () => ({ ok: false, count: 0, error: 'web-unsupported' }),
     setReminderGuard: async (o: { enabled: boolean }) => ({ ok: false, enabled: !!o.enabled, running: false, error: 'web-unsupported' }),

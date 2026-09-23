@@ -294,6 +294,36 @@ console.log('');
   ok('通知设置面板显示电池优化与机型路径', /电池优化豁免/.test(me) && /power\.rom/.test(me) && /requestIgnoreBattery/.test(me), '');
 }
 
+/*
+ * v2.53：渠道被静音/降级是"到点不响"最容易被漏掉的一种成因 ——
+ * 应用级通知权限 granted 也照样会发生，界面上看不出来。所以：自检报告要读渠道真实状态，并给一键重建。
+ */
+console.log('\n--- v2.53：通知渠道自检 + 一键重建 ---');
+{
+  const fsMod = await import('node:fs');
+  const pathMod = await import('node:path');
+  const notify = fsMod.readFileSync(pathMod.join(root, 'src', 'services', 'notify.ts'), 'utf8');
+  const jw = fsMod.readFileSync(pathMod.join(root, 'src', 'services', 'jwwebview.ts'), 'utf8');
+  const java = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'JwWebViewPlugin.java'), 'utf8');
+  const me = fsMod.readFileSync(pathMod.join(root, 'src', 'views', 'MeView.vue'), 'utf8');
+
+  ok('原生插件能读渠道真实状态（importance/声音/是否屏蔽 + Doze）',
+    /public void notifyChannelStatus\(PluginCall call\)/.test(java)
+    && /getNotificationChannel\(id\)/.test(java) && /isDeviceIdleMode\(\)/.test(java), '');
+  ok('前端包装了 notifyChannelStatus，并写进自检报告',
+    /notifyChannelStatus/.test(jw) && /notifyChannelState\(\)/.test(notify)
+    && /通知渠道：/.test(notify), '');
+  ok('报告里会写"渠道不存在 / 无声 / 不是 HIGH"这类能直接定位的结论',
+    /HIGH\(横幅\)/.test(notify) && /无声/.test(notify) && /渠道不存在/.test(notify), '');
+  ok('提供一键重建渠道（换新 tag，避开 Android 8+ 渠道不可改的限制）',
+    /export async function rebuildNotifyChannels/.test(notify)
+    && /localStorage\.setItem\(CHANNEL_TAG_KEY/.test(notify)
+    && /rebuildNotifyChannels\(\)/.test(me), '');
+  ok('渠道 tag 改成可配置（否则被静音后只能等发新版）',
+    /function channelTag\(\)/.test(notify) && /CHANNEL_TAG_KEY/.test(notify)
+    && !/const CHANNEL_TAG = 'v[0-9]+'/.test(notify), '');
+}
+
 console.log('\n结果：' + pass + ' 通过 / ' + fails.length + ' 失败');
 for (const f of fails) console.log('  ✗ ' + f);
 if (fails.length) process.exit(1);

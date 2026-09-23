@@ -34,7 +34,16 @@ const GRACE_MS = 90 * 1000;
  *   2) Android 8+ 的渠道一旦创建，importance / 声音 / 振动就**改不动**，
  *      用同一个 id 重建无效，只能换 id 才能让新设置真正落到已安装的手机上。
  */
-const CHANNEL_TAG = 'v3';
+/**
+ * 渠道 tag 存在本机（localStorage）而不是写死常量：这样"渠道被系统静音/降级"时，
+ * 用户可以在「我的 → 通知设置」点一下**重建通知渠道**当场自救（v2.53），不用等我出新版。
+ */
+const CHANNEL_TAG_KEY = 'unimate_notify_channel_tag';
+const CHANNEL_TAG_DEFAULT = 'v4';
+function channelTag(): string {
+  try { return localStorage.getItem(CHANNEL_TAG_KEY) || CHANNEL_TAG_DEFAULT; } catch { return CHANNEL_TAG_DEFAULT; }
+}
+function channelIds(): string[] { const t = channelTag(); return ['class-' + t, 'todo-' + t]; }
 /** 渠道提示音：必须是 android/app/src/main/res/raw 下的资源名（插件只支持 raw 资源） */
 const CHANNEL_SOUND = 'unimate_notify';
 
@@ -97,18 +106,57 @@ async function ensureChannels(): Promise<void> {
   //   id / name / description / importance / visibility / sound / vibration / lights / lightColor
   // 旧写法传的 lockScreenVisibility 与 audioAttributes 会被**静默忽略**：
   // 前者让锁屏可见性没生效，后者让渠道没有声音（sound 才是声音字段）。
+  const tag = channelTag();
   for (const ch of [
-    { id: 'class-' + CHANNEL_TAG, name: '上课提醒', description: '课前提醒，横幅弹出并响铃', importance: 5, sound: CHANNEL_SOUND, vibration: true, lights: true, lightColor: '#2E5AAC', visibility: 1 },
-    { id: 'todo-' + CHANNEL_TAG, name: '待办提醒', description: '记事本到期提醒，横幅弹出并响铃', importance: 5, sound: CHANNEL_SOUND, vibration: true, lights: true, lightColor: '#2E5AAC', visibility: 1 }
+    { id: 'class-' + tag, name: '上课提醒', description: '课前提醒，横幅弹出并响铃', importance: 5, sound: CHANNEL_SOUND, vibration: true, lights: true, lightColor: '#2E5AAC', visibility: 1 },
+    { id: 'todo-' + tag, name: '待办提醒', description: '记事本到期提醒，横幅弹出并响铃', importance: 5, sound: CHANNEL_SOUND, vibration: true, lights: true, lightColor: '#2E5AAC', visibility: 1 }
   ]) { try { await guard('建通知渠道', anyLocal.createChannel(ch), 2500, undefined); } catch { /* 已存在或不支持 */ } }
 
   // 渠道换 id 的副作用：系统设置里会同时列出新旧两套同名渠道，用户会以为"有两个上课提醒"。
   // 建完新渠道后把旧的删掉。deleteChannel 对不存在的 id 是空操作，API < 26 会被插件 reject，两种情况都吞掉。
   if (typeof anyLocal.deleteChannel === 'function') {
-    for (const id of ['class-v2', 'todo-v2']) {
+    for (const id of ['class-v2', 'todo-v2', 'class-v3', 'todo-v3', 'class-v4', 'todo-v4'].filter((x) => x !== 'class-' + tag && x !== 'todo-' + tag)) {
       try { await guard('清理旧通知渠道', anyLocal.deleteChannel({ id, name: id }), 2000, undefined); } catch { /* 不存在或不支持 */ }
     }
   }
+}
+
+/**
+ * v2.53：**重建通知渠道**（用户自救按钮）。
+ *
+ * 为什么需要：Android 8+ 的渠道一旦创建，importance / 声音就**改不动**，
+ * 而"应用级通知权限"是 granted 不代表渠道没被静音 —— 系统或用户把渠道降级后，
+ * 提醒会安静地躺进通知栏，用户体感就是"到点根本没提醒"。
+ * 这里换一个新 tag（同名新渠道，默认 importance=5 + 铃声），旧的删掉，再让调用方重排提醒。
+ */
+export async function rebuildNotifyChannels(): Promise<{ ok: boolean; tag: string; error: string }> {
+  try {
+    const next = 'v' + Date.now().toString(36);
+    try { localStorage.setItem(CHANNEL_TAG_KEY, next); } catch { /* 隐私模式下写不进去就算了 */ }
+    await ensureChannels();
+    return { ok: true, tag: next, error: '' };
+  } catch (e: any) {
+    return { ok: false, tag: channelTag(), error: (e && e.message) || '重建失败' };
+  }
+}
+
+/** v2.53：把渠道的真实状态读出来（自检报告用） */
+export async function notifyChannelState(): Promise<{
+  ok: boolean; enabled: boolean; dozing: boolean; error: string;
+  channels: { id: string; exists: boolean; importance: number; sound: boolean; blocked: boolean }[];
+}> {
+  const ids = channelIds();
+  const empty = { ok: false, enabled: false, dozing: false, error: '', channels: [] as any[] };
+  if (!isNativeWebView()) return { ...empty, error: '桌面预览不适用' };
+  try {
+    const r: any = await guard('查通知渠道', JwWebView.notifyChannelStatus({ ids }), 4000, null);
+    if (!r || !r.ok) return { ...empty, error: (r && r.error) || '查询失败' };
+    const channels = ids.map((id) => {
+      const c = (r.channels && r.channels[id]) || {};
+      return { id, exists: c.exists !== false, importance: typeof c.importance === 'number' ? c.importance : -1, sound: c.sound !== false, blocked: !!c.blocked };
+    });
+    return { ok: true, enabled: !!r.enabled, dozing: !!r.dozing, error: '', channels };
+  } catch (e: any) { return { ...empty, error: (e && e.message) || '查询失败' }; }
 }
 
 /**
@@ -546,6 +594,20 @@ export async function selfCheckReport(): Promise<string> {
     lines.push('插件里排期条数：查询失败 ' + ((e && e.message) || e));
   }
   lines.push('精确闹钟授权：' + await exactAlarmState());
+  /* v2.53：渠道的真实状态 —— 应用级权限 granted 不代表渠道没被静音/降级，这一行才是关键 */
+  try {
+    const ch = await notifyChannelState();
+    if (ch.ok) {
+      const desc = ch.channels.map((c) => {
+        const imp = c.importance === 5 ? 'HIGH(横幅)' : c.importance === 4 ? 'DEFAULT(无声横幅?)' : c.importance === 3 ? 'DEFAULT(不横幅)' : c.importance === 2 ? 'LOW(无声音)' : c.importance === 1 ? 'MIN(不显示)' : c.importance === 0 ? 'NONE(被屏蔽)' : '未知';
+        return (c.id.indexOf('class-') === 0 ? '上课' : '待办') + '=' + imp + (c.sound ? ' 有声音' : ' 无声') + (c.exists ? '' : '(渠道不存在!)');
+      }).join('、');
+      lines.push('通知渠道：' + desc + '（应用级通知开关 ' + (ch.enabled ? '开' : '关') + '）');
+    } else {
+      lines.push('通知渠道：查询失败' + (ch.error ? ' ' + ch.error : ''));
+    }
+    if (ch.ok) lines.push('Doze 待机：' + (ch.dozing ? '是（系统正在打盹，闹钟会被攒起来）' : '否'));
+  } catch { lines.push('通知渠道：查询失败'); }
   try {
     const ps = await powerStatus();
     lines.push('电池优化豁免：' + (ps.ok ? (ps.ignoring ? '已豁免' : '未豁免') : '查询失败') + (ps.rom ? ' · 机型 ' + ps.rom : ''));

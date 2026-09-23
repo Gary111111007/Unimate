@@ -2,6 +2,9 @@ package com.unimate.app;
 
 import android.content.Context;
 import android.content.Intent;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.os.PowerManager;
 import android.webkit.CookieManager;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSObject;
@@ -234,6 +237,54 @@ public class JwWebViewPlugin extends Plugin {
      * 提醒兜底心跳的状态（v2.31）：让 App 能显示"心跳到底排上了没、上次补投了几条"。
      * 光有代码不算数 —— 真机上要先能证明它真的在跑。
      */
+    /**
+     * 通知渠道 + 待机状态自检（v2.53）。
+     *
+     * 为什么加这个：产品负责人多轮反馈"到点不响"，而自检报告里只有"系统通知权限 granted" ——
+     * 那是**应用级**开关，**渠道**被系统或用户单独静音/降级时它照样是 granted。
+     * Android 8+ 的横幅与声音完全由渠道重要性决定：IMPORTANCE_HIGH 才会横幅弹出，
+     * DEFAULT 只是安静地躺进通知栏（用户会以为"根本没提醒"），NONE 则直接丢弃。
+     * 所以这里把渠道的真实 importance / 有没有声音 / 是否被屏蔽读出来，再带上 Doze 待机状态。
+     */
+    @PluginMethod
+    public void notifyChannelStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            ret.put("enabled", nm != null && nm.areNotificationsEnabled());
+            JSObject channels = new JSObject();
+            JSArray ids = call.getArray("ids", new JSArray());
+            for (int i = 0; i < ids.length(); i++) {
+                String id = ids.getString(i);
+                if (id == null) continue;
+                JSObject info = new JSObject();
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && nm != null) {
+                    NotificationChannel ch = nm.getNotificationChannel(id);
+                    if (ch == null) {
+                        info.put("exists", false);
+                    } else {
+                        info.put("exists", true);
+                        info.put("importance", ch.getImportance());
+                        info.put("sound", ch.getSound() != null);
+                        info.put("vibration", ch.shouldVibrate());
+                        info.put("blocked", ch.getImportance() == NotificationManager.IMPORTANCE_NONE);
+                    }
+                } else {
+                    info.put("exists", true);   // Android 8 以下没有渠道概念
+                }
+                channels.put(id, info);
+            }
+            ret.put("channels", channels);
+            PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+            ret.put("dozing", pm != null && pm.isDeviceIdleMode());
+            ret.put("ok", true);
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("error", e.getMessage() == null ? "查询渠道失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void heartbeatStatus(PluginCall call) {
         JSObject ret = new JSObject();

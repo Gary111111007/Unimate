@@ -4,7 +4,7 @@ import { useDb } from '../stores/db.ts';
 // v2.47：同步/找回那一屏搬走后，这里只剩"备份与恢复"用得到的东西（guard / 加密迁移包都不再需要）
 import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.ts';
 import { base64ToBytes } from '../services/zip.ts';
-import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus, setReminderGuard, reminderGuardStatus } from '../services/notify.ts';
+import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus, setReminderGuard, reminderGuardStatus, rebuildNotifyChannels } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
 import { applyTheme, type ThemeMode } from '../services/theme.ts';
 import { FONT_LEVELS, applyTextZoom } from '../services/display.ts';
@@ -184,6 +184,22 @@ async function refreshNotifyState(): Promise<void> {
 
 function onVisible(): void {
   if (!document.hidden && panel.value === 'notify') void refreshNotifyState();
+}
+
+/**
+ * v2.53：重建通知渠道 + 重排提醒。
+ * 场景：三项系统开关都绿了、排期也在，但到点只有"安静地躺进通知栏"——
+ * 那是**渠道**被系统或用户静音/降级了（应用级权限仍是 granted，看不出来）。
+ * 换一个新渠道（默认横幅+铃声）并立刻重排，等于当场自救一次。
+ */
+async function rebuildChannels(): Promise<void> {
+  const r = await rebuildNotifyChannels();
+  if (!r.ok) { db.notify('重建通知渠道失败：' + (r.error || '未知原因')); return; }
+  try {
+    await rescheduleAll(db.courses, db.timetables, db.notes, db.settings);
+  } catch { /* 重排失败不影响渠道本身 */ }
+  await refreshNotifyState();
+  db.notify('通知渠道已重建（' + r.tag + '）并重排提醒；请再测一条 2 分钟提醒');
 }
 onMounted(() => document.addEventListener('visibilitychange', onVisible));
 onUnmounted(() => document.removeEventListener('visibilitychange', onVisible));
@@ -412,6 +428,11 @@ async function copyInterests(): Promise<void> {
             关掉也能用，只是提醒可能晚到，或等你打开 App 时才补发。
           </div>
           <button class="btn block sm grey" style="margin-top: 10px" @click="copySelfCheck()">复制自检报告（发我即可）</button>
+          <button class="btn block sm ghost" style="margin-top: 8px" @click="rebuildChannels()">重建通知渠道（到点不响时先点这个）</button>
+          <div class="small muted" style="margin-top: 6px; line-height: 1.6">
+            如果自检报告里"通知渠道"显示<b>不是 HIGH(横幅)</b>或<b>无声</b>，说明渠道被系统静音/降级了 —— 点上面这个按钮换一条新渠道，
+            然后按「演示一条通知」等 2 分钟，锁屏看它有没有横幅 + 声音。
+          </div>
           <div v-if="reportMsg" class="card small" style="margin-top: 8px; background: var(--soft); box-shadow: none; white-space: pre-wrap; word-break: break-all; user-select: text">{{ reportMsg }}</div>
           <div class="row" style="gap: 8px; margin-top: 10px">
             <button class="btn sm grow" @click="test(1)">测试提醒（1 分钟）</button>
