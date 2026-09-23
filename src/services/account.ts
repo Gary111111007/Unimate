@@ -82,6 +82,23 @@ export async function accountInfo(session: CloudAccountSession): Promise<CloudAc
   return { updatedAt: String(body?.updatedAt || ''), size: Number(body?.size || 0), sealed: body?.sealed !== false };
 }
 
+/**
+ * v2.51 用户自己改密码。
+ *
+ * 只校验**当前密码**（不需要会话令牌）—— 因为管理员重置之后旧令牌已经作废，
+ * 用户手里只有管理员给的临时密码，用"当前密码"验证才走得通。
+ * 成功后会返回一个**新令牌**（服务端顺手轮换了会话），调用方存下来即可继续自动同步。
+ */
+export async function accountChangePassword(account: string, oldPassword: string, newPassword: string): Promise<CloudAccountSession> {
+  if (newPassword.length < 8) throw new Error('新密码至少 8 个字符');
+  const oldVerifier = await deriveAuthVerifier(account, oldPassword);
+  const newVerifier = await deriveAuthVerifier(account, newPassword);
+  const response = await post('/v1/password', { account, oldVerifier, newVerifier }, '修改密码');
+  const body = await jsonBody(response);
+  if (!response.ok) fail(response, body, '修改密码失败');
+  return toSession(account, body);
+}
+
 /** 上传备份正文（未加密的备份 zip）——服务器可以读取，这是这一模式的前提 */
 export async function accountUpload(session: CloudAccountSession, bytes: Uint8Array): Promise<CloudAccountMeta> {
   const response = await fetchTimed('上传到云端账号',

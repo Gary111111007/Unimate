@@ -1,4 +1,4 @@
-# 项目上下文交接（压缩版 · 2026-09-23，v2.50）
+# 项目上下文交接（压缩版 · 2026-09-23，v2.51）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
@@ -11,14 +11,14 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 项 | 值 |
 | --- | --- |
 | 仓库 | `E:\Gary\北京化工大学\北化app\Work` |
-| 最新提交 | 本次 v2.50（**找回重构**：① 从本机找回=列 `accounts.json` 里的账号免密进入 ② 读备份文件 ③ 管理员重置页面；**云端备份收窄为只带课表与记事**；管理员页 `/admin`）；`f0ee3f5` v2.49（登录页收尾） |
+| 最新提交 | 本次 v2.51（**用户自己改密码** `POST /v1/password` + 面板「③ 修改密码」；另加「只登录（不取回数据）」与"已登录时主页也留一行找回入口"）；`95c135c` v2.50（找回重构 + 云端只带课表与记事 + 管理员页 `/admin`） |
 > **口径变更（v2.43，最重要的一条）**：产品负责人要求"像普通 App 那样账号登录、数据存云端"，并**明确撤销**了旧口径。
 > 现在主推**账号登录（服务器托管）**：备份存 R2、服务端持 `DATA_KEY` **能读**、忘记密码开发者可重置；
 > 端到端加密（服务器读不懂）**降为可选高级项**。`AGENTS.md` 硬规则 5 已改写 —— 旧表述（"数据默认全本地 / 只上传密文 / 服务器看不到你的数据"）**不许再写进 UI 或答辩材料**。
 | 先读哪 | 云端与 P3 的最新状态看 **`PRD.md` 开头的「当前接续摘要」** 与 **`Net.md` 的「当前云端接续摘要」**（本节只保留工程侧的通用交接） |
-| 未提交（本轮） | 无 —— v2.50 一起提交 |
+| 未提交（本轮） | 无 —— v2.51 一起提交 |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages）；**线上 = v2.39**（`assets/index-DroQga0f.js`，`catalog/` 三件套 200、`_worker.js` 生效） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.50，SHA `6E6D41C8…`；v2.49 `198CCAE0…`、v2.48 `27FF3306…`、v2.47 `720888CC…`） |
+| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.51，SHA `FA808010…`；v2.50 `6E6D41C8…`、v2.49 `198CCAE0…`、v2.48 `27FF3306…`） |
 | 提醒口径 | 地平线 7 天；只清"过期 90 秒以上 + 账本里没有的"排期（`notify/plan.json`）；**错过的提醒不补发**；排期读取走**原生直读**（`scheduled()` 在安卓上没实现） |
 | 提醒兜底 | 心跳（有近期排期 10 分钟/否则 60 分钟）+ **提醒守护前台服务（v2.34 默认开）**：一条最低优先级静音常驻通知防 ROM 冻结；开机广播清场（过期/20 秒内要响的丢弃，不补发） |
 | 演示站状态 | **v2.45 已上传并核对通过**（2026-09-23）：`/health` 回 `atRest:true, accounts:true`；七条接口预检全 204；非白名单 403；线上前端 = `assets/index-BrCScQRS.js`（与 v2.45 APK 同一份代码）；`catalog/` 三件套 200 且 `bisu.json` 与本地同哈希 |
@@ -29,6 +29,8 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 备份范围（v2.50） | `exportBackup(..., scope)`：**`full`** = 全量（课表+记事+**二课**+照片，只给「我的 → 备份与恢复」的本机导出/留底）；**`study`** = 换机范围（课表+记事+设置，**不含二课记录与照片**），账号模式上传/自动同步/端到端同步都用它。`restoreBackup` 已改成 `putIfPresent`：**包里没有的文件一律不动**（旧写法会把本机二课写成空数组） |
 | 本机找回（v2.50） | `db.enterAccount(accountId)`：从 `accounts.json` 直接切回本机账号，**不校验密码**（设备即信任边界；产品负责人明确要"直接从这儿找回"），复用 `finishLogin()`。面板 ① 列出本机账号（昵称/用户名/学校/上次登录）+「进入」 |
 | 管理员（v2.50） | `GET /admin`（单文件 HTML，电脑手机都能开）+ `POST /v1/admin/list`（R2 **ListObjectsV2** 列 `acct/`）+ `POST /v1/admin/reset`（换 verifierHash + 清会话 + 记 passwordResetAt）。**只能列账号 + 重置密码，不能下载用户数据**；secret `ADMIN_KEY` 未设则 503；新密码 verifier 由管理员浏览器算（PBKDF2 210k）。Pages 中继已加 `/admin`、`/v1/admin/*` → **Worker 与 Pages 都要重新部署** |
+| 改密码（v2.51） | `POST /v1/password`：**只校验"当前密码"，不需要会话令牌**（管理员重置后旧令牌已作废，用户手里只有临时密码），成功后换 `verifierHash` + **换发新令牌**；App 里是找回面板「③ 修改密码」（账号/当前密码/新密码/再输一次，本地派生新旧 verifier）。Pages 中继已加 `/v1/password` |
+| 重置后的回程路（v2.51） | ① 面板 ② 里的「只登录（不取回数据）」——只想接回登录、不想覆盖本机数据；② 主页在 `db.settings.cloudAccount` 存在时多一行「账号与找回 ›」（重置后的用户就在 App 里，进不去登录页） |
 | 头像（v2.47） | `services/avatar.ts`：相册选图（`guard()` 超时）→ canvas 居中裁 1:1 → 256×256 JPEG data URL（**Android WebView 加载不了 `file://`**，所以存 data URL）→ `settings.avatar`；「我的」点头像即换，「恢复默认」属撤销不弹确认 |
 | 登录页取回（v2.44） | 开机登录页 →「换新手机？用 Unimate 账号取回课表」：登录 → 拉云端备份 → 摘要 → 二次确认（覆盖本机数据时标红）→ `src/services/cloudAdopt.ts` 接管/新建本机账号（**沿用备份里的 `id/username/passwordHash/salt`，本机密码不变**）→ 绑定学校 → `restoreBackup` → 重新读数据 → 进主界面；学校档案缺失会在下载前拦住 |
 | Worker | **v2.43 必须重新 deploy**（新增账号 API）：`cd cloudflare\sync-worker` → `npx wrangler secret put DATA_KEY`（建议；不设也能跑，界面会提示"未设落盘密钥"）→ `npm run deploy`。之后 `/health` 应回 `accounts:true` |
@@ -39,18 +41,18 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 
 ## 3. 下一步（按优先级）
 
-1. **真机复验 v2.50**（当前唯一主线）：
+1. **真机复验 v2.51**（当前唯一主线）：
    ① ~~重新部署 Worker~~ / ② ~~重拖 Pages 包~~ / ③ ~~账号模式真机跑通~~ **都已完成**（2026-09-23）；
    ④ **重新部署 Worker + 设 `ADMIN_KEY`**（新增管理员页面与接口），再拖 Pages 包；
-   ⑤ 装 v2.50 APK 看这几处：找回面板第一项「① 从本机找回」是否列出本机账号并能直接进入、**云端备份只带课表与记事**（上传后看 KB 数变小）、
-   管理员页 `https://unimate3.pages.dev/admin` 能打开并重置一个测试账号的密码、
+   ⑤ 装 v2.51 APK 看这几处：找回面板第一项「① 从本机找回」是否列出本机账号并能直接进入、**云端备份只带课表与记事**（上传后看 KB 数变小）、
+   管理员页 `https://unimate3.pages.dev/admin` 能打开并重置一个测试账号的密码、**然后用临时密码走一遍「③ 修改密码」换成自己的**、
    **演示账号进去会选校**、关于页、**头像能否从相册选并自动裁成方形**；
    ⑤ 顺手验一遍自动同步、换机取回、以及**提醒链路**（设几分钟后的提醒，锁屏等它响，再复制自检报告发我）。
-   ⑥ **Pages 需重拖 v2.50 包**（前端 bundle 与 `_worker.js` 都变了）。
+   ⑥ **Pages 需重拖 v2.51 包**（前端 bundle 与 `_worker.js` 都变了）。
    ①b 顺手验「注销账号并删除云端数据」：二次确认后再登录应该 401/提示账号不存在。
    ② **提醒**：设一条几分钟后的测试提醒并**锁屏等它响**（v2.35 起 `ReminderAlarmReceiver` 到点直接投递）；再点「我的 → 通知设置 → 复制自检报告」把文本发我。
    ③ 档案热更新 AC-70~74（北二外"可下载 → 下载 → 切换"）；④ 天气 AC-64~69。
-2. **重拖 v2.50 Pages 上传包**（`artifacts\cloudflare\unimate-cloudflare-v2.50-upload`，拖目录本身）→ 前端 bundle 应变成 `assets/index-B51HYpdA.js`；随后我 curl 核对 `/admin` 是否 200。
+2. **重拖 v2.51 Pages 上传包**（`artifacts\cloudflare\unimate-cloudflare-v2.51-upload`，拖目录本身）→ 前端 bundle 应变成 `assets/index-CICQj8b2.js`；随后我 curl 核对 `/admin` 是否 200。
 2b. ~~把云账号登录搬到开机登录页~~ **v2.44 已完成**；~~账号模式自动增量同步~~ **v2.45 已完成**。
 下一步候选：账号模式的**邮件/短信找回**（目前忘记密码只能人工重置，需要服务商 + 费用）、**多设备同时改的冲突处理**（现在后传覆盖先传）、以及比赛材料的截图/录屏。
 **产品负责人明确：暂时不做"换境内存储"**（比赛作品、无真实用户），但那条提醒不许从文档里删掉。
@@ -69,7 +71,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 ## 5. 常用命令
 
 ```powershell
-npm run test:notify       # 单跑某个套件（共 21 个：test:login/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 902 条断言）
+npm run test:notify       # 单跑某个套件（共 21 个：test:login/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 912 条断言）
 npm run check:cloud       # v2.45：线上账号链路自检（临时账号走注册→上传→下载→注销，自清理；需外网）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1   # 唯一正确出包方式（沙箱内跑不通，需在沙箱外）

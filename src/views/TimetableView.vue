@@ -670,8 +670,15 @@ function toggleWeek(w: number): void {
       <button class="nav" @click="shift(1)" :disabled="week >= (db.activeTimetable?.totalWeeks || 18)">›</button>
       <button v-if="week !== db.currentWeek" class="btn sm ghost today" @click="goToday">回本周</button>
     </div>
-    <!-- v2.48：入口挪到登录页了（产品负责人：「账号与找回」放在登录界面里） -->
-    <div v-if="db.activeTimetable" class="swipe-hint center">左右滑动可切换周次</div>
+    <!--
+      v2.48：找回入口在登录页（没登录时用得上）。
+      v2.51：**已登录**时主页也留一行小字 —— 管理员重置密码或令牌过期后，用户要"只重新登录、不取回数据"，
+      那时他已经在 App 里，进不去登录页。只在真的登录了云端账号时才出现，不占版面。
+    -->
+    <div v-if="db.activeTimetable" class="hintrow">
+      <span class="swipe-hint">左右滑动可切换周次</span>
+      <button v-if="db.settings.cloudAccount" class="minilink" @click="db.openRecovery()">账号与找回 ›</button>
+    </div>
       <!-- 天气（Net.md P0）：默认关闭。关着、或还没拿到数据时这里一行都不渲染，
            不会给课表页顶出多余的空白；点一下 = 更新（同样受 30 分钟限制）。 -->
       <div v-if="wxNow" class="wxbar" @click="refreshWeather()" aria-label="天气，点一下更新">
@@ -949,6 +956,9 @@ function toggleWeek(w: number): void {
 .rktxt { flex: 1; min-width: 0; font-size: 12px; color: var(--strong); line-height: 1.35; }
 .rke { flex: none; width: 22px; height: 22px; border-radius: 50%; color: var(--muted); font-size: 14px; line-height: 1; }
 .nextbar { display: flex; align-items: center; gap: 9px; background: var(--card); border-radius: 11px; padding: 7px 10px; margin: 0 0 7px; box-shadow: var(--shadow); }
+/* v2.51：已登录云端账号时，主页那行"账号与找回"入口（很小、和周次提示同一行） */
+.hintrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px; }
+.minilink { font-size: 11px; color: var(--muted); padding: 2px 0; }
 .ndot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .ngrow { flex: 1; min-width: 0; }
 .n1 { display: flex; align-items: baseline; gap: 7px; font-size: 13px; line-height: 1.3; }

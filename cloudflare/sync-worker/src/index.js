@@ -243,6 +243,41 @@ async function accountInfo(request, env, url, origin) {
   return json({ account: record.account, id: record.id, updatedAt: record.updatedAt || '', size: record.size || 0, sealed: !!env.DATA_KEY }, 200, origin);
 }
 
+/**
+ * v2.51 **用户自己改密码**（管理页那句"让他改成自己的密码"要能兑现）。
+ *
+ * 设计取舍：**不需要会话令牌，只要当前密码**（`oldVerifier`）。
+ * 因为管理员重置之后旧令牌已经作废 —— 用户这时手里只有管理员给的临时密码，
+ * 用"当前密码"验证才走得通；改成功顺便发一个新令牌回来，客户端直接换成新会话。
+ */
+async function passwordChange(request, env, origin) {
+  if (!(await withinRate(request, env))) return json({ error: '请求过于频繁' }, 429, origin);
+  const body = await readJson(request);
+  if (!body) return json({ error: '请求格式错误' }, 400, origin);
+  const name = normAccount(body.account);
+  if (badAccount(name)) return json({ error: '账号或密码不正确' }, 401, origin);
+  const oldVerifier = String(body.oldVerifier || '');
+  const newVerifier = String(body.newVerifier || '');
+  if (!VERIFIER_RE.test(oldVerifier) || !VERIFIER_RE.test(newVerifier)) {
+    return json({ error: '口令校验值格式不正确' }, 400, origin);
+  }
+  if (oldVerifier === newVerifier) return json({ error: '新密码不能和当前密码一样' }, 400, origin);
+
+  const record = await readRecord(env, name);
+  if (!record) return json({ error: '账号或密码不正确' }, 401, origin);
+  if (record.verifierHash !== await sha256Hex(record.salt + ':' + oldVerifier)) {
+    return json({ error: '当前密码不正确' }, 401, origin);
+  }
+
+  record.verifierHash = await sha256Hex(record.salt + ':' + newVerifier);
+  record.passwordChangedAt = new Date().toISOString();
+  const session = await newSession();              // 换密码顺手换令牌：别的地方的旧会话立即失效
+  record.session = { tokenHash: session.tokenHash, expiresAt: session.expiresAt };
+  await writeRecord(env, name, record);
+  return json({ account: name, id: record.id, token: session.token,
+    updatedAt: record.updatedAt || '', size: record.size || 0 }, 200, origin);
+}
+
 async function accountDelete(request, env, url, origin) {
   const auth = await authorize(request, env, url);
   if (auth.error) return auth.error;
@@ -413,7 +448,8 @@ const ADMIN_PAGE = [
   'var v=await verifierOf(account,p);',
   'var r=await post("/v1/admin/reset",{key:k,account:account,verifier:v});',
   'if(!r.ok){say(r.body.error||("失败 "+r.status),1);return;}',
-  'say("已重置 "+account+" —— 请把新密码告诉用户，并让他登录后立刻改掉。");}',
+  // v2.51 起 App 里真的有「修改密码」了，这句可以放心写
+  'say("已重置 "+account+" —— 把新密码告诉用户；他在 App 的「账号与找回 → 修改密码」里换成自己的密码即可。");}',
   '$("list").onclick=list;',
   '$("clear").onclick=function(){localStorage.removeItem(KEY);$("key").value="";say("已清除本机保存的密钥");};',
   '$("key").value=localStorage.getItem(KEY)||"";',
@@ -447,6 +483,7 @@ export default {
     if (url.pathname === '/v1/login' && request.method === 'POST') return login(request, env, origin);
     if (url.pathname === '/v1/account' && request.method === 'GET') return accountInfo(request, env, url, origin);
     if (url.pathname === '/v1/account' && request.method === 'DELETE') return accountDelete(request, env, url, origin);
+    if (url.pathname === '/v1/password' && request.method === 'POST') return passwordChange(request, env, origin);
     if (url.pathname === '/v1/backup' && request.method === 'PUT') return backupPut(request, env, url, origin);
     if (url.pathname === '/v1/backup' && request.method === 'GET') return backupGet(request, env, url, origin);
 

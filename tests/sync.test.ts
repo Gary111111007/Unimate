@@ -779,8 +779,10 @@ console.log('\n--- v2.48：登录页只留账号、找回搬到登录页 ---');
     !/离线进入|本机已有账号/.test(loginTpl), '');
   ok('登录页写明"登录状态会保留、只有退出后要再登"',
     /登录状态会保留/.test(loginTpl) && /第一次登录需要联网/.test(loginTpl), '');
-  ok('「账号与找回」入口在登录页，不在主页',
-    /db\.openRecovery\(\)/.test(loginTpl) && !/openRecovery/.test(tt48), '');
+  // v2.51：登录页入口保留（没登录时用）；主页**只在已登录云端账号时**多留一行（重置/掉线后要重新登录）
+  ok('「账号与找回」入口在登录页；主页只在已登录云端账号时才出现',
+    /db\.openRecovery\(\)/.test(loginTpl)
+    && /v-if="db\.settings\.cloudAccount"[\s\S]{0,80}db\.openRecovery\(\)/.test(tt48), '');
   // v2.49：产品负责人要求"账号与找回单独留一个按钮"，不再是一行小字
   ok('「账号与找回」在登录页是一个独立按钮', /class="btn block ghost sm"[\s\S]{0,80}db\.openRecovery\(\)/.test(loginTpl), '');
   // 文案口径：界面上不提"服务器在境外"，只说"可能有点慢"
@@ -831,6 +833,19 @@ console.log('\n--- v2.50：本机找回 / 二课不上云 / 管理员重置 ---'
   ok('面板写明"忘了密码找管理员重置"并给出管理员入口',
     /admin/.test(ar50) && /unimate3\.pages\.dev\/admin/.test(ar50), '');
   ok('面板如实写明云端备份的范围（只带课表与记事）', /只带课表与记事/.test(ar50), '');
+  // v2.51：管理员重置/令牌过期之后，用户要"只重新登录、不取回" —— 这两条路都要在
+  ok('找回面板有「只登录（不取回数据）」，只在已登录 App 时出现',
+    /async function loginOnly\(/.test(ar50) && /v-if="db\.session"[\s\S]{0,120}只登录（不取回数据）/.test(ar50), '');
+  ok('已登录云端账号时主页也留一行找回入口（重置后就在 App 里，进不去登录页）',
+    /v-if="db\.settings\.cloudAccount"[\s\S]{0,80}db\.openRecovery\(\)/.test(read('src/views/TimetableView.vue')), '');
+  // v2.51：用户自己改密码（管理员重置后拿临时密码进来换成自己的）
+  ok('找回面板有「修改密码」区块（账号/当前密码/新密码/再输一次）',
+    /③ 修改密码/.test(ar50) && /async function changePassword\(/.test(ar50)
+    && /pwdOld/.test(ar50) && /pwdNew2/.test(ar50), '');
+  ok('客户端改密码：本地派生新旧 verifier，走 /v1/password',
+    /accountChangePassword/.test(read('src/services/account.ts'))
+    && /post\('\/v1\/password'/.test(read('src/services/account.ts')), '');
+  ok('Pages 中继转发 /v1/password', /'\/v1\/password'/.test(read('cloudflare/pages/_worker.js')), '');
 
   const pages50 = read('cloudflare/pages/_worker.js');
   ok('Pages 中继转发管理员页面与接口（手机才打得开）',
@@ -891,6 +906,20 @@ console.log('\n--- v2.50：本机找回 / 二课不上云 / 管理员重置 ---'
     const newLogin = await call50('/v1/login', { account: 'reset-target', verifier: newVerifier });
     ok('重置后：旧密码登录失败、新密码可用（这是"找管理员重置"的核心承诺）',
       oldLogin.status === 401 && newLogin.status === 200, 'old=' + oldLogin.status + ' new=' + newLogin.status);
+
+    // v2.51：用户自己改密码（管理员重置后 → 拿临时密码换成自己的）
+    const ownVerifier = await deriveAuthVerifier('reset-target', 'my-own-password-789');
+    const wrongOld = await call50('/v1/password', { account: 'reset-target', oldVerifier, newVerifier: ownVerifier });
+    ok('改密码时"当前密码"不对 → 401（不能凭空改别人的密码）', wrongOld.status === 401, String(wrongOld.status));
+    const samePwd = await call50('/v1/password', { account: 'reset-target', oldVerifier: newVerifier, newVerifier: newVerifier });
+    ok('新旧密码相同 → 400', samePwd.status === 400, String(samePwd.status));
+    const changed: any = await (await call50('/v1/password', { account: 'reset-target', oldVerifier: newVerifier, newVerifier: ownVerifier })).json();
+    ok('改密码成功并换发新令牌（旧会话立即失效、本机换成新会话）',
+      typeof changed.token === 'string' && changed.token.length >= 40 && changed.account === 'reset-target', JSON.stringify(changed).slice(0, 100));
+    const tempLogin = await call50('/v1/login', { account: 'reset-target', verifier: newVerifier });
+    const ownLogin = await call50('/v1/login', { account: 'reset-target', verifier: ownVerifier });
+    ok('改完密码：临时密码失效、自己的新密码可用',
+      tempLogin.status === 401 && ownLogin.status === 200, 'temp=' + tempLogin.status + ' own=' + ownLogin.status);
   } finally {
     globalThis.fetch = realFetch50;
   }

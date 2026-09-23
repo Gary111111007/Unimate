@@ -17,7 +17,7 @@ import { exportBackup, inspectBackup, restoreBackup, saveEncryptedMigration } fr
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
 import { configFromRecovery, decryptSync, deriveAccountSyncId, encryptForSync, isTombstone, normalizeAccount, parseRecoveryCode, tombstoneBytes, type EncryptedSync, type SyncConfig } from '../services/syncCrypto.ts';
 import { downloadSyncCipher, uploadSyncCipher } from '../services/cloudSync.ts';
-import { accountDelete, accountDownload, accountInfo, accountLogin, cloudAccountReady } from '../services/account.ts';
+import { accountChangePassword, accountDelete, accountDownload, accountInfo, accountLogin, cloudAccountReady } from '../services/account.ts';
 import { adoptBlockedReason, adoptCloudBackup, previewCloudBackup } from '../services/cloudAdopt.ts';
 import { autoSyncState, syncNow } from '../services/cloudAutoSync.ts';
 import { guard } from '../services/guard.ts';
@@ -36,6 +36,36 @@ const cloudMsg = ref('');
 const cloudMeta = ref({ updatedAt: '', size: 0, sealed: true });
 const cloudReady = ref(true);
 const showAdvanced = ref(false);
+/** v2.51：改密码那一小块（默认收起，避免面板又被塞满） */
+const showPwdChange = ref(false);
+const pwdOld = ref('');
+const pwdNew = ref('');
+const pwdNew2 = ref('');
+const pwdMsg = ref('');
+
+async function changePassword(): Promise<void> {
+  if (busy.value) return;
+  const name = (db.settings.cloudAccount?.name || cloudAcct.value || '').trim();
+  if (name.length < 3) { pwdMsg.value = '请先在上面填账号（或先登录一次）'; return; }
+  if (!pwdOld.value) { pwdMsg.value = '请输入当前密码'; return; }
+  if (pwdNew.value.length < 8) { pwdMsg.value = '新密码至少 8 个字符'; return; }
+  if (pwdNew.value !== pwdNew2.value) { pwdMsg.value = '两次输入的新密码不一致'; return; }
+  busy.value = true;
+  pwdMsg.value = '正在修改（服务器可能有点慢）…';
+  try {
+    const session = await accountChangePassword(name, pwdOld.value, pwdNew.value);
+    if (db.session) {
+      // 服务端顺手轮换了令牌，这里直接换成新会话，自动同步接着用
+      db.settings.cloudAccount = { ...session };
+      await db.saveData();
+    }
+    pwdOld.value = ''; pwdNew.value = ''; pwdNew2.value = '';
+    pwdMsg.value = '密码已修改。' + (db.session ? '这台设备已自动换成新会话。' : '请用新密码登录。');
+    db.notify('密码已修改');
+    showPwdChange.value = false;
+  } catch (e: any) { pwdMsg.value = e?.message || '修改失败，请重试'; }
+  finally { busy.value = false; }
+}
 
 // 端到端加密（高级）那一套
 const syncCode = ref('');
@@ -187,6 +217,32 @@ async function restoreFromFile(): Promise<void> {
 }
 
 /* ---------------- ② 用账号从云端取回 ---------------- */
+
+/**
+ * v2.51：**只重新登录，不取回数据**。
+ * 用途：管理员重置密码后、或令牌过期后，用户只要把云端登录接回来（本机数据不动），
+ * 不该被迫走一遍"覆盖本机"的取回确认。
+ */
+async function loginOnly(): Promise<void> {
+  if (busy.value) return;
+  const name = cloudAcct.value.trim();
+  if (name.length < 3) { cloudMsg.value = '请输入账号'; return; }
+  if (cloudPass.value.length < 8) { cloudMsg.value = '密码至少 8 个字符'; return; }
+  if (!db.session) { cloudMsg.value = '先登录 App（或从上面①进来），再重新登录云端账号'; return; }
+  busy.value = true;
+  cloudMsg.value = '正在登录（服务器可能有点慢）…';
+  try {
+    const session = await accountLogin(name, cloudPass.value);
+    db.settings.cloudAccount = { ...session };
+    await db.saveData();
+    const meta = await accountInfo(session).catch(() => null);
+    if (meta) cloudMeta.value = meta;
+    cloudPass.value = '';
+    cloudMsg.value = '已登录（没有取回数据）· 云端备份：' + (meta && meta.size ? Math.round(meta.size / 1024) + ' KB' : '还没有');
+    db.notify('云端账号已重新登录');
+  } catch (e: any) { cloudMsg.value = e?.message || '登录失败，请重试'; }
+  finally { busy.value = false; }
+}
 
 async function fetchFromCloud(): Promise<void> {
   if (busy.value) return;
@@ -479,9 +535,10 @@ async function doFileRestoreWithPending(): Promise<void> {
         <div class="field" style="margin-top: 10px"><label>账号</label><input v-model.trim="cloudAcct" autocomplete="off" placeholder="3~64 个字符" /></div>
         <div class="field"><label>密码</label><input v-model="cloudPass" type="password" autocomplete="off" placeholder="至少 8 个字符，App 不会保存" /></div>
         <button class="btn block" :disabled="busy" @click="fetchFromCloud">{{ busy ? '取回中，请勿退出…' : '取回云端课表' }}</button>
+        <button v-if="db.session" class="btn block ghost" style="margin-top: 8px" :disabled="busy" @click="loginOnly">只登录（不取回数据）</button>
         <div class="small muted" style="margin-top: 8px">
-          忘了密码？云端目前只能由管理员重置 —— 用电脑或手机打开
-          <b>unimate3.pages.dev/admin</b>（需要管理员密钥）。
+          忘了密码？找管理员重置（电脑或手机打开 <b>unimate3.pages.dev/admin</b>，需要管理员密钥），
+          拿到临时密码后用下面的「③ 修改密码」换成自己的。
         </div>
         <div class="small muted" style="margin-top: 8px">服务器可能有点慢，通常十几秒到一分钟（照片越多越慢）。</div>
         <div v-if="cloudMsg" class="small muted" style="margin-top: 8px">{{ cloudMsg }}</div>
@@ -489,7 +546,26 @@ async function doFileRestoreWithPending(): Promise<void> {
 
       <!-- ③ 云端备份管理 -->
       <div class="card" style="margin-top: 10px; box-shadow: none">
-        <div class="bold small">③ 我账号的云端备份</div>
+        <div class="bold small">③ 修改密码</div>
+        <div class="small muted" style="margin-top: 4px">
+          管理员给你重置成临时密码之后，在这里换成你自己的（需要当前密码）。
+        </div>
+        <button class="btn block ghost sm" style="margin-top: 8px" :disabled="busy" @click="showPwdChange = !showPwdChange">
+          {{ showPwdChange ? '收起' : '修改密码' }}
+        </button>
+        <template v-if="showPwdChange">
+          <div class="field" style="margin-top: 8px"><label>账号</label><input v-model.trim="cloudAcct" autocomplete="off" placeholder="要改密码的账号" /></div>
+          <div class="field"><label>当前密码</label><input v-model="pwdOld" type="password" autocomplete="off" placeholder="管理员给你的临时密码也行" /></div>
+          <div class="field"><label>新密码</label><input v-model="pwdNew" type="password" autocomplete="off" placeholder="至少 8 个字符" /></div>
+          <div class="field"><label>再次输入新密码</label><input v-model="pwdNew2" type="password" autocomplete="off" placeholder="两次要一致" /></div>
+          <button class="btn block" :disabled="busy" @click="changePassword">{{ busy ? '处理中，请稍候…' : '确认修改' }}</button>
+        </template>
+        <div v-if="pwdMsg" class="small muted" style="margin-top: 8px">{{ pwdMsg }}</div>
+      </div>
+
+      <!-- ④ 云端备份管理 -->
+      <div class="card" style="margin-top: 10px; box-shadow: none">
+        <div class="bold small">④ 我账号的云端备份</div>
         <template v-if="cloudSession">
           <div class="small muted" style="margin-top: 6px; line-height: 1.7">
             已登录：<b>{{ cloudSession.name }}</b>
