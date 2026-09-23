@@ -1,6 +1,6 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v2.54 ｜ 日期 2026-09-23 ｜ 状态：**v2.53 的渠道自检真机跑出结论：渠道是 HIGH+有声音，但"精确闹钟 denied + 电池优化未豁免"**（这才是他"到点不响/打开才补"的直接原因，报告结论行已写明）；**v2.54 修掉 v2.53 自己引入的 `CHANNEL_TAG is not defined` 崩溃，并把头像改成可拖动裁剪框**
+> 版本 v2.55 ｜ 日期 2026-09-23 ｜ 状态：**提醒问题按业界做法重做（查了 Android 官方文档与主流开源库）**：① 声明 `USE_EXACT_ALARM` —— Android 13+ **装上即授予精确闹钟**，不用用户去系统设置开（这就是他报告里 `精确闹钟授权：denied` 的根治办法）；② 排期优先走 `setAlarmClock`（系统"下一个闹钟"通道，不参与 Doze 攒队）；③ 自检报告新增"闹钟条目 N/M 真的挂在系统里"（排期列表里有 ≠ AlarmManager 里挂着）；④ 用户划掉 App 时（`onTaskRemoved`）重新硬化排期
 > 口径变更：App 自己的联网功能现在有**三类**：天气（默认关闭）、高校档案更新，以及用户主动操作的
 > **账号登录（v2.43 起为主推）**：备份存云端、服务端持密钥可读（见 11.51）；
 > **端到端加密同步（可选）**：只上传 AES-256-GCM 密文，口令与恢复码不保存、不上传（见 11.45）。
@@ -41,14 +41,15 @@
 | 交付形态与分工工位（v2.52） | 产品负责人两条要求：① **Pages 只给文件夹，不要再压 ZIP**（`make-pages-package.mjs` 里的 tar/Compress-Archive 全删，脚本变简单；ZIP 只在 v2.36~v2.51 的历史留档里存在）；② **给 P4 / P5 各留一个目录**方便分工给其他人做，最后统一整合 → 新建 [`p4-parser/`](p4-parser/README.md) 与 [`p5-assistant/`](p5-assistant/README.md)，每个目录里都有 README（目标 / 红线 / 交付物 / 验收清单 / 与主工程的接口约定）+ NOTES.md（接手的人写进展）。详见 11.60。 |
 | 提醒渠道自检（v2.53） | 产品负责人："我还没跟你说，消息提醒还是有问题"。这次不猜成因，先把**能直接看出病因的读数**补上：Android 8+ 的横幅与声音由**渠道**重要性决定，而应用级通知权限 granted **不代表渠道没被静音/降级**（系统或用户单独降级后，提醒只是安静地躺进通知栏 → 用户体感就是"到点根本没提醒"）。新增原生 `notifyChannelStatus`（读渠道 `importance`/有无声音/是否屏蔽 + Doze `isDeviceIdleMode`），写进自检报告；并给通知设置面板加一个「**重建通知渠道**」按钮（换新 tag → 同名新渠道，默认 HIGH+铃声，规避"渠道创建后改不动"的 Android 限制），点一下+重排提醒即可当场自救。详见 11.61。 |
 | 真机结论 + 我的 bug（v2.54） | 产品负责人的自检报告**把病因写清楚了**：`通知渠道：上课=HIGH(横幅) 有声音、待办=HIGH(横幅) 有声音`、`Doze 待机：否` —— 渠道没问题；但 **`精确闹钟授权：denied`** 且 **`电池优化豁免：未豁免`**（结论行已提示：闹钟会晚、Doze 下每 9 分钟才放行一条、系统冻住时攒到打开 App 才补发）。同时报告暴露了我 v2.53 自己引入的崩溃：点「测试提醒」报 **`CHANNEL_TAG is not defined`**（把常量改成函数时漏改 4 处调用点）。v2.54 修掉它，并给"高风险模块里的全大写标识符"加了静态自查。另外按他要求把头像改成**可拖动裁剪框 + 滑杆缩放**。详见 11.62。 |
+| 提醒按业界做法重做（v2.55） | 产品负责人："还是没有消息提醒，你学习一下成功软件怎么做的以及 GitHub 上面找点开源的东西学一下"。于是真的去查了：**Android 官方《Schedule exact alarms are denied by default》**明确"需要按日历/闹钟精确提醒的 App 应声明 `USE_EXACT_ALARM`，声明后无需用户授权（要求 targetSdk ≥ 33）"；主流开源通知库 **flutter_local_notifications** 的 README 也把两条路写得很清楚（`SCHEDULE_EXACT_ALARM` 要用户手动开 / `USE_EXACT_ALARM` 自动获得）。据此改了四处：① 清单加 `USE_EXACT_ALARM`（本项目 targetSdk 34、侧载不走 Play，所以可以声明；**上架需改回并引导用户授权，代码里降级分支保留**）；② 排期优先 `am.setAlarmClock(...)`（只对 24 小时内的排期用，把"下一个闹钟"位子留给最紧急的那条），失败落回 `setExactAndAllowWhileIdle`；③ 自检报告加"闹钟条目 N/M 真的挂在系统里 + USE_EXACT_ALARM 是否已授予 + 系统下一个闹钟时间"（`PendingIntent.FLAG_NO_CREATE` 判断），一条都没挂时直接点明"这就是到点不响的直接原因"；④ `ReminderGuardService.onTaskRemoved` 里重新硬化排期并重启守护服务（对付"划掉 App 之后不再提醒"）。详见 11.63。 |
 | 选校页 bug（v2.47） | 「可下载」字比「开发中」大三四倍 —— 真因是**类名撞车**：选校页横幅写了 `.brand { font-size: 26px }`，而按钮是 `class="pill brand"`。已把横幅改名 `.hero-brand`，并把 `test:css` 的同名冲突扫描**从"定位属性"扩展到"字号"**（扩展后立刻又抓出一处历史写法 —— 这就是这道检查的价值）。 |
 | 待办的唯一主线 | ① ~~部署 Worker + `DATA_KEY`~~ **已完成**；② 拖放 **v2.47** Pages 上传包；③ 覆盖安装 **v2.47** APK（不要卸载）看三处改动：登录页两页签、主页那行"账号找回"、关于页是否清爽；④ 顺手验提醒（设一条几分钟后的提醒、锁屏等它响）。 |
 | 提醒链路 | v2.35 起 `ReminderAlarmReceiver` 接管插件排期并用精确闹钟到点直接投递，守护服务每 15 秒扫一次持久化排期；**这一版（v2.47 APK）里就包含它**，装同一次包即可顺带复验提醒。产品负责人已齐"精确闹钟 + 电池优化豁免"两项（明确不动厂商自启动）。 |
 
 当前交付物：
 
-- APK（v2.54，**待真机复验**）：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，SHA-256 `2588383C71BE91EF1934CC89EC6DDF4E4B21406215ED3FA45D00DDA04CCBDF75`。
-- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.54-upload`](artifacts/cloudflare/unimate-cloudflare-v2.54-upload)（前端 bundle 变了；`_worker.js` 与 v2.53 相同）。
+- APK（v2.55，**待真机复验**）：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，SHA-256 `664171BEFEFC67E6280ADA0FD08AEA2D5389F84AC709AA742737364745402D44`。
+- Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.55-upload`](artifacts/cloudflare/unimate-cloudflare-v2.55-upload)（前端 bundle 变了；`_worker.js` 与 v2.53 相同）。
 - Pages 交付形态：**只出可拖放目录**（v2.52 起不再压 ZIP）：[`artifacts/cloudflare/unimate-cloudflare-v2.52-upload`](artifacts/cloudflare/unimate-cloudflare-v2.52-upload)。
 - **Worker 也要重新部署**（本次新增管理员页面与两个接口）+ 可选设 `ADMIN_KEY`：`cd cloudflare\sync-worker` → `npx wrangler secret put ADMIN_KEY`（自定一串随机字符）→ `npm run deploy`。不设的话管理员接口返回 503，其它功能不受影响。
 - ~~Worker 需要重新部署~~ **2026-09-23 已部署完成**（含 `DATA_KEY`），`/health` 回 `atRest:true, accounts:true`。其余 secret 不要动。
@@ -3579,6 +3580,51 @@ vite 不做类型检查、`test:notify` 当时也没扫到 —— 又是"只有�
   新串（`拖动图片取景`、`就这张`、`重建通知渠道`）都在，**`CHANNEL_TAG is not defined` 这类裸引用为 0**；`apksigner verify` 通过。
   **注**：Gradle 守护进程第十三次占住输出管道，APK 已产出（17:16:51），第 6 步由我手工复核。
 - **未验证（真机）**：修好后的「测试提醒」按钮、可拖动头像裁剪的手感；以及**开了精确闹钟 + 电池优化豁免之后**提醒能否准点。
+
+---
+
+### 11.63 第五十二轮（v2.55，2026-09-23）：按业界做法重做提醒链路（USE_EXACT_ALARM + setAlarmClock + 条目自检）
+
+产品负责人："还是没有消息提醒，你学习一下成功软件怎么做的以及 GitHub 上面找点开源的东西你在学一下。"
+
+#### A. 先查资料（这一步不能省）
+
+| 来源 | 关键结论 |
+| --- | --- |
+| **Android 官方《Schedule exact alarms are denied by default》** | `SCHEDULE_EXACT_ALARM` 在 Android 14 起**默认不授予**；需要按日历/闹钟做精确提醒的 App 应当声明 **`USE_EXACT_ALARM`** —— 声明后**用户无需授权**（要求 `targetSdk ≥ 33`） |
+| **flutter_local_notifications（主流开源通知库）README** | 精确闹钟两条路写得明确：`SCHEDULE_EXACT_ALARM` + 调 `requestExactAlarmsPermission()` 让用户授，**或** `USE_EXACT_ALARM`（不弹窗，直接获得） |
+
+对照我们的真机报告 `精确闹钟授权：denied` —— 用户没有（也不该被要求）去系统设置里翻那个开关，
+而**声明 `USE_EXACT_ALARM` 就能让精确闹钟"装上即有"**。这就是本轮的主修。
+
+#### B. 四处改动
+
+| # | 改动 | 为什么 |
+| --- | --- | --- |
+| 1 | `AndroidManifest.xml` 增加 `USE_EXACT_ALARM` | Android 13+ 自动授予，`canScheduleExactAlarms()` 直接为 true → 闹钟不再退化成"不精确" |
+| 2 | 排期优先 `am.setAlarmClock(new AlarmClockInfo(at, showPi), pi)` | `setAlarmClock` 走系统**"下一个闹钟"**通道（状态栏出现闹钟图标、`getNextAlarmClock()` 可读），**不参与 Doze 的批量攒队** —— 这是 Android 上能拿到的最强定时保证；只在**24 小时内**的排期上用它，远期排期继续走 `setExactAndAllowWhileIdle`，免得挤掉"下一个闹钟"这个宝贵的位子 |
+| 3 | 自检报告加一行 **「闹钟条目：N/M 真的挂在系统里」** | "插件里排期 17 条"只证明**数据库**里有；用 `PendingIntent.getBroadcast(..., FLAG_NO_CREATE)` 才能验证 **AlarmManager 里还挂着**。一条都没挂时报告直接写"⚠️ 这就是到点不响的直接原因"；同时报出 `USE_EXACT_ALARM 是否已授予` 与系统"下一个闹钟"时间 |
+| 4 | `ReminderGuardService.onTaskRemoved()` 重新硬化排期 + 重启守护服务 | 国产 ROM 上"划掉"≈把进程带走：闹钟条目虽然还在系统里，但守护服务停了；这里顺手把最紧急的排期重新排一遍，避免"划掉之后再也不响" |
+
+**取舍写清楚**：`USE_EXACT_ALARM` 会被 Google Play 审计（只允许日历/闹钟类应用）。本项目是**比赛作品、侧载 APK、不上架**，
+所以可以声明；将来若要上架，改回 `SCHEDULE_EXACT_ALARM` 并引导用户手动授权即可 —— **代码里两条路都保留**
+（`canScheduleExactAlarms()` 为假时仍然降级到 `setAndAllowWhileIdle`，测试里钉着这条）。
+
+#### C. 顺手抓到一个编译期真错
+
+第一次出包**编译失败**：`JSArray.getInteger(int)` 不存在 —— `JSArray` 继承 `org.json.JSONArray`，只有 `getInt/getString`。
+这正是"出包脚本必须真跑一遍"的价值：vite 与单测都看不见 Java 的错误。改成 `getInt(i)` 后通过。
+
+#### D. 验证
+
+- **已验证（本机自动化）**：`test:notify` 112 → **119 条**（新增：清单声明 `USE_EXACT_ALARM`、仍保留 `SCHEDULE_EXACT_ALARM` 与降级分支、
+  排期优先 `setAlarmClock`、只对 24 小时内用、`FLAG_NO_CREATE` 条目自检、报告里的"一条都没挂"提示、`onTaskRemoved` 硬化）；
+  全套 **22 套件 938 条**全绿。
+- **已验证（构建产物）**：APK `664171BE…`；`aapt2 dump badging` 确认包内**同时**有 `USE_EXACT_ALARM` 与 `SCHEDULE_EXACT_ALARM`
+  （写入校验步骤的输出里也能看到）；`classes12.dex` 里能查到 `alarmDiagnostics` / `setAlarmClock` / `onTaskRemoved`；
+  前端新串（`闹钟条目：`、`系统里一条闹钟都没有`）在；包内 bundle 与 `dist` 逐字节一致；`apksigner verify` 通过。
+- **未验证（真机）**：装上后 `精确闹钟授权` 是否自动变 granted、闹钟条目是否真的挂在系统里、到点能否准点响。
+  **验收方式**：新自检报告里应出现「精确闹钟授权：granted」「闹钟条目：N/N 条真的挂在系统里（精确闹钟可用：是；USE_EXACT_ALARM 已授予（装上就有））」。
 
 ---
 

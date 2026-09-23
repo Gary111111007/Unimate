@@ -320,6 +320,34 @@ console.log('\n--- v2.53：通知渠道自检 + 一键重建 ---');
     /export async function rebuildNotifyChannels/.test(notify)
     && /localStorage\.setItem\(CHANNEL_TAG_KEY/.test(notify)
     && /rebuildNotifyChannels\(\)/.test(me), '');
+
+  /*
+   * v2.55：按业界做法修"到点不响"的三件事，逐条钉死：
+   *  ① USE_EXACT_ALARM（装上自动授予，不用用户去系统设置开）——这是官方文档 + flutter_local_notifications README 都指的路；
+   *  ② 优先 setAlarmClock（走"下一个闹钟"通道，不参与 Doze 攒队）；
+   *  ③ 闹钟条目自检（排期列表里有 ≠ AlarmManager 里挂着）；
+   *  ④ 用户划掉 App 时（onTaskRemoved）重新硬化排期。
+   */
+  const manifest = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
+  const heartbeat = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'ReminderHeartbeat.java'), 'utf8');
+  const guardSvc = fsMod.readFileSync(pathMod.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'unimate', 'app', 'ReminderGuardService.java'), 'utf8');
+  ok('清单里声明了 USE_EXACT_ALARM（Android 13+ 装上即授予，无需用户手动开）',
+    /android\.permission\.USE_EXACT_ALARM/.test(manifest), '');
+  ok('仍然保留 SCHEDULE_EXACT_ALARM 与降级分支（上架时改回去也能跑）',
+    /android\.permission\.SCHEDULE_EXACT_ALARM/.test(manifest) && /setAndAllowWhileIdle/.test(heartbeat), '');
+  ok('排期优先走 setAlarmClock（下一个闹钟通道），失败再落回 setExactAndAllowWhileIdle',
+    /am\.setAlarmClock\(new AlarmManager\.AlarmClockInfo\(at, showPi\), pi\)/.test(heartbeat)
+    && /setExactAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP, at, pi\)/.test(heartbeat), '');
+  ok('只把 24 小时内的排期塞进"下一个闹钟"位子（不然远期排期会挤掉它）',
+    /24L \* 60 \* 60 \* 1000/.test(heartbeat), '');
+  ok('闹钟条目自检：原生用 FLAG_NO_CREATE 判断闹钟还在不在',
+    /public void alarmDiagnostics\(PluginCall call\)/.test(java)
+    && /PendingIntent\.FLAG_NO_CREATE/.test(java) && /canScheduleExactAlarms\(\)/.test(java), '');
+  ok('自检报告里写"几条真的挂在系统里"，并在一条都没有时直接点明原因',
+    /闹钟条目：/.test(notify) && /系统里一条闹钟都没有/.test(notify), '');
+  ok('用户划掉 App 时重新硬化排期并重启守护服务（onTaskRemoved）',
+    /public void onTaskRemoved\(Intent rootIntent\)/.test(guardSvc)
+    && /ReminderHeartbeat\.hardenAll\(this\)/.test(guardSvc), '');
   ok('渠道 tag 改成可配置（否则被静音后只能等发新版）',
     /function channelTag\(\)/.test(notify) && /CHANNEL_TAG_KEY/.test(notify)
     && !/const CHANNEL_TAG = 'v[0-9]+'/.test(notify), '');

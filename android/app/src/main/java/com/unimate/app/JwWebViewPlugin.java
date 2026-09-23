@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.os.PowerManager;
 import android.webkit.CookieManager;
 import androidx.activity.result.ActivityResult;
@@ -246,6 +247,53 @@ public class JwWebViewPlugin extends Plugin {
      * DEFAULT 只是安静地躺进通知栏（用户会以为"根本没提醒"），NONE 则直接丢弃。
      * 所以这里把渠道的真实 importance / 有没有声音 / 是否被屏蔽读出来，再带上 Doze 待机状态。
      */
+    /**
+     * 闹钟条目自检（v2.55）。
+     *
+     * 为什么需要："排期列表里有 17 条"只能证明**插件数据库**里有，不能证明 **AlarmManager 里还挂着闹钟** ——
+     * 被 ROM 清掉、被系统回收、PendingIntent 被替换，都会让排期"看起来在、实际不会响"。
+     * `PendingIntent.getBroadcast(..., FLAG_NO_CREATE)` 在条目不存在时返回 null，正好用来验证这一层。
+     */
+    @PluginMethod
+    public void alarmDiagnostics(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            android.app.AlarmManager am = (android.app.AlarmManager) getContext().getSystemService(Context.ALARM_SERVICE);
+            boolean exact = am == null || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S || am.canScheduleExactAlarms();
+            ret.put("exactAllowed", exact);
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                ret.put("useExactAlarm", getContext().checkSelfPermission("android.permission.USE_EXACT_ALARM")
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED);
+            }
+            android.app.AlarmManager.AlarmClockInfo info = am == null ? null : am.getNextAlarmClock();
+            ret.put("nextAlarmAt", info == null ? 0L : info.getTriggerTime());
+            JSArray ids = call.getArray("ids", new JSArray());
+            JSObject entries = new JSObject();
+            int alive = 0;
+            for (int i = 0; i < ids.length(); i++) {
+                // JSArray 继承 org.json.JSONArray：只有 getInt/getString，没有 getInteger（v2.55 编译时被抓出来）
+                int id = ids.getInt(i);
+                Intent it = new Intent(getContext(), ReminderAlarmReceiver.class)
+                        .setAction(ReminderAlarmReceiver.ACTION)
+                        .putExtra(ReminderAlarmReceiver.EXTRA_ID, id);
+                int flags = PendingIntent.FLAG_NO_CREATE;
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+                PendingIntent pi = PendingIntent.getBroadcast(getContext(), id, it, flags);
+                boolean exists = pi != null;
+                if (exists) alive++;
+                entries.put(Integer.toString(id), exists);
+            }
+            ret.put("entries", entries);
+            ret.put("aliveCount", alive);
+            ret.put("checkedCount", ids.length());
+            ret.put("ok", true);
+        } catch (Exception e) {
+            ret.put("ok", false);
+            ret.put("error", e.getMessage() == null ? "查询失败" : e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void notifyChannelStatus(PluginCall call) {
         JSObject ret = new JSObject();

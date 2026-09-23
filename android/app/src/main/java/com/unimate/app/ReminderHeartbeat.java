@@ -211,6 +211,30 @@ public class ReminderHeartbeat extends BroadcastReceiver {
             long at = n.getSchedule().getAt().getTime();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()) {
+                    /*
+                     * v2.55：**优先用 setAlarmClock**。
+                     *
+                     * 为什么（查过的依据）：setAlarmClock 是系统给"闹钟/日历"这类**用户可见的定时**准备的 API ——
+                     * 它走的是"下一个闹钟"这条通道（状态栏会出现闹钟图标、getNextAlarmClock() 能读到），
+                     * 不参与 Doze 的批量攒队，是 Android 上能拿到的最强定时保证；
+                     * 主流通知库（notifee）也专门暴露 AlarmType.SET_ALARM_CLOCK 就是这个道理。
+                     * 只在**最近 24 小时**内用，免得把远期排期都塞进"下一个闹钟"这个位子上。
+                     */
+                    boolean soon = at - System.currentTimeMillis() <= 24L * 60 * 60 * 1000;
+                    if (soon) {
+                        try {
+                            Intent show = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+                            PendingIntent showPi = null;
+                            if (show != null) {
+                                show.setAction(Intent.ACTION_MAIN);
+                                int sFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) sFlags |= PendingIntent.FLAG_IMMUTABLE;
+                                showPi = PendingIntent.getActivity(context, n.getId(), show, sFlags);
+                            }
+                            am.setAlarmClock(new AlarmManager.AlarmClockInfo(at, showPi), pi);
+                            return true;
+                        } catch (Throwable ignored) { /* 某些 ROM 会拦，落回下面那条 */ }
+                    }
                     am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
                 } else {
                     am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);

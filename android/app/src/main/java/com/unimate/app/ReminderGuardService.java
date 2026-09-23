@@ -92,6 +92,22 @@ public class ReminderGuardService extends Service {
         return START_STICKY;
     }
 
+    /**
+     * v2.55：用户从最近任务里**划掉 App** 时会被调用。
+     *
+     * 国产 ROM 上"划掉"往往等于把进程带走：前台服务虽然声明了 START_STICKY，但被强杀后
+     * 系统不一定马上拉起来，而我们排的闹钟是挂在进程外的（AlarmManager 里还在），
+     * 只要**再确认一次排期**，就不会出现"划掉之后再也不响"。
+     * 这里顺手做两件事：① 重新硬化一遍排期（把最紧急的几条重新排到"下一个闹钟"通道）；
+     * ② 显式再启动一次自己，尽量让守护服务活下来。
+     */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        try { ReminderHeartbeat.hardenAll(this); } catch (Throwable ignored) { }
+        try { start(this); } catch (Throwable ignored) { }
+        super.onTaskRemoved(rootIntent);
+    }
+
     @Override
     public void onDestroy() {
         running = false;

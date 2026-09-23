@@ -92,6 +92,23 @@
          非唤醒 + 非精确的批量闹钟，设备打盹期间不触发，等 App 被打开唤醒设备时一次性补发，
          表现为"后台不提醒、一打开全涌出"。用户可在通知设置里一键跳转授权。 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!--
+      v2.55：**USE_EXACT_ALARM —— 装上就自动授予，用户不用去系统设置里开**。
+
+      依据（都是查过的，不是猜的）：
+        · Android 官方《Schedule exact alarms are denied by default》：需要按日历/闹钟精确提醒的 App
+          应当声明 USE_EXACT_ALARM，声明后**无需用户授权**（要求 targetSdk ≥ 33，本项目 targetSdk 34）；
+        · 主流通知库 flutter_local_notifications 的 README 把两条路写得很清楚：
+          SCHEDULE_EXACT_ALARM（要用户手动开）或 USE_EXACT_ALARM（自动获得）。
+      真机证据：v2.53 的自检报告里 `精确闹钟授权：denied` —— 用户没去开，于是闹钟退化成"不精确"，
+      到点会晚、Doze 下每 9 分钟才放行一条，表现就是"后台不提醒、一打开才补发"。
+
+      ⚠️ 取舍（必须写清楚）：Google Play 对上架应用会审计这个权限（只允许日历/闹钟类应用）。
+      本项目是**比赛作品、侧载 APK**，不走 Play，因此可以声明；将来若要上架，需要改回
+      SCHEDULE_EXACT_ALARM + 引导用户手动授权（代码里两条路都保留：canScheduleExactAlarms() 为假时
+      仍然降级到 setAndAllowWhileIdle）。
+    -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <!-- 提醒类 App 的标准做法：请求加入电池优化白名单。
          查证结论：不豁免电池优化时，国产 ROM 上 AlarmManager 排的通知会根本不显示。 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />

@@ -594,6 +594,27 @@ export async function selfCheckReport(): Promise<string> {
     lines.push('插件里排期条数：查询失败 ' + ((e && e.message) || e));
   }
   lines.push('精确闹钟授权：' + await exactAlarmState());
+  /*
+   * v2.55：闹钟条目自检 —— "插件里排期 17 条"只证明**数据库**里有，
+   * 不能证明 **AlarmManager 里还挂着闹钟**（被 ROM 清掉 / PendingIntent 被替换都会让"看起来在、实际不响"）。
+   * 同时把"是不是靠 USE_EXACT_ALARM 自动授权的"写出来，方便判断要不要再引导用户去系统设置。
+   */
+  try {
+    const all = await pendingList();
+    const ids = all.map((n) => n.id).slice(0, 30);
+    const d: any = isNativeWebView()
+      ? await guard('查闹钟条目', JwWebView.alarmDiagnostics({ ids }), 4000, null)
+      : null;
+    if (d && d.ok) {
+      lines.push('闹钟条目：' + (d.aliveCount || 0) + '/' + (d.checkedCount || 0) + ' 条真的挂在系统里'
+        + '（精确闹钟可用：' + (d.exactAllowed ? '是' : '否')
+        + (d.useExactAlarm === undefined ? '' : '；USE_EXACT_ALARM ' + (d.useExactAlarm ? '已授予（装上就有）' : '未授予'))
+        + (d.nextAlarmAt ? '；系统"下一个闹钟"=' + fmt(d.nextAlarmAt) : '') + '）');
+      if ((d.aliveCount || 0) === 0 && ids.length) lines.push('⚠️ 排期有 ' + ids.length + ' 条，但系统里一条闹钟都没有 —— 这就是"到点不响"的直接原因');
+    } else {
+      lines.push('闹钟条目：查询失败' + (d && d.error ? ' ' + d.error : ''));
+    }
+  } catch { lines.push('闹钟条目：查询失败'); }
   /* v2.53：渠道的真实状态 —— 应用级权限 granted 不代表渠道没被静音/降级，这一行才是关键 */
   try {
     const ch = await notifyChannelState();
