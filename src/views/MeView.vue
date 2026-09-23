@@ -5,6 +5,7 @@ import { exportBackup, inspectBackup, restoreBackup, saveEncryptedMigration } fr
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
 import { configFromRecovery, decryptSync, deriveAccountSyncId, encryptForSync, isTombstone, normalizeAccount, parseRecoveryCode, tombstoneBytes, type EncryptedSync, type SyncConfig } from '../services/syncCrypto.ts';
 import { downloadSyncCipher, uploadSyncCipher } from '../services/cloudSync.ts';
+import { accountDelete, accountDownload, accountInfo, accountLogin, accountSignup, accountUpload, cloudAccountReady } from '../services/account.ts';
 import { guard } from '../services/guard.ts';
 import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus, setReminderGuard, reminderGuardStatus } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
@@ -35,6 +36,18 @@ const acctPass = ref('');
 const acctPassAgain = ref('');
 const pendingUploadAccount = ref('');
 const pendingRestoreAccount = ref('');
+/**
+ * 账号登录（v2.43，服务器托管）：产品负责人明确撤销了"数据只在本机/只上传密文"这条口径，
+ * 要求做成普通 App 那样 —— 注册/登录后数据存云端，换台手机登录就有课表。
+ * 因此这一路**服务器可以读取备份**（界面必须如实写），换来的是"忘记密码找开发者重置"。
+ */
+const cloudAcct = ref('');
+const cloudPass = ref('');
+const cloudConsent = ref(false);
+const cloudMsg = ref('');
+const cloudBusy = ref(false);
+const cloudReady = ref(true);
+const cloudMeta = ref({ updatedAt: '', size: 0, sealed: true });
 const sched = ref(0);
 const stats = ref({ total: 0, classReminders: 0, todoReminders: 0, testReminders: 0, nextFireAt: '' });
 const schedMsg = ref('');
@@ -78,6 +91,9 @@ async function open(name: typeof panel.value): Promise<void> {
   if (name === 'sync') {
     syncCode.value = db.settings.sync?.syncId || '';
     acct.value = db.settings.syncAccount || '';
+    cloudAcct.value = db.settings.cloudAccount?.name || '';
+    cloudReady.value = await cloudAccountReady();
+    if (db.settings.cloudAccount) cloudMeta.value = await accountInfo(db.settings.cloudAccount).catch(() => cloudMeta.value);
   }
 }
 
@@ -399,6 +415,136 @@ async function copyRecoveryCode(): Promise<void> {
     await navigator.clipboard.writeText(recoveryReveal.value);
     db.notify('恢复码已复制，请另存到安全位置');
   } catch { syncMsg.value = '无法自动复制，请长按恢复码手动复制'; }
+}
+
+/* ---------------------------------------------------------------------------
+ * 账号登录（v2.43，服务器托管）：普通 App 的做法
+ * 注册/登录 → 备份正文存云端（服务器持有落盘密钥、可以读取）→ 换台手机登录就有课表。
+ * 代价：忘记密码虽然可以找开发者重置，但"服务器读不到你的数据"这条就不再成立了 —— 界面如实写明。
+ * ------------------------------------------------------------------------- */
+
+function cloudSession() { return db.settings.cloudAccount || null; }
+
+async function cloudAfterLogin(): Promise<void> {
+  const session = cloudSession();
+  if (!session) return;
+  cloudPass.value = '';
+  cloudAcct.value = session.name;
+  cloudMsg.value = '已登录：' + session.name;
+  try {
+    const meta = await accountInfo(session);
+    cloudMeta.value = meta;
+    db.settings.cloudAccount = { ...session, updatedAt: meta.updatedAt, size: meta.size };
+    await db.saveData();
+    if (!meta.size) {
+      cloudMsg.value = '已登录 ' + session.name + '。这个账号云端还没有备份，点「上传当前数据到云端」就能把课表存上去。';
+      return;
+    }
+    await cloudRestore();
+  } catch (e: any) { cloudMsg.value = (e?.message || '读取云端信息失败') + '（已登录，可稍后重试）'; }
+}
+
+async function cloudSignup(): Promise<void> {
+  if (cloudBusy.value) return;
+  if (!cloudConsent.value) { cloudMsg.value = '请先勾选上面的同意项（数据会存到云端服务器）'; return; }
+  if (cloudAcct.value.trim().length < 3) { cloudMsg.value = '账号至少 3 个字符'; return; }
+  if (cloudPass.value.length < 8) { cloudMsg.value = '密码至少 8 个字符'; return; }
+  cloudBusy.value = true;
+  cloudMsg.value = '正在注册…';
+  try {
+    const session = await accountSignup(cloudAcct.value.trim(), cloudPass.value);
+    db.settings.cloudAccount = { ...session };
+    await db.saveData();
+    cloudMsg.value = '注册成功，正在把当前数据打包上传…';
+    await cloudUpload();
+  } catch (e: any) { cloudMsg.value = e?.message || '注册失败，请重试'; }
+  finally { cloudBusy.value = false; }
+}
+
+async function cloudLogin(): Promise<void> {
+  if (cloudBusy.value) return;
+  if (!cloudConsent.value) { cloudMsg.value = '请先勾选上面的同意项（数据会存到云端服务器）'; return; }
+  if (cloudAcct.value.trim().length < 3) { cloudMsg.value = '请输入账号'; return; }
+  if (cloudPass.value.length < 8) { cloudMsg.value = '密码至少 8 个字符'; return; }
+  cloudBusy.value = true;
+  cloudMsg.value = '正在登录…';
+  try {
+    const session = await accountLogin(cloudAcct.value.trim(), cloudPass.value);
+    db.settings.cloudAccount = { ...session };
+    await db.saveData();
+    await cloudAfterLogin();
+  } catch (e: any) { cloudMsg.value = e?.message || '登录失败，请重试'; }
+  finally { cloudBusy.value = false; }
+}
+
+async function cloudUpload(): Promise<void> {
+  const session = cloudSession();
+  if (!session || cloudBusy.value) return;
+  cloudBusy.value = true;
+  cloudMsg.value = '正在打包并上传…';
+  try {
+    const made = await guard('生成同步备份', exportBackup(db.profile!.schoolId, db.profile!.name, db.session!.username,
+      syncBase(), db.accounts, db.session!.accountId), 60_000, null);
+    if (!made) { cloudMsg.value = '打包超时，请重试'; return; }
+    const meta = await accountUpload(session, made.bytes);
+    cloudMeta.value = meta;
+    db.settings.cloudAccount = { ...session, updatedAt: meta.updatedAt, size: meta.size };
+    await db.saveData();
+    cloudMsg.value = '已上传到云端（' + Math.round(meta.size / 1024) + ' KB）· ' +
+      (meta.sealed ? '服务端落盘加密已开启' : '注意：服务端未设落盘密钥，靠 R2 自带静态加密');
+    db.notify('已上传到云端账号');
+  } catch (e: any) { cloudMsg.value = e?.message || '上传失败，请重试'; }
+  finally { cloudBusy.value = false; }
+}
+
+/** 云端 → 本机：下载后仍走"预览 → 覆盖/合并 → 二次确认"，不因为自动就跳过确认 */
+async function cloudRestore(): Promise<void> {
+  const session = cloudSession();
+  if (!session || cloudBusy.value) return;
+  cloudBusy.value = true;
+  cloudMsg.value = '正在从云端下载…';
+  try {
+    const bytes = await accountDownload(session);
+    if (!bytes) { cloudMsg.value = '这个账号云端还没有备份'; return; }
+    const info = await inspectBackup(bytes);
+    restoreB64.value = bytesToBase64(bytes);
+    restoreInfo.value = '账号 ' + session.name + ' 的云端备份 · ' + info.manifest.exportedAt + ' · 课表 ' +
+      info.manifest.counts.courses + ' 条 / 记事 ' + info.manifest.counts.notes + ' 条 / 二课 ' +
+      info.manifest.counts.records + ' 条 / 照片 ' + info.manifest.counts.photos + ' 张';
+    cloudMsg.value = '云端备份已下载并校验通过。请在下方选择「覆盖」或「合并」，再点开始恢复。';
+  } catch (e: any) { cloudMsg.value = e?.message || '下载失败，请重试'; }
+  finally { cloudBusy.value = false; }
+}
+
+async function cloudLogout(): Promise<void> {
+  db.settings.cloudAccount = null;
+  await db.saveData();
+  cloudPass.value = '';
+  cloudMeta.value = { updatedAt: '', size: 0, sealed: true };
+  cloudMsg.value = '已退出登录（云端那份备份还留着，下次登录还能取回）';
+}
+
+async function cloudDeleteAccount(): Promise<void> {
+  const session = cloudSession();
+  if (!session || cloudBusy.value) return;
+  const ok = await db.confirm({
+    title: '确认注销账号并删除云端数据？',
+    body: '账号「' + session.name + '」与它在云端的备份会被一起删除，删掉之后没有任何办法找回。',
+    detail: '本机上的课表等数据不受影响（只是不再与云端关联）。如果要保留云端那份，请点「取消」。',
+    confirmText: '确定注销并删除', cancelText: '取消，留着', danger: true
+  });
+  if (!ok) return;
+  cloudBusy.value = true;
+  cloudMsg.value = '正在注销…';
+  try {
+    await accountDelete(session);
+    db.settings.cloudAccount = null;
+    await db.saveData();
+    cloudMeta.value = { updatedAt: '', size: 0, sealed: true };
+    cloudMsg.value = '账号与云端数据已删除';
+    db.notify('账号已注销');
+  } catch (e: any) { cloudMsg.value = e?.message || '注销失败，请重试'; }
+  finally { cloudBusy.value = false; }
 }
 
 async function fetchSyncBackup(): Promise<void> {
@@ -741,15 +887,51 @@ async function copyInterests(): Promise<void> {
 
       <template v-else-if="panel === 'sync'">
         <div class="card small" style="background: var(--soft); box-shadow: none; line-height: 1.7">
-          课表、记事、二课材料和照片先在本机用 AES-256-GCM 加密，再经 <b>unimate3.pages.dev</b> 中转上传到 Cloudflare R2。
-          你的<b>账号、口令和明文都不会离开这台手机</b>，云端只有读不懂的密文。<br />
-          <b>代价只有一条：忘记口令且恢复码也丢失时，任何人都无法找回数据。</b>
+          两种云端备份，自己选（都不需要教务系统密码；本机数据始终是完整的一份，断网照常用）：<br />
+          <b>① 账号登录（云端备份）</b>：换机输账号密码就能取回课表，忘记密码可以找开发者重置 ——
+          代价是<b>服务器持有密钥、能读到备份内容</b>。<br />
+          <b>② 端到端加密同步</b>：服务器只拿到读不懂的密文，口令不离开手机 ——
+          代价是<b>忘记口令且恢复码丢失就找不回来</b>。
         </div>
 
         <div class="card" style="margin-top: 10px; box-shadow: none">
-          <div class="bold">账号同步（推荐）</div>
+          <div class="bold">账号登录（云端备份）</div>
           <div class="small muted" style="margin-top: 4px; line-height: 1.7">
-            设一个记得住的账号 + 口令：换手机时输一遍，课表自己就回来了，不用抄同步码。
+            像普通 App 一样：注册 / 登录后，课表等数据保存在云端服务器，<b>换台手机登录就能取回课表</b>；
+            忘记密码可以找开发者重置。<br />
+            代价要说明白：<b>服务端存的是可读取的备份</b>（落盘加密由服务端密钥完成），不再是"服务器读不懂"。
+          </div>
+          <div class="field" style="margin-top: 10px"><label>账号</label><input v-model.trim="cloudAcct" autocomplete="off" placeholder="3~64 个字符" /></div>
+          <div class="field"><label>密码</label><input v-model="cloudPass" type="password" autocomplete="off" placeholder="至少 8 个字符，App 不会保存" /></div>
+          <label class="row small" style="margin-top: 4px">
+            <input v-model="cloudConsent" type="checkbox" />
+            <span>我同意把课表、记事、二课材料与照片上传到云端备份（服务器持有密钥、可以读取，用于换机与找回）</span>
+          </label>
+          <button class="btn block" style="margin-top: 10px" :disabled="cloudBusy || !cloudConsent" @click="cloudLogin">登录</button>
+          <button class="btn block ghost" style="margin-top: 8px" :disabled="cloudBusy || !cloudConsent" @click="cloudSignup">注册并上传当前数据</button>
+          <div v-if="!cloudReady" class="small muted" style="margin-top: 8px">
+            提示：服务器上的账号接口还没部署（需要重新部署 Worker + 拖一次 Pages 包）。
+          </div>
+          <template v-if="db.settings.cloudAccount">
+            <div class="hairline" style="margin: 12px 0"></div>
+            <div class="small muted" style="line-height: 1.7">
+              已登录：<b>{{ db.settings.cloudAccount.name }}</b>
+              <template v-if="cloudMeta.updatedAt"><br />云端备份：{{ cloudMeta.updatedAt }} · {{ Math.round(cloudMeta.size / 1024) }} KB ·
+                {{ cloudMeta.sealed ? '落盘加密已开启' : '未设落盘密钥' }}</template>
+            </div>
+            <button class="btn block" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudUpload">上传当前数据到云端</button>
+            <button class="btn block ghost" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudRestore">从云端恢复到本机</button>
+            <button class="btn block grey sm" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudLogout">退出登录</button>
+            <button class="btn block grey sm" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudDeleteAccount">注销账号并删除云端数据</button>
+          </template>
+          <div v-if="cloudMsg" class="card small" style="margin-top: 10px; box-shadow: none; background: var(--soft)">{{ cloudMsg }}</div>
+        </div>
+
+        <div class="card" style="margin-top: 10px; box-shadow: none">
+          <div class="bold">端到端加密同步（服务器读不懂）</div>
+          <div class="small muted" style="margin-top: 4px; line-height: 1.7">
+            另一条路：不发密码给服务器，用"账号 + 口令"在本机算出同步码。云端只有密文，
+            <b>但忘记口令且恢复码丢失就没人能救</b>。隐私优先就选这条。
           </div>
           <div class="field" style="margin-top: 10px"><label>账号</label><input v-model.trim="acct" autocomplete="off" placeholder="3~64 个字符，随便起（别用学号当口令）" /></div>
           <div class="field"><label>口令</label><input v-model="acctPass" type="password" autocomplete="off" placeholder="至少 10 个字符，App 不会保存" /></div>
@@ -821,11 +1003,14 @@ async function copyInterests(): Promise<void> {
         <div class="hairline"></div>
         <div class="small" style="line-height: 1.8">
           <b>我们想做的事：</b>把大学里高频却分散的"课表、待办、第二课堂材料、在线教学平台、教务系统"收进一个 App，并做成<b>可复制到不同高校的框架</b>——每所学校的差异收敛到一份高校档案与一个数据适配器，先做好北化，再按校推进。<br /><br />
-          <b>隐私：</b>数据默认只存本机；账号密码不读取、不保存、不代填；不使用第三方地图 Key；无埋点、无上报。只有你主动开启「加密换机同步」后，才会把本机已加密、服务端无法解读的备份密文上传到云端。<br />
+          <b>隐私：</b>本机数据默认不对外发送；<b>教务系统的账号密码不读取、不保存、不代填</b>；不使用第三方地图 Key；无埋点、无上报。<br />
           App 自己的联网功能有三类：<b>天气</b>（默认关闭，开关在「我的 → 天气」）：<b>开启天气后会向 Open-Meteo 发送你的大致位置用于查询天气，不发送其他信息</b>，关掉开关后一次请求都不发；<br />
           <b>高校档案更新</b>：在「选择高校」页每天最多检查一次，只从本项目自己的站点下载<b>公开的学校档案</b>（校名、官网地址、节次表），<b>不上传任何信息</b>；下载内容带 Ed25519 签名，验签不过一律不安装。<br />
-          <b>加密换机同步</b>：仅在你点上传或下载时联网；密文经 <b>unimate3.pages.dev</b> 中转后保存在 Cloudflare R2。服务器只保存 AES-256-GCM 密文，
-          <b>你的同步账号、口令和恢复码不上传、不保存</b>（账号名只在本机用于推算你的备份位置）。口令与恢复码遗失后无法找回 —— 因为服务端没有钥匙。<br />
+          <b>账号登录（可选，普通 App 模式）</b>：注册并登录后，课表、记事、二课材料与照片会备份到云端服务器（Cloudflare，境外节点），
+          <b>服务端持有落盘密钥、可以读取这些内容</b>，用于换机取回与找回；你的<b>密码原文不上传</b>（本地派生校验值）。
+          不想要这一项就别开它。<br />
+          <b>端到端加密同步（可选）</b>：仅在你点上传或下载时联网；密文经 <b>unimate3.pages.dev</b> 中转后保存在 Cloudflare R2。服务器只保存 AES-256-GCM 密文，
+          <b>同步账号、口令和恢复码不上传、不保存</b>（账号名只在本机用于推算备份位置）。口令与恢复码遗失后无法找回 —— 因为服务端没有钥匙。<br />
           （你在「北化通」里打开的教务/教学系统网页属于你主动访问，不由 App 上传数据。）<br /><br />
           <b>声明：</b>本项目为学生自制演示作品，与学校官方无关；第二课堂分数为自评记录，非学校认定结果。
         </div>

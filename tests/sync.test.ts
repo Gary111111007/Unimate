@@ -4,7 +4,7 @@ import { gcm } from '@noble/ciphers/aes';
 import { pbkdf2 } from '@noble/hashes/pbkdf2';
 import { sha256 } from '@noble/hashes/sha256';
 import {
-  SYNC_KDF_ITERATIONS, configFromRecovery, decryptSync, deriveAccountSyncId, encryptForSync, isTombstone,
+  SYNC_KDF_ITERATIONS, configFromRecovery, decryptSync, deriveAccountSyncId, deriveAuthVerifier, encryptForSync, isTombstone,
   normalizeAccount, parseRecoveryCode, parseSyncEnvelope, tombstoneBytes
 } from '../src/services/syncCrypto.ts';
 
@@ -130,9 +130,10 @@ console.log('\n--- v2.39：同步 API 走 pages.dev（绕开被污染/不可达�
 
   const pagesWorker = read('cloudflare/pages/_worker.js');
   ok('Pages 上有 Advanced Mode 入口 _worker.js', pagesWorker.length > 500, '');
-  // v2.41 起这条列表多了 /v1/put 与 /v1/get（正文中转），静态资源仍然交给 env.ASSETS
-  ok('只接管同步 API 的几条路径，其余交给静态资源',
-    /const API_PATHS = \['\/health', '\/v1\/presign', '\/v1\/put', '\/v1\/get'\]/.test(pagesWorker)
+  // v2.41 多了 /v1/put、/v1/get（正文中转）；v2.43 又多了账号 API 四条。静态资源仍然交给 env.ASSETS
+  ok('只接管同步/账号 API 的几条路径，其余交给静态资源',
+    /const API_PATHS = \['\/health', '\/v1\/presign', '\/v1\/put', '\/v1\/get',/.test(pagesWorker)
+    && /'\/v1\/signup', '\/v1\/login', '\/v1\/account', '\/v1\/backup'\]/.test(pagesWorker)
     && /return env\.ASSETS\.fetch\(request\)/.test(pagesWorker), '');
   ok('上游仍是真 Worker（边缘转发，Cloudflare 内部解析不受本地污染影响）',
     /const UPSTREAM = 'https:\/\/unimate-sync\.2025040140\.workers\.dev'/.test(pagesWorker), '');
@@ -179,7 +180,7 @@ console.log('\n--- v2.41：密文正文改走 pages.dev 中转（不再让手机
 {
   const pagesWorker = read('cloudflare/pages/_worker.js');
   ok('Pages worker 接管 /v1/put 与 /v1/get',
-    /API_PATHS = \['\/health', '\/v1\/presign', '\/v1\/put', '\/v1\/get'\]/.test(pagesWorker), '');
+    /API_PATHS = \['\/health', '\/v1\/presign', '\/v1\/put', '\/v1\/get',/.test(pagesWorker), '');
   ok('中转上传：先调上游 /v1/presign（operation=put）再代 PUT',
     /async function relayPut\(/.test(pagesWorker)
     && /presignUpstream\(request, syncId, 'put', bytes\.length\)/.test(pagesWorker)
@@ -393,14 +394,181 @@ console.log('\n--- v2.42：账号同步（A 方案）---');
   ok('界面：换同步方式时销毁旧云端备份也要二次确认',
     /要顺手销毁旧的云端备份吗/.test(me), '');
   ok('文案与实现一致：不再写"直传 Cloudflare R2"（正文已改走 pages.dev 中转）',
-    !/直传 Cloudflare R2/.test(me) && /经 <b>unimate3\.pages\.dev<\/b> 中转上传/.test(me), '');
+    !/直传 Cloudflare R2/.test(me)
+    && /密文经 <b>unimate3\.pages\.dev<\/b> 中转后保存在 Cloudflare R2/.test(me), '');
   ok('隐私文案说清"账号/口令/恢复码不上传、不保存"',
-    /你的同步账号、口令和恢复码不上传、不保存/.test(me), '');
+    /同步账号、口令和恢复码不上传、不保存/.test(me), '');
   const types = read('src/types.ts');
   const dbSrc = read('src/stores/db.ts');
   ok('设置里只多存一个账号名（口令绝不落盘）',
     /syncAccount\?: string \| null/.test(types) && /syncAccount: null/.test(dbSrc)
     && !/syncPassword|syncPassphrase|syncPass\b/.test(types + dbSrc), '');
+}
+
+/*
+ * v2.43：账号登录（服务器托管）。产品负责人撤销了"数据只在本机/只上传密文"，
+ * 要求做成普通 App：注册/登录后数据存云端，换机登录就有课表。
+ * 这一段的重点是**行为**：把 R2 打桩，真的走一遍注册 → 登录 → 上传 → 下载 → 注销，
+ * 并确认"密码原文不上传""账号名不落进对象名""落盘加密真的生效"。
+ */
+console.log('\n--- v2.43：账号登录（服务器托管）---');
+{
+  const verifier = await deriveAuthVerifier('zhixiaohui', 'a-good-password');
+  ok('口令校验值 = 43 字符 base64url（本地 210k 次 PBKDF2 派生，密码原文不上传）',
+    /^[A-Za-z0-9_-]{43}$/.test(verifier), verifier);
+  ok('同一个账号+密码每次一致；换密码或换账号就不同',
+    (await deriveAuthVerifier('zhixiaohui', 'a-good-password')) === verifier
+    && (await deriveAuthVerifier('zhixiaohui', 'another-password')) !== verifier
+    && (await deriveAuthVerifier('someone-else', 'a-good-password')) !== verifier, '');
+  let shortPass = '';
+  try { await deriveAuthVerifier('zhixiaohui', 'short'); } catch (e: any) { shortPass = e.message; }
+  ok('密码太短直接拒绝', /至少 8 个字符/.test(shortPass), shortPass);
+
+  const worker3: any = await import('../cloudflare/sync-worker/src/index.js');
+  const syncWorker = worker3.default;
+  const realFetch3 = globalThis.fetch;
+  /** 打桩 R2（S3 协议）：只用到 GET/PUT/DELETE */
+  const bucket = new Map<string, { body: Uint8Array; type: string }>();
+  const r2Requests: Array<{ key: string; method: string }> = [];
+  globalThis.fetch = (async (input: any, init: any = {}) => {
+    // aws4fetch 会把请求规范化成一个 Request 再调 fetch，所以方法/正文要从 Request 上读
+    const req = input instanceof Request ? input : new Request(typeof input === 'string' ? input : input.url, init);
+    const path = new URL(req.url).pathname.replace(/^\/[^/]+\//, '');
+    const method = req.method.toUpperCase();
+    r2Requests.push({ key: path, method });
+    if (method === 'PUT') {
+      const raw = new Uint8Array(await req.arrayBuffer());
+      bucket.set(path, { body: raw, type: req.headers.get('content-type') || 'application/octet-stream' });
+      return new Response(null, { status: 200 });
+    }
+    if (method === 'DELETE') { bucket.delete(path); return new Response(null, { status: 204 }); }
+    const found = bucket.get(path);
+    if (!found) return new Response('not found', { status: 404 });
+    return new Response(found.body, { status: 200, headers: { 'Content-Type': found.type } });
+  }) as any;
+
+  const accountEnv = {
+    APP_ORIGINS: 'https://localhost,https://unimate3.pages.dev', R2_BUCKET_NAME: 'unimate-sync', R2_ACCOUNT_ID: '0123456789abcdef0123456789abcdef',
+    R2_ACCESS_KEY_ID: 'test-access-key', R2_SECRET_ACCESS_KEY: 'test-secret-key', SYNC_OBJECT_PEPPER: 'test-only-pepper-at-least-32-bytes-long',
+    DATA_KEY: 'test-only-at-rest-key-do-not-reuse', SYNC_RATE_LIMITER: { limit: async () => ({ success: true }) }
+  };
+  const call = (path: string, init: any = {}) => syncWorker.fetch(new Request('https://sync.example' + path, {
+    ...init, headers: { Origin: 'https://localhost', ...(init.headers || {}) }
+  }), accountEnv);
+
+  try {
+    const health = await syncWorker.fetch(new Request('https://sync.example/health'), accountEnv);
+    const healthBody: any = await health.json();
+    ok('健康检查自报支持账号模式与落盘加密（客户端据此判断服务端是否已升级）',
+      healthBody.accounts === true && healthBody.atRest === true, JSON.stringify(healthBody));
+
+    const signup = await call('/v1/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: '  ZhiXiaoHui ', verifier }) });
+    const signed: any = await signup.json();
+    ok('注册成功并返回会话令牌（大小写/空格归一后是同一个账号）',
+      signup.status === 201 && signed.account === 'zhixiaohui' && typeof signed.token === 'string' && signed.token.length >= 40, JSON.stringify(signed).slice(0, 120));
+    ok('注册接口带了 CORS 回显（手机来源 https://localhost）',
+      signup.headers.get('Access-Control-Allow-Origin') === 'https://localhost', '');
+
+    const dup = await call('/v1/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: 'zhixiaohui', verifier }) });
+    ok('同账号重复注册被拒（409）', dup.status === 409, String(dup.status));
+
+    // 账号记录：账号名不能出现在对象名里；verifier 原文不能落盘
+    const recordKey = [...bucket.keys()].find((k) => k.startsWith('acct/'))!;
+    const recordRaw = new TextDecoder().decode(bucket.get(recordKey)?.body ?? new Uint8Array());
+    ok('账号记录的对象名是 HMAC，不含账号名明文', !recordKey.includes('zhixiaohui') && /^acct\/[0-9a-f]{64}\.json$/.test(recordKey), recordKey);
+    ok('落盘的是 sha256(盐 + verifier)，不是 verifier 原文', !recordRaw.includes(verifier) && /"verifierHash":"[0-9a-f]{64}"/.test(recordRaw), '');
+
+    const wrongLogin = await call('/v1/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: 'zhixiaohui', verifier: await deriveAuthVerifier('zhixiaohui', 'wrong-password-here') }) });
+    ok('口令不对 → 401，且不泄露"账号是否存在"',
+      wrongLogin.status === 401 && /账号或口令不正确/.test(await wrongLogin.text()), String(wrongLogin.status));
+
+    const login = await call('/v1/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: 'zhixiaohui', verifier }) });
+    const session: any = await login.json();
+    ok('正确口令可登录并换到新令牌', login.status === 200 && session.token !== signed.token, '');
+
+    const noAuth = await call('/v1/backup?account=zhixiaohui', { method: 'GET' });
+    ok('没有令牌读备份 → 401（账号数据不是公开的）', noAuth.status === 401, String(noAuth.status));
+    const badToken = await call('/v1/backup?account=zhixiaohui', { method: 'GET', headers: { Authorization: 'Bearer not-a-real-token' } });
+    ok('伪造令牌 → 401', badToken.status === 401, String(badToken.status));
+
+    const payloadText = 'PK\u0003\u0004课表备份：高等数学 / 学生 智小汇';
+    const payload3 = new TextEncoder().encode(payloadText);
+    const upload = await call('/v1/backup?account=zhixiaohui', { method: 'PUT',
+      headers: { Authorization: 'Bearer ' + session.token, 'Content-Type': 'application/octet-stream' }, body: payload3 });
+    const uploaded: any = await upload.json();
+    ok('带令牌上传备份成功，并回写大小/时间', upload.status === 200 && uploaded.size === payload3.length && !!uploaded.updatedAt, JSON.stringify(uploaded));
+
+    const dataKey = [...bucket.keys()].find((k) => k.startsWith('data/'))!;
+    const storedRaw = new TextDecoder().decode(bucket.get(dataKey)!.body);
+    ok('落盘时真的加密了：桶里看不到课表明文',
+      !!dataKey && !storedRaw.includes('高等数学') && /"alg":"AES-256-GCM"/.test(storedRaw), '');
+    ok('数据对象名是随机 id，不含账号名', /^data\/[0-9a-f]{32}\.bin$/.test(dataKey), dataKey);
+
+    const download = await call('/v1/backup?account=zhixiaohui', { method: 'GET', headers: { Authorization: 'Bearer ' + session.token } });
+    const got = new Uint8Array(await download.arrayBuffer());
+    ok('换机下载：解密后与上传逐字节一致（服务器持钥匙，但客户端拿回的是原件）',
+      download.status === 200 && Buffer.from(got).equals(Buffer.from(payload3)), String(got.length));
+
+    const meta = await call('/v1/account?account=zhixiaohui', { method: 'GET', headers: { Authorization: 'Bearer ' + session.token } });
+    const metaBody: any = await meta.json();
+    ok('账号信息接口能报出"云端有没有备份、多大、是否落盘加密"',
+      metaBody.size === payload3.length && metaBody.sealed === true && !!metaBody.updatedAt, JSON.stringify(metaBody));
+
+    const wiped = await call('/v1/account?account=zhixiaohui', { method: 'DELETE', headers: { Authorization: 'Bearer ' + session.token } });
+    ok('注销成功返回 ok', wiped.status === 200 && (await wiped.json()).ok === true, '');
+    ok('注销后账号记录与云端备份都从桶里消失', !bucket.has(recordKey) && !bucket.has(dataKey), [...bucket.keys()].join(','));
+    const afterWipe = await call('/v1/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: 'zhixiaohui', verifier }) });
+    ok('注销后再登录 → 401（不是"还在"）', afterWipe.status === 401, String(afterWipe.status));
+
+    // 没设 DATA_KEY 时：按原样存（靠 R2 自带静态加密），这一条是为了把行为写清楚
+    const plainEnv = { ...accountEnv, DATA_KEY: '' };
+    const signup2 = await syncWorker.fetch(new Request('https://sync.example/v1/signup', { method: 'POST',
+      headers: { Origin: 'https://localhost', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account: 'no-seal-user', verifier }) }), plainEnv);
+    const signed2: any = await signup2.json();
+    await syncWorker.fetch(new Request('https://sync.example/v1/backup?account=no-seal-user', { method: 'PUT',
+      headers: { Origin: 'https://localhost', Authorization: 'Bearer ' + signed2.token, 'Content-Type': 'application/octet-stream' },
+      body: new TextEncoder().encode('未加密模式的正文') }), plainEnv);
+    const noSealKey = [...bucket.keys()].find((k) => k.startsWith('data/'))!;
+    const noSealRaw = new TextDecoder().decode(bucket.get(noSealKey)!.body);
+    ok('没设 DATA_KEY 时按原样存正文（此时只能靠 R2 静态加密，界面会如实提示"未设落盘密钥"）',
+      noSealRaw.includes('未加密模式的正文'), '');
+  } finally {
+    globalThis.fetch = realFetch3;
+  }
+
+  // 客户端与界面接线
+  const accountSrc = read('src/services/account.ts');
+  ok('客户端账号服务覆盖注册/登录/信息/上传/下载/注销，且每条都走 pages.dev 中转',
+    ['/v1/signup', '/v1/login', '/v1/account', '/v1/backup'].every((p) => accountSrc.includes(p))
+    && accountSrc.includes('SYNC_API_BASE'), '');
+  ok('客户端只发送 verifier，不发送密码原文',
+    /deriveAuthVerifier\(account, password\)/.test(accountSrc) && !/JSON\.stringify\(\{[^}]*password/.test(accountSrc), '');
+
+  const me3 = read('src/views/MeView.vue');
+  ok('界面：账号登录的六个动作都接上了',
+    ['cloudLogin', 'cloudSignup', 'cloudUpload', 'cloudRestore', 'cloudLogout', 'cloudDeleteAccount']
+      .every((fn) => new RegExp('function ' + fn + '\\(').test(me3)), '');
+  ok('界面：注册/登录前必须勾选"同意上传到云端"（不能默认同意）',
+    /v-model="cloudConsent"/.test(me3) && /disabled="cloudBusy \|\| !cloudConsent"/.test(me3), '');
+  ok('界面：注销账号走 db.confirm 二次确认（硬规则 1）',
+    /async function cloudDeleteAccount[\s\S]{0,600}db\.confirm\(/.test(me3), '');
+  ok('界面：如实写明"服务器持有密钥、可以读取"（口径变了，文案必须跟着变）',
+    /服务器持有密钥、可以读取/.test(me3) && /服务端存的是可读取的备份/.test(me3), '');
+  ok('界面：云端恢复仍然要过"预览 → 覆盖/合并 → 二次确认"',
+    /await inspectBackup\(bytes\)/.test(me3) && /restoreB64\.value = bytesToBase64\(bytes\)/.test(me3), '');
+  ok('设置里只存账号名/令牌，不存密码',
+    /cloudAccount\?: \{/.test(read('src/types.ts')) && /cloudAccount: null/.test(read('src/stores/db.ts'))
+    && !/cloudPassword|cloudPass:/ .test(read('src/types.ts') + read('src/stores/db.ts')), '');
+  ok('Pages 中继把账号 API 也纳入转发表，且预检允许 Authorization/PUT/DELETE',
+    /'\/v1\/signup', '\/v1\/login', '\/v1\/account', '\/v1\/backup'/.test(read('cloudflare/pages/_worker.js'))
+    && /Access-Control-Allow-Headers', 'Content-Type, Authorization'/.test(read('cloudflare/pages/_worker.js'))
+    && /GET,POST,PUT,DELETE,OPTIONS/.test(read('cloudflare/pages/_worker.js')), '');
 }
 
 console.log('\n通过：' + pass + ' 条 P3 同步断言');

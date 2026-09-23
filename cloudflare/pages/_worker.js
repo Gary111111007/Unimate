@@ -21,7 +21,10 @@
  *  d) 其它路径一律交给静态资源（env.ASSETS）。
  */
 const UPSTREAM = 'https://unimate-sync.2025040140.workers.dev';
-const API_PATHS = ['/health', '/v1/presign', '/v1/put', '/v1/get'];
+// v2.43 起还要转发账号 API（注册/登录/账号信息/备份读写）—— 它们一样必须挂在 pages.dev 上，
+// 否则手机上又会撞上"直连域名不通"那类问题。
+const API_PATHS = ['/health', '/v1/presign', '/v1/put', '/v1/get',
+  '/v1/signup', '/v1/login', '/v1/account', '/v1/backup'];
 const SYNC_CONTENT_TYPE = 'application/vnd.unimate.sync+json';
 /** 与 Worker 的 MAX_CIPHER_BYTES 对齐：中转只多做一次内存拷贝，不额外放宽上限 */
 const MAX_RELAY_BYTES = 30 * 1024 * 1024;
@@ -45,8 +48,10 @@ function corsHeaders(origin, preflight) {
   if (origin) h.set('Access-Control-Allow-Origin', origin);
   h.set('Vary', 'Origin');
   if (preflight) {
-    h.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    h.set('Access-Control-Allow-Headers', 'Content-Type');
+    // 账号 API 用 Authorization 头带会话令牌，读备份用 GET、写备份用 PUT、注销用 DELETE ——
+    // 少写任何一个，浏览器都会在预检这一步把请求拦掉（v2.39/v2.41 都栽在这类白名单上）。
+    h.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    h.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     h.set('Access-Control-Max-Age', '86400');
   }
   return h;

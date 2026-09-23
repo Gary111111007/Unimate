@@ -1,6 +1,15 @@
 # Unimate P3 同步服务（Cloudflare Worker + R2）
 
-Worker 只为单个密文对象签发 15 分钟的 R2 `GET` / `PUT` URL。同步口令、恢复码和数据明文都不会到 Worker。
+Worker 有两组能力（v2.43 起）：
+
+1. **端到端加密同步**：只为单个密文对象签发 15 分钟的 R2 `GET` / `PUT` URL。同步口令、恢复码和数据明文都不会到 Worker。
+2. **账号登录（服务器托管，v2.43 新增）**：账号体系 + 备份正文直接存在 R2。
+   - `POST /v1/signup` / `POST /v1/login`：账号名归一化后只以 `HMAC(SYNC_OBJECT_PEPPER, 账号)` 出现在对象名里；
+     口令**原文不接收** —— 客户端发的是 210k 次 PBKDF2 派生出的 verifier，服务端存 `sha256(盐 + verifier)`；会话令牌只存 sha256、90 天过期。
+   - `GET /v1/account`、`PUT|GET /v1/backup`、`DELETE /v1/account`：账号信息、备份读写、注销（删记录 + 删数据对象）。
+   - **落盘加密**：设了 secret `DATA_KEY` 就用它做 AES-256-GCM（等价于"服务器持有钥匙"，可读、可帮用户重置）；没设就按原样存，
+     只靠 R2 自带静态加密。`/health` 会回 `atRest: true|false`，App 会如实显示"落盘加密已开启 / 未设落盘密钥"。
+   - **账号记录与数据对象都放在同一个 R2 桶**（`acct/<HMAC>.json`、`data/<随机 id>.bin`），不需要 D1/KV，也不用加 storage 绑定。
 
 **v2.41 起正文的默认路径是 Pages 边缘中转**（`cloudflare/pages/_worker.js` 的 `/v1/put`、`/v1/get`）：
 函数自己调本 Worker 拿短链、再代传代取 R2，手机全程只与 `unimate3.pages.dev` 通信。
@@ -21,8 +30,13 @@ Worker 只为单个密文对象签发 15 分钟的 R2 `GET` / `PUT` URL。同步
 4. 执行 `npx wrangler r2 bucket cors set unimate-sync --file cors.json`。
    （`cors.json` 的 origins 在 v2.41 补上了 `https://localhost` —— 那是 APK 里页面的来源，
    少了它真机的直传 PUT 会被 WebView 拦掉；走 Pages 中转时用不到，但直传兜底需要。）
-5. 执行 `npm run deploy`，确认地址为 `https://unimate-sync.2025040140.workers.dev`。
-6. 打开 `/health`，应返回 `{"ok":true,"service":"unimate-sync"}`。
+5. **（v2.43 新增，建议做）** `npx wrangler secret put DATA_KEY` —— 填一串随机字符（至少 32 字节）。它是账号备份的落盘密钥。
+   不设也能跑（界面会提示"未设落盘密钥"），但那样云端备份就只有 R2 的静态加密兜底。
+   **这条 secret 丢了 = 已上传的账号备份解不开**，跟其他 secret 一样：只在 Cloudflare 保存，别写进仓库/聊天/截图。
+6. 执行 `npm run deploy`，确认地址为 `https://unimate-sync.2025040140.workers.dev`。
+7. **（v2.43 起）改过 Worker 代码后必须重新 deploy**：账号 API 是新增路由，不 deploy 的话 App 会提示"服务器上的账号接口还没部署"。
+8. 打开 `/health`，应返回 `{"ok":true,"service":"unimate-sync","atRest":<bool>,"accounts":true}`。
+   - `atRest:true` = `DATA_KEY` 已设；`accounts:true` = 这一版已含账号 API（App 用这一位判断要不要提示"接口还没部署"）。
 
 如果实际 Worker 地址不同，请在构建 App 时设置 `VITE_SYNC_API_BASE` 后重新出包。不要把任何 R2 密钥、pepper 或 `.dev.vars` 上传到仓库、Pages 或 APK。
 

@@ -27,8 +27,8 @@
 ```powershell
 cd E:\Gary\北京化工大学\北化app\Work
 npm run build
-node scripts\make-pages-package.mjs v2.42          # 生成"可拖放目录"（含同步 API 的 _worker.js）
-npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.42-upload --project-name unimate3
+node scripts\make-pages-package.mjs v2.43          # 生成"可拖放目录"（含同步/账号 API 的 _worker.js）
+npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.43-upload --project-name unimate3
 ```
 
 不想用命令行：回到 Cloudflare 项目页 → **Create new deployment** → 拖 **`artifacts\cloudflare\unimate-cloudflare-<版本>-upload` 这个目录**。
@@ -52,6 +52,7 @@ npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.42-upload -
 ## 3. 部署后必须做的验证
 
 - [ ] **`curl.exe -sS https://unimate3.pages.dev/health` 返回 `{"ok":true}`** —— 这一条过了才说明 `_worker.js` 生效、同步 API 可用（v2.39 起必查）；
+- [ ] **v2.43 起再看一眼 `/health` 里的 `"accounts":true` 与 `"atRest"`** —— 前者说明账号 API 已上线（Worker 已重新 deploy），后者说明落盘加密是否开启（`DATA_KEY` 有没有设）；
 - [ ] **`curl.exe -sS -X OPTIONS -H "Origin: https://localhost" -H "Access-Control-Request-Method: POST" https://unimate3.pages.dev/v1/put -i` 返回 204** —— 这一段过了才说明**密文中转端点已上线**（v2.41 起必查；没上线的话 App 只能回退直传 R2，而那条路真机走不通）；
 - [ ] `curl.exe -sS https://unimate3.pages.dev/catalog/index.json` 返回清单 JSON（选校页热更新靠它）；
 - [ ] 手机 **5G** 打开 → 能进；

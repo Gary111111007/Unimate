@@ -22,7 +22,7 @@ export const SYNC_API_BASE = (import.meta.env.VITE_SYNC_API_BASE || 'https://uni
 
 interface PresignReply { url: string; method: 'GET' | 'PUT'; expiresAt: string; headers?: Record<string, string> }
 
-async function fetchTimed(label: string, input: RequestInfo | URL, init: RequestInit, ms = 10_000): Promise<Response> {
+export async function fetchTimed(label: string, input: RequestInfo | URL, init: RequestInit, ms = 10_000): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try { return await fetch(input, { ...init, signal: controller.signal }); }

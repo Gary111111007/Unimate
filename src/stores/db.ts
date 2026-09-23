@@ -53,7 +53,9 @@ function defaultSettings(p: SchoolProfile): Settings {
     // P3 默认未启用；用户主动建立同步后才写入不含口令的连接信息
     sync: null,
     // 账号同步（v2.42）：只记账号名，用来在本机算同步码；口令绝不落盘
-    syncAccount: null
+    syncAccount: null,
+    // 账号登录（v2.43，服务器托管）：只存账号名 + 会话令牌；密码不落盘
+    cloudAccount: null
   };
 }
 

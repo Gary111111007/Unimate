@@ -224,6 +224,24 @@ export function deriveAccountSyncId(account: string): string {
 }
 
 /**
+ * 账号登录（v2.43，服务器托管模式）用的口令校验值。
+ *
+ * 口令原文**不上传**：客户端先做 210k 次 PBKDF2 得到一个 verifier 再发上去，
+ * 服务端只存 `sha256(服务器盐 + verifier)`。这样即使云端记录被拖走，
+ * 攻击者拿到的也只是"还要再爆破一轮"的东西，而不是口令本身。
+ * 注意这不能替代 HTTPS：verifier 本身在传输中等价于口令。
+ */
+const AUTH_DOMAIN = 'unimate-auth-v1';
+
+export async function deriveAuthVerifier(account: string, password: string): Promise<string> {
+  const name = normalizeAccount(account);
+  if (name.length < 3) throw new Error('账号至少 3 个字符');
+  if (password.length < 8) throw new Error('密码至少 8 个字符');
+  const bits = await derive(password, enc.encode(AUTH_DOMAIN + '\u0000' + name), SYNC_KDF_ITERATIONS);
+  return b64u(bits);
+}
+
+/**
  * 删除云端备份用的"墓碑"：一条不含任何用户数据的小 JSON。
  * 覆盖上去就等于把原来的密文从桶里抹掉（R2 默认不开版本控制），
  * 客户端下载到它会明确提示"这份备份已被删除"，而不是报一堆看不懂的解析错。

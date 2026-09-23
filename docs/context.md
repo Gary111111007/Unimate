@@ -1,4 +1,4 @@
-# 项目上下文交接（压缩版 · 2026-09-22，v2.42）
+# 项目上下文交接（压缩版 · 2026-09-23，v2.43）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
@@ -11,26 +11,34 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 项 | 值 |
 | --- | --- |
 | 仓库 | `E:\Gary\北京化工大学\北化app\Work` |
-| 最新提交 | 本次 v2.42（**账号同步 A 方案**：账号名在本机派生同步码，换机输账号+口令即可找回，云端仍只有密文）；`65ca9cc` v2.41（密文正文走 pages.dev 中转）；`7cdb954` v2.40（`$ is not a function` 真因 = **变量重名**）；`8589358` v2.39；`fb857c8` v2.35~v2.38 |
+| 最新提交 | 本次 v2.43（**账号登录 + 服务器托管**：产品负责人撤销"数据只在本机/只传密文"）；`e24e2c0` v2.42（账号+口令 E2EE 找回）；`65ca9cc` v2.41（正文走 pages.dev 中转，真机上传已通过）；`7cdb954` v2.40（`$ is not a function` 真因 = 变量重名） |
+> **口径变更（v2.43，最重要的一条）**：产品负责人要求"像普通 App 那样账号登录、数据存云端"，并**明确撤销**了旧口径。
+> 现在主推**账号登录（服务器托管）**：备份存 R2、服务端持 `DATA_KEY` **能读**、忘记密码开发者可重置；
+> 端到端加密（服务器读不懂）**降为可选高级项**。`AGENTS.md` 硬规则 5 已改写 —— 旧表述（"数据默认全本地 / 只上传密文 / 服务器看不到你的数据"）**不许再写进 UI 或答辩材料**。
 | 先读哪 | 云端与 P3 的最新状态看 **`PRD.md` 开头的「当前接续摘要」** 与 **`Net.md` 的「当前云端接续摘要」**（本节只保留工程侧的通用交接） |
-| 未提交（本轮） | 无 —— v2.42 一起提交 |
+| 未提交（本轮） | 无 —— v2.43 一起提交 |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages）；**线上 = v2.39**（`assets/index-DroQga0f.js`，`catalog/` 三件套 200、`_worker.js` 生效） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.42，SHA `E8ABA42C…`；v2.41 `5FCDAC5D…`、v2.40 `B978B64F…`、v2.39 `1A335365…`） |
+| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.43，SHA `5C93310D…`；v2.42 `E8ABA42C…`、v2.41 `5FCDAC5D…`、v2.40 `B978B64F…`） |
 | 提醒口径 | 地平线 7 天；只清"过期 90 秒以上 + 账本里没有的"排期（`notify/plan.json`）；**错过的提醒不补发**；排期读取走**原生直读**（`scheduled()` 在安卓上没实现） |
 | 提醒兜底 | 心跳（有近期排期 10 分钟/否则 60 分钟）+ **提醒守护前台服务（v2.34 默认开）**：一条最低优先级静音常驻通知防 ROM 冻结；开机广播清场（过期/20 秒内要响的丢弃，不补发） |
-| 演示站状态 | v2.41 上传包**已拖并核对**（真机上传通过）。现在需再拖 **v2.42**：拖放 `artifacts\cloudflare\unimate-cloudflare-v2.42-upload`（**拖目录本身**）——这次变的是前端 bundle（账号同步界面），`_worker.js` 未变 |
-| 账号同步 | v2.42 **A 方案**：账号名在本机派生 22 字符同步码（`unimate-account-v1` 域 + NFKC/小写/空白归一），云端接口没改；口令/恢复码/明文仍不上传、不落盘（本地只多存 `settings.syncAccount`）；恢复码里的同步码段在账号模式下同步改写；删除云端备份 = 墓碑覆盖 + `db.confirm` 二次确认。**代价（界面已写明）：忘记口令且恢复码丢失 = 找不回来** |
+| 演示站状态 | v2.41 上传包**已拖并核对**（真机上传通过）。现在需重拖 **v2.43**：`artifacts\cloudflare\unimate-cloudflare-v2.43-upload`（**拖目录本身**）——前端 bundle 与 `_worker.js` 的转发表都变了 |
+| Worker | **v2.43 必须重新 deploy**（新增账号 API）：`cd cloudflare\sync-worker` → `npx wrangler secret put DATA_KEY`（建议；不设也能跑，界面会提示"未设落盘密钥"）→ `npm run deploy`。之后 `/health` 应回 `accounts:true` |
+| 账号登录（主推） | 服务端：`/v1/signup`、`/v1/login`、`GET /v1/account`、`PUT|GET /v1/backup`、`DELETE /v1/account`；账号记录 `acct/<HMAC(pepper,账号)>.json`、数据 `data/<随机id>.bin`，**都在既有 R2 桶**（不新建 D1/KV）。密码原文不上传（本地 210k PBKDF2 → verifier，服务端存 `sha256(盐+verifier)`）；令牌只存 sha256、90 天过期；注销 = 删记录 + 删数据对象 + `db.confirm` 二次确认 |
+| 端到端加密（可选） | v2.42 的"账号名派生同步码 + 恢复码 + 墓碑删除"全部保留，作为隐私优先选项；**不再是主推** |
 | 同步正文链路 | **v2.41 起走 pages.dev 中转**：`POST /v1/put?syncId=`（代取 15 分钟短链 → 代 PUT → 回 `{ok,expiresAt}`）、`POST /v1/get?syncId=`（代 GET → 正文原样返回，`Content-Type: application/vnd.unimate.sync+json`）。客户端**中转优先、直传兜底**（`/v1/put` 返回非 JSON = 旧版站点 → 回退老路） |
 | 签名私钥 | `keys\school-signing.key`（**未入库**，丢了要重新 keygen 并改公钥 + 重出包） |
 
 ## 3. 下一步（按优先级）
 
-1. **真机复验 v2.42**（AGENTS.md 要求页面级功能必须真机验证；这是当前唯一主线）：
-   ① **账号同步（新）**：覆盖安装 APK（**不要卸载**）→「我的 → 加密换机同步」→ 在"账号同步（推荐）"里设一个账号 + ≥10 位口令 → 另存恢复码并上传 → **第二台设备只输"账号 + 口令"**点「用账号找回课表」→ 预览 → 覆盖/合并 → 二次确认恢复。
-   ①b 顺手验「删除云端备份（撤回）」：点一下 → 二次确认 → 再点"用账号找回"应提示"已被删除"。
+1. **真机复验 v2.43**（当前唯一主线）：
+   ① **重新部署 Worker**（不 deploy 就没有账号 API，App 会提示"账号接口还没部署"）；② 重拖 v2.43 Pages 包；
+   ③ 覆盖安装 v2.43 APK（**不要卸载**）→「我的 → 加密换机同步 → 账号登录」→ 勾选同意 → 注册并上传；
+   ④ **第二台设备（或先清数据）登录同一账号** → 应自动下载 → 预览 → 覆盖/合并 → 二次确认 → 课表回来。
+   ①b 顺手验「注销账号并删除云端数据」：二次确认后再登录应该 401/提示账号不存在。
    ② **提醒**：设一条几分钟后的测试提醒并**锁屏等它响**（v2.35 起 `ReminderAlarmReceiver` 到点直接投递）；再点「我的 → 通知设置 → 复制自检报告」把文本发我。
    ③ 档案热更新 AC-70~74（北二外"可下载 → 下载 → 切换"）；④ 天气 AC-64~69。
-2. **重拖 v2.42 Pages 上传包**（`artifacts\cloudflare\unimate-cloudflare-v2.42-upload`，拖目录本身）→ 我 curl 核对 `/health`。v2.41 的 `_worker.js`（中转端点）已在线上生效，本次只换前端。
+2. **重拖 v2.43 Pages 上传包**（`artifacts\cloudflare\unimate-cloudflare-v2.43-upload`，拖目录本身）→ 我 curl 核对 `/health`（应含 `accounts:true`）。
+2b. **下一步功能（产品负责人要的"一个登录就全好"还差这一步）**：把云账号登录搬到**开机登录页** —— 现在必须先登录本机账号，再进「我的」里登录云账号。
 2b. （可选）补桶 CORS：`cd cloudflare\sync-worker` → `npx wrangler r2 bucket cors set unimate-sync --file cors.json`（直传兜底那条路才通）。
 3. 本机没有 Cloudflare 凭据（`npx wrangler pages deploy` 会报缺 `CLOUDFLARE_API_TOKEN`），所以拖放由产品负责人做；命令与排查见 `docs/deploy.md`。
 4. ~~北二外待核实项~~ —— 产品负责人 2026-09-21 明确「不用管了」；~~P2.5 解析适配器热更新~~ —— **v2.29 已完成**。
@@ -46,7 +54,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 ## 5. 常用命令
 
 ```powershell
-npm run test:notify       # 单跑某个套件（共 21 个：test:login/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 815 条断言）
+npm run test:notify       # 单跑某个套件（共 21 个：test:login/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 846 条断言）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1   # 唯一正确出包方式（沙箱内跑不通，需在沙箱外）
 npx wrangler pages deploy dist --project-name unimate3                       # 部署演示站
@@ -85,4 +93,7 @@ curl.exe -sS https://unimate3.pages.dev/ | Select-String 'index-.*\.js'      # �
 | 真机报错文案要能"一步定位" | 「上传加密备份失败，请检查网络后重试」是客户端 `fetchTimed('上传加密备份', …)` 的兜底文案 → 它天然把范围缩到"预签名之后那一次 fetch"（那一步就是直传 R2）。**改错误文案时保留这种"哪一步失败"的信息**，比只写一句"网络错误"有用得多 |
 | 上传成功后**顺手发现文案已经过时** | v2.41 把正文改走 pages.dev 中转后，面板上"再直传 Cloudflare R2"就与实现不符了（AGENTS.md 第 7 条）→ 现在写"经 unimate3.pages.dev 中转上传"。**改了链路一定要回头搜一遍旧链路的名字**（本次用 `rg '直传' src`） |
 | 账号模式不能只改同步码，**恢复码里的那一截也要跟着改** | 恢复码格式是 `UM1.<同步码>.<秘密>`：账号模式下如果只把同步码换成派生值、恢复码里还留着随机同步码，用户拿恢复码去别的手机就会去查一个不存在的对象（有断言盯着：`parseRecoveryCode(code).syncId === deriveAccountSyncId(account)`） |
+| `crypto.subtle.encrypt` 的第一个参数是 `CryptoKey`，不是裸字节（v2.43 被单测抓到） | 想用 `sha256(secret)` 当 AES 密钥，必须先 `importKey('raw', digest, {name:'AES-GCM'}, false, ['encrypt'])` 再传；直接传 `Uint8Array` 会抛 `2nd argument is not of type CryptoKey`（Node 里报，Workers 里同样） |
+| 跨域请求头/方法也要写进预检白名单（v2.39 / v2.41 / v2.43 连着踩） | 账号 API 用 `Authorization` 头 + `PUT/DELETE`：`Access-Control-Allow-Headers` 少了 Authorization、`Allow-Methods` 少了 PUT/DELETE，浏览器会在预检直接拦掉，服务端连日志都不会有 |
+| Gradle 守护进程占住输出管道（v2.31 / v2.39 / v2.40 / **v2.43**） | APK 其实已产出：看 `artifacts\android\unimate-debug.apk` 的时间戳与指纹，再把 java 进程停掉；第 6 步的校验（bundle 一致 / catalog 未入包 / 反查字符串 / `apksigner verify`）可以手工复核 |
 | CORS 白名单只写不带端口的 `http://localhost`（v2.39 的漏格，v2.40 补） | 网页调试的来源是 `http://localhost:5204` 这类**带端口**的写法 → 预检 403，而手机（`https://localhost`，无端口）是通的 → 表现为"只有真机能测"。现在按 `LOCAL_ORIGIN` 正则放行 `localhost`/`127.0.0.1` 任意端口 |

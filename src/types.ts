@@ -290,6 +290,17 @@ export interface Settings {
    * 让"换机输账号 + 口令"成为可能。口令与恢复码一样，绝不落盘、绝不上传。
    */
   syncAccount?: string | null;
+  /**
+   * 账号登录（v2.43，服务器托管）：本地只保存账号名、会话令牌与云端备份信息。
+   * 密码本身同样不落盘（服务端存的是 verifier 的哈希）。
+   */
+  cloudAccount?: {
+    name: string;
+    token: string;
+    id: string;
+    updatedAt?: string;
+    size?: number;
+  } | null;
 }
 
 export interface InterestEntry { schoolId: string; schoolName: string; contact: string; createdAt: string }
