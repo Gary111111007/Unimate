@@ -7,6 +7,7 @@ import Main from './screens/Main.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import { ensurePermission, permissionState, refreshReminderRisk } from './services/notify.ts';
 import { bootTrace } from './services/guard.ts';
+import { initCloudAutoSync } from './services/cloudAutoSync.ts';
 import { applyTextZoom } from './services/display.ts';
 import ShareView from './views/ShareView.vue';
 import { decodeTimetable, payloadFromHash, type SharedTimetable } from './services/share.ts';
@@ -111,6 +112,11 @@ onMounted(async () => {
   // 系统权限框或设置页一旦吞掉回调，用户就永远停在开屏（真机踩过两次）。
   // 现在界面先出来，权限与电池优化在后台自己跑，卡住也不影响使用。
   void postBootPermissions();
+  /*
+   * v2.45：把"数据落盘 → 自动同步到云账号"接上（未登录/关了开关时它自己什么都不做）。
+   * 放在界面出来之后注册：它只是登记一个回调，不参与启动时序，卡住也不影响进 App。
+   */
+  try { initCloudAutoSync(db); } catch { /* 自动同步起不来不影响其它功能 */ }
 });
 </script>
 

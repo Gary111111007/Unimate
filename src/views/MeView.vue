@@ -5,7 +5,8 @@ import { exportBackup, inspectBackup, restoreBackup, saveEncryptedMigration } fr
 import { base64ToBytes, bytesToBase64 } from '../services/zip.ts';
 import { configFromRecovery, decryptSync, deriveAccountSyncId, encryptForSync, isTombstone, normalizeAccount, parseRecoveryCode, tombstoneBytes, type EncryptedSync, type SyncConfig } from '../services/syncCrypto.ts';
 import { downloadSyncCipher, uploadSyncCipher } from '../services/cloudSync.ts';
-import { accountDelete, accountDownload, accountInfo, accountLogin, accountSignup, accountUpload, cloudAccountReady } from '../services/account.ts';
+import { accountDelete, accountDownload, accountInfo, accountLogin, accountSignup, cloudAccountReady } from '../services/account.ts';
+import { autoSyncState, syncNow } from '../services/cloudAutoSync.ts';
 import { guard } from '../services/guard.ts';
 import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus, setReminderGuard, reminderGuardStatus } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
@@ -83,6 +84,22 @@ const acctMatchesCurrent = computed(() => {
   try { return cfg.syncId === deriveAccountSyncId(acct.value); } catch { return false; }
 });
 const acctPrimaryText = computed(() => syncBusy.value ? '处理中…' : (acctMatchesCurrent.value ? '上传/更新到我的账号' : '用账号同步（建立并上传）'));
+/** v2.45：云账号自动同步的状态文案（状态本身由 services/cloudAutoSync.ts 维护） */
+const autoSyncText = computed(() => {
+  const s = autoSyncState.value;
+  if (!db.settings.cloudAccount) return '未登录云端账号';
+  if (db.settings.cloudAutoSync === false) return '已关闭 —— 关掉后一次请求都不发';
+  if (s.state === 'syncing') return '正在同步…';
+  if (s.state === 'error') return '同步失败：' + s.message;
+  if (s.state === 'skipped') return s.message;
+  if (s.state === 'ok' && s.at) return s.message + ' · ' + agoText(s.at);
+  return '改动课表后会自动上传（15 秒内多次改动合成一次）';
+});
+
+async function toggleAutoSync(e: Event): Promise<void> {
+  db.settings.cloudAutoSync = (e.target as HTMLInputElement).checked;
+  await db.saveData();   // 保存完会自动触发一次同步（开着的时候）
+}
 
 async function open(name: typeof panel.value): Promise<void> {
   panel.value = name;
@@ -334,7 +351,12 @@ async function confirmRecoveryAndUpload(): Promise<void> {
  * 账号同步（v2.42，A 方案）：用"账号 + 口令"代替要抄的同步码。
  * 账号名在本机算出同步码，口令不出手机 —— 云端仍然只有密文。
  */
-async function accountUpload(): Promise<void> {
+/**
+ * 端到端加密模式的"上传/更新"（v2.42 的 A 方案：账号名派生同步码）。
+ * 【v2.45 改名】原来叫 `accountUpload`，与 `services/account.ts` 的 `accountUpload`（云账号上传）重名 ——
+ * 和 v2.40 的 `guard` 一样，编译会把 import 改名，调用点悄悄指错。现在 `test:order` 能扫出这类重名。
+ */
+async function accountSyncUpload(): Promise<void> {
   if (syncBusy.value) return;
   const account = normalizeAccount(acct.value);
   if (account.length < 3) { syncMsg.value = '账号至少 3 个字符（换机时要用同一个账号）'; return; }
@@ -483,15 +505,13 @@ async function cloudUpload(): Promise<void> {
   cloudBusy.value = true;
   cloudMsg.value = '正在打包并上传…';
   try {
-    const made = await guard('生成同步备份', exportBackup(db.profile!.schoolId, db.profile!.name, db.session!.username,
-      syncBase(), db.accounts, db.session!.accountId), 60_000, null);
-    if (!made) { cloudMsg.value = '打包超时，请重试'; return; }
-    const meta = await accountUpload(session, made.bytes);
-    cloudMeta.value = meta;
-    db.settings.cloudAccount = { ...session, updatedAt: meta.updatedAt, size: meta.size };
-    await db.saveData();
-    cloudMsg.value = '已上传到云端（' + Math.round(meta.size / 1024) + ' KB）· ' +
-      (meta.sealed ? '服务端落盘加密已开启' : '注意：服务端未设落盘密钥，靠 R2 自带静态加密');
+    // v2.45：手动上传与自动同步共用同一条流水线（force 忽略指纹），口径不会两样
+    const result = await syncNow();
+    await db.saveData();   // 把 lastHash/updatedAt 落盘
+    cloudMeta.value = { updatedAt: db.settings.cloudAccount?.updatedAt || '', size: db.settings.cloudAccount?.size || 0, sealed: cloudMeta.value.sealed };
+    if (result.state === 'error') { cloudMsg.value = result.message; return; }
+    cloudMsg.value = '已上传到云端（' + Math.round((db.settings.cloudAccount?.size || 0) / 1024) + ' KB）· ' +
+      (cloudMeta.value.sealed ? '服务端落盘加密已开启' : '注意：服务端未设落盘密钥，靠 R2 自带静态加密');
     db.notify('已上传到云端账号');
   } catch (e: any) { cloudMsg.value = e?.message || '上传失败，请重试'; }
   finally { cloudBusy.value = false; }
@@ -919,6 +939,11 @@ async function copyInterests(): Promise<void> {
               <template v-if="cloudMeta.updatedAt"><br />云端备份：{{ cloudMeta.updatedAt }} · {{ Math.round(cloudMeta.size / 1024) }} KB ·
                 {{ cloudMeta.sealed ? '落盘加密已开启' : '未设落盘密钥' }}</template>
             </div>
+            <label class="row small" style="margin-top: 10px">
+              <input type="checkbox" :checked="db.settings.cloudAutoSync !== false" @change="toggleAutoSync" />
+              <span>改完课表自动同步到云端（默认开；关掉后一次请求都不发）</span>
+            </label>
+            <div class="small muted" style="margin-top: 6px; line-height: 1.6">自动同步：{{ autoSyncText }}</div>
             <button class="btn block" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudUpload">上传当前数据到云端</button>
             <button class="btn block ghost" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudRestore">从云端恢复到本机</button>
             <button class="btn block grey sm" style="margin-top: 8px" :disabled="cloudBusy" @click="cloudLogout">退出登录</button>
@@ -936,7 +961,7 @@ async function copyInterests(): Promise<void> {
           <div class="field" style="margin-top: 10px"><label>账号</label><input v-model.trim="acct" autocomplete="off" placeholder="3~64 个字符，随便起（别用学号当口令）" /></div>
           <div class="field"><label>口令</label><input v-model="acctPass" type="password" autocomplete="off" placeholder="至少 10 个字符，App 不会保存" /></div>
           <div v-if="!acctMatchesCurrent" class="field"><label>再次输入口令</label><input v-model="acctPassAgain" type="password" autocomplete="off" placeholder="两次要一致" /></div>
-          <button class="btn block" :disabled="syncBusy" @click="accountUpload">{{ acctPrimaryText }}</button>
+          <button class="btn block" :disabled="syncBusy" @click="accountSyncUpload">{{ acctPrimaryText }}</button>
           <button class="btn block ghost" style="margin-top: 8px" :disabled="syncBusy" @click="accountFetch">用账号找回课表（换机）</button>
           <div v-if="db.settings.syncAccount" class="small muted" style="margin-top: 8px">
             当前账号：<b>{{ db.settings.syncAccount }}</b> · 只上传密文，云端读不懂

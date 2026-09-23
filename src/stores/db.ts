@@ -55,7 +55,9 @@ function defaultSettings(p: SchoolProfile): Settings {
     // 账号同步（v2.42）：只记账号名，用来在本机算同步码；口令绝不落盘
     syncAccount: null,
     // 账号登录（v2.43，服务器托管）：只存账号名 + 会话令牌；密码不落盘
-    cloudAccount: null
+    cloudAccount: null,
+    // 账号模式的自动同步（v2.45）：默认开，可在「加密换机同步」面板关掉
+    cloudAutoSync: true
   };
 }
 
@@ -144,6 +146,18 @@ const screen = ref<'school' | 'login' | 'app'>('login');
     toast.value = msg;
     toastSeq.value++;
     try { setTimeout(() => { if (toast.value === msg) toast.value = ''; }, 2600); } catch { /* 提示失败不影响主流程 */ }
+  }
+
+  /**
+   * 数据变更广播（v2.45）：订阅者见 `services/cloudAutoSync.ts`。
+   * 用"钩子"而不是直接 import 服务，是为了不让 store 依赖上层服务（否则会绕回 backup.ts ⇄ db.ts 的循环）。
+   */
+  const dataChangedHooks: Array<() => void> = [];
+  function onDataChanged(cb: () => void): void { dataChangedHooks.push(cb); }
+  function notifyDataChanged(): void {
+    for (const cb of dataChangedHooks) {
+      try { cb(); } catch (e) { /* 订阅者自己的问题不该影响保存数据 */ console.warn('[Unimate] 数据变更回调失败', e); }
+    }
   }
 
   /** 任何异常都必须被看见：写进 lastError（界面可见）+ toast + console */
@@ -450,6 +464,9 @@ function answerConfirm(ok: boolean): void {
     await writeJson(b + '/materials/index.json', materials.value);
     await writeJson(b + '/settings.json', settings.value);
     try { await rescheduleAll(courses.value, timetables.value, notes.value, settings.value); } catch (e) { fail('重建提醒', e); }
+    // v2.45：数据落盘后通知"自动同步"（订阅者在 services/cloudAutoSync.ts，未登录/关着开关时它自己会跳过）。
+    // 这里只发一个信号，不做任何网络/打包动作 —— 保证 saveData 依旧快、也不引入 store ⇄ service 的循环依赖。
+    notifyDataChanged();
   }
 
   async function seedDemo(): Promise<void> {
@@ -859,6 +876,8 @@ function hourTotal(kind: HourKind): number {
     notifyCleanup,
     boot, selectSchool, applyProfile, changeSchool, addInterest, ensureDemoAccount, register, login, logout, switchSchool,
     loadUserData, saveData, seedDemo, resetDemo, notify,
+    /** v2.45：订阅"数据已落盘"的信号（自动同步用）。只登记回调，不做退订/去重 —— 调用方自己保证只注册一次 */
+    onDataChanged,
     newTimetable, addCourse, removeCourse, addNote, addRecord, addHour, removeHour, addMaterial, removeMaterial, materialsOf, hourTotal, blockScore, totalScore, coursesOn, persistManifest,
     weatherBusy, weatherMsg, ensureWeather,
     downloadedSchools, downloadedList, schoolRows, catalog, profileOf, checkCatalog, downloadSchool, removeDownloaded,

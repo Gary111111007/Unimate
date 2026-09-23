@@ -127,8 +127,9 @@ ok('预签名 URL 不暴露原同步码', !ticket.url.includes(first.config.sync
 console.log('\n--- v2.39：同步 API 走 pages.dev（绕开被污染/不可达的 workers.dev）---');
 {
   const cloudSrc = read('src/services/cloudSync.ts');
+  // v2.45：env 访问改成容错写法（Node 单测里没有 import.meta.env），断言跟着放宽但要点不变
   ok('客户端默认 API 基地址是 pages.dev，不是 workers.dev',
-    /SYNC_API_BASE = \(import\.meta\.env\.VITE_SYNC_API_BASE \|\| 'https:\/\/unimate3\.pages\.dev'\)/.test(cloudSrc)
+    /VITE_SYNC_API_BASE \|\| 'https:\/\/unimate3\.pages\.dev'/.test(cloudSrc)
     && !/SYNC_API_BASE[^\n]*workers\.dev/.test(cloudSrc), '');
 
   const pagesWorker = read('cloudflare/pages/_worker.js');
@@ -387,8 +388,10 @@ console.log('\n--- v2.42：账号同步（A 方案）---');
 
   // 界面与存储接线（光有算法、没接上也没用）
   const me = read('src/views/MeView.vue');
-  ok('界面：账号同步的三个动作都接上了（上传 / 找回 / 删除云端备份）',
-    /async function accountUpload\(/.test(me) && /async function accountFetch\(/.test(me) && /async function deleteCloudBackup\(/.test(me), '');
+  // v2.45 把端到端那条的 `accountUpload` 改名成 `accountSyncUpload`：它和云账号上传重名，
+  // 属于 v2.40 `guard` 那一类"编译期悄悄改 import 名"的雷（现在的 test:order 会扫出来）
+  ok('界面：端到端账号同步的三个动作都接上了（上传 / 找回 / 删除云端备份）',
+    /async function accountSyncUpload\(/.test(me) && /async function accountFetch\(/.test(me) && /async function deleteCloudBackup\(/.test(me), '');
   ok('界面：账号找回走"下载 → 解密 → 预览 → 覆盖/合并 → 二次确认"同一条链路',
     /const syncId = deriveAccountSyncId\(account\)/.test(me) && /downloadSyncCipher\(syncId\)/.test(me)
     && /decryptSync\(cipher, syncId, acctPass\.value\)/.test(me), '');
@@ -637,6 +640,111 @@ console.log('\n--- v2.44：登录页直接取回云端课表 ---');
     /await db\.confirm\(\{/.test(loginSrc) && /danger: preview\.willOverwrite/.test(loginSrc), '');
   ok('登录页文案与实现一致：明说账号模式的数据存在云端服务器、服务端可读',
     /数据存在云端服务器/.test(loginSrc) && /服务端持密钥可读/.test(loginSrc), '');
+}
+
+/*
+ * v2.45：账号模式自动同步。不只看代码，真的跑一遍防抖/指纹/开关/失败分支。
+ */
+console.log('\n--- v2.45：改完自动同步（账号模式）---');
+{
+  const { AUTO_MAX_BYTES, createAutoSync, fingerprintOf } = await import('../src/services/cloudAutoSync.ts');
+  type Deps = Parameters<typeof createAutoSync>[0];
+
+  /** 造一个可控的 runner：默认已登录、开关开、内容可变 */
+  function makeRunner(over: Partial<Deps> = {}) {
+    let payload = new TextEncoder().encode('课表 v1');
+    let fingerprint = '';
+    const uploads: number[] = [];
+    const statuses: string[] = [];
+    const deps: Deps = {
+      build: async () => payload,
+      session: () => ({ account: 'zhixiaohui', token: 't', id: 'i', updatedAt: '', size: 0 }),
+      enabled: () => true,
+      upload: async (_s, bytes) => { uploads.push(bytes.length); return { updatedAt: '2026-09-23 13:00', size: bytes.length }; },
+      onUploaded: (_m, fp) => { fingerprint = fp; },
+      onStatus: (s) => { statuses.push(s.state); },
+      lastFingerprint: () => fingerprint,
+      debounceMs: 30,
+      ...over
+    };
+    const runner = createAutoSync(deps);
+    return {
+      runner, uploads, statuses,
+      setPayload(text: string) { payload = new TextEncoder().encode(text); },
+      get fingerprint() { return fingerprint; }
+    };
+  }
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  {
+    const t = makeRunner();
+    t.runner.onDataChanged(); t.runner.onDataChanged(); t.runner.onDataChanged(); t.runner.onDataChanged();
+    await wait(120);
+    ok('连着改 4 次只上传一次（15 秒防抖，测试里用 30ms 等价验证）', t.uploads.length === 1, String(t.uploads.length));
+  }
+  {
+    const t = makeRunner();
+    await t.runner.flush();
+    const first = t.uploads.length;
+    t.runner.onDataChanged();
+    await wait(120);
+    ok('内容没变时不重复上传（指纹比对）', first === 1 && t.uploads.length === 1, String(t.uploads.length));
+    t.setPayload('课表 v2');
+    t.runner.onDataChanged();
+    await wait(120);
+    ok('内容变了才再传一次', t.uploads.length === 2, String(t.uploads.length));
+    await t.runner.flush(true);
+    ok('手动"立即同步"忽略指纹（force）', t.uploads.length === 3, String(t.uploads.length));
+  }
+  {
+    const t = makeRunner({ session: () => null });
+    t.runner.onDataChanged();
+    await wait(120);
+    ok('未登录云账号：一次请求都不发', t.uploads.length === 0 && t.runner.status().state === 'off', t.runner.status().message);
+  }
+  {
+    const t = makeRunner({ enabled: () => false });
+    t.runner.onDataChanged();
+    await wait(120);
+    ok('自动同步关掉后：一次请求都不发（与天气开关同口径）', t.uploads.length === 0, String(t.uploads.length));
+    await t.runner.flush(true);
+    ok('手动同步不受开关影响（用户主动点的照样传）', t.uploads.length === 1, String(t.uploads.length));
+  }
+  {
+    let failed = 0;
+    const t = makeRunner({ upload: async () => { failed++; throw new Error('网络断了'); } });
+    const s = await t.runner.flush();
+    ok('上传失败不抛异常、只记状态（本机数据不受影响）', failed === 1 && s.state === 'error' && /网络断了/.test(s.message), s.message);
+  }
+  {
+    const big = new Uint8Array(AUTO_MAX_BYTES + 1);
+    const t = makeRunner({ build: async () => big });
+    const s = await t.runner.flush();
+    ok('数据超过自动同步上限时跳过并提示手动上传（不偷偷烧流量）',
+      s.state === 'skipped' && t.uploads.length === 0 && /手动上传/.test(s.message), s.message);
+  }
+  {
+    const t = makeRunner({ build: async () => { throw new Error('磁盘读不到'); } });
+    const s = await t.runner.flush();
+    ok('打包失败只记状态、不抛（saveData 的调用方不受影响）', s.state === 'error' && /磁盘读不到/.test(s.message), s.message);
+  }
+  ok('指纹是 sha256 十六进制（64 字符）且同内容同指纹',
+    /^[0-9a-f]{64}$/.test(fingerprintOf(new Uint8Array([1, 2, 3])))
+    && fingerprintOf(new Uint8Array([1, 2, 3])) === fingerprintOf(new Uint8Array([1, 2, 3])), '');
+
+  // 接线：数据落盘会发信号、App 启动会注册、面板有开关与状态行
+  const dbSrc2 = read('src/stores/db.ts');
+  ok('saveData 落盘后发"数据变更"信号（不阻塞保存、也不 import 上层服务）',
+    /notifyDataChanged\(\);/.test(dbSrc2) && /function onDataChanged\(cb: \(\) => void\)/.test(dbSrc2)
+    && !/from '..\/services\/cloudAutoSync/.test(dbSrc2), '');
+  const appSrc = read('src/App.vue');
+  ok('App 启动时注册自动同步（放在开屏之后，卡住也不影响进 App）',
+    /initCloudAutoSync\(db\)/.test(appSrc) && appSrc.indexOf('splashDone.value = true') < appSrc.indexOf('initCloudAutoSync(db)'), '');
+  const meSrc = read('src/views/MeView.vue');
+  ok('面板有自动同步开关 + 状态行（文案说清"关掉后一次请求都不发"）',
+    /toggleAutoSync/.test(meSrc) && /cloudAutoSync !== false/.test(meSrc) && /关掉后一次请求都不发/.test(meSrc), '');
+  ok('手动上传与自动同步共用同一条流水线（syncNow），口径不会两样',
+    /const result = await syncNow\(\)/.test(meSrc), '');
 }
 
 console.log('\n通过：' + pass + ' 条 P3 同步断言');

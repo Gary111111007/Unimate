@@ -18,7 +18,12 @@ export const SYNC_CONTENT_TYPE = 'application/vnd.unimate.sync+json';
  * （实测解析到 69.171.228.74 / 连接超时，见 PRD 11.47），而 `unimate3.pages.dev` 实测 200 / 1.3s。
  * 现在 API 由 Pages 上的 `_worker.js` 同域提供，它在边缘转发给真正的 Worker —— 手机只与 pages.dev 通信。
  */
-export const SYNC_API_BASE = (import.meta.env.VITE_SYNC_API_BASE || 'https://unimate3.pages.dev').replace(/\/+$/, '');
+/**
+ * 注意：这里必须能容忍"没有 `import.meta.env`"的环境（Node 里跑单测就是 —— v2.45 加自动同步单测时踩到，
+ * 直接写 `import.meta.env.VITE_...` 会在导入模块时就抛 `Cannot read properties of undefined`）。
+ */
+const ENV: Record<string, string | undefined> = (typeof import.meta !== 'undefined' && (import.meta as any).env) || {};
+export const SYNC_API_BASE = (ENV.VITE_SYNC_API_BASE || 'https://unimate3.pages.dev').replace(/\/+$/, '');
 
 interface PresignReply { url: string; method: 'GET' | 'PUT'; expiresAt: string; headers?: Record<string, string> }
 

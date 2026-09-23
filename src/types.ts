@@ -300,7 +300,11 @@ export interface Settings {
     id: string;
     updatedAt?: string;
     size?: number;
+    /** 上次成功上传那份备份的 sha256：自动同步靠它判断"有没有真的改过"（v2.45） */
+    lastHash?: string;
   } | null;
+  /** 账号模式的自动同步（v2.45）：默认开；关掉之后一次请求都不发 */
+  cloudAutoSync?: boolean;
 }
 
 export interface InterestEntry { schoolId: string; schoolName: string; contact: string; createdAt: string }

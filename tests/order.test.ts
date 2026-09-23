@@ -27,7 +27,12 @@ function scriptOf(f: string, raw: string): string {
   return raw;
 }
 
-const DECL = /^\s*(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/;
+/**
+ * 顶层声明。**必须覆盖 `async function`** —— v2.45 就踩到过：MeView.vue 里既
+ * `import { accountUpload }` 又写了 `async function accountUpload()`，旧正则漏掉 async，
+ * 于是这道"重名扫描"没报，靠人眼看才发现（和 v2.40 的 `guard` 是同一类事故）。
+ */
+const DECL = /^\s*(?:export\s+)?(?:async\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/;
 const DESTRUCT = /^\s*(?:const|let|var)\s+\{([^}]+)\}\s*=/;
 /** 会在创建时立即求值 getter 的调用 */
 const EAGER = /(^|[^.\w])(watch|watchEffect)\s*\(/;
