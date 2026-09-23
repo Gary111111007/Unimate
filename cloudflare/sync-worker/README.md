@@ -38,6 +38,18 @@ Worker 有两组能力（v2.43 起）：
 8. 打开 `/health`，应返回 `{"ok":true,"service":"unimate-sync","atRest":<bool>,"accounts":true}`。
    - `atRest:true` = `DATA_KEY` 已设；`accounts:true` = 这一版已含账号 API（App 用这一位判断要不要提示"接口还没部署"）。
 
+## 自检（真机之前先跑这个）
+
+```powershell
+# 在项目根目录执行；它会用一个临时账号把线上链路整条走一遍，结束时自动删掉账号与云端数据
+npm run check:cloud
+# 想换站点：$env:UNIMATE_API_BASE='https://unimate3.pages.dev'; npm run check:cloud
+```
+
+覆盖：健康检查 → 注册 → 重复注册 409 → 错口令 401 → 空备份 404 → 上传（`sealed`）→ 下载逐字节一致 → 账号信息 →
+无令牌 401 → 注销 → 注销后登录 401。**13 条断言，2026-09-23 已线上跑通**（PRD 14.3）。
+`*.workers.dev` 自己 curl 超时是正常的（大陆 DNS 污染）：手机与自检都走 `pages.dev` 中转。
+
 如果实际 Worker 地址不同，请在构建 App 时设置 `VITE_SYNC_API_BASE` 后重新出包。不要把任何 R2 密钥、pepper 或 `.dev.vars` 上传到仓库、Pages 或 APK。
 
 ## 安全边界

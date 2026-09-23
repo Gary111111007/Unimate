@@ -32,6 +32,7 @@
     "cap:sync": "cap sync android",
     "apk": "scripts/build-apk.ps1",
     "check:provider": "node scripts/check-provider.mjs",
+    "check:cloud": "node --experimental-strip-types scripts/selftest-cloud-account.mjs",
     "fix:history": "node scripts/fix-codex-history.mjs"
   },
   "dependencies": {

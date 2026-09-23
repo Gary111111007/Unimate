@@ -21,7 +21,8 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 最新 APK | `artifacts\android\unimate-debug.apk`（v2.45，SHA `E2D66190…`；v2.44 `1F147943…`、v2.43 `5C93310D…`、v2.42 `E8ABA42C…`） |
 | 提醒口径 | 地平线 7 天；只清"过期 90 秒以上 + 账本里没有的"排期（`notify/plan.json`）；**错过的提醒不补发**；排期读取走**原生直读**（`scheduled()` 在安卓上没实现） |
 | 提醒兜底 | 心跳（有近期排期 10 分钟/否则 60 分钟）+ **提醒守护前台服务（v2.34 默认开）**：一条最低优先级静音常驻通知防 ROM 冻结；开机广播清场（过期/20 秒内要响的丢弃，不补发） |
-| 演示站状态 | v2.41 上传包**已拖并核对**（真机上传通过）。现在需重拖 **v2.45**：`artifacts\cloudflare\unimate-cloudflare-v2.45-upload`（**拖目录本身**）——`_worker.js` 与 v2.43~v2.44 相同，新的是前端 bundle |
+| 演示站状态 | **v2.45 已上传并核对通过**（2026-09-23）：`/health` 回 `atRest:true, accounts:true`；七条接口预检全 204；非白名单 403；线上前端 = `assets/index-BrCScQRS.js`（与 v2.45 APK 同一份代码）；`catalog/` 三件套 200 且 `bisu.json` 与本地同哈希 |
+| 线上自检 | `npm run check:cloud`（`scripts/selftest-cloud-account.mjs`）**13/13 通过**：临时账号注册→重复注册 409→错口令 401→空备份 404→上传（sealed）→下载逐字节一致→账号信息→无令牌 401→注销→注销后 401；**测试账号自动删除**。真机之前用它在线上钉死"服务端+中转+R2" |
 | 自动同步（v2.45） | `db.saveData()` 落盘后发信号（`onDataChanged`，store 不 import 上层服务）→ `services/cloudAutoSync.ts` 做**15 秒防抖 + sha256 指纹 + 12 MB 上限 + 开关（默认开、关了不发）**；失败只记状态；面板显示"已同步 · 3 分钟前"；手动上传走 `syncNow()` 同一条流水线。**关掉云端账号或自动同步时：一次请求都不发**（与天气开关同口径） |
 | 登录页取回（v2.44） | 开机登录页 →「换新手机？用 Unimate 账号取回课表」：登录 → 拉云端备份 → 摘要 → 二次确认（覆盖本机数据时标红）→ `src/services/cloudAdopt.ts` 接管/新建本机账号（**沿用备份里的 `id/username/passwordHash/salt`，本机密码不变**）→ 绑定学校 → `restoreBackup` → 重新读数据 → 进主界面；学校档案缺失会在下载前拦住 |
 | Worker | **v2.43 必须重新 deploy**（新增账号 API）：`cd cloudflare\sync-worker` → `npx wrangler secret put DATA_KEY`（建议；不设也能跑，界面会提示"未设落盘密钥"）→ `npm run deploy`。之后 `/health` 应回 `accounts:true` |
@@ -33,7 +34,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 ## 3. 下一步（按优先级）
 
 1. **真机复验 v2.45**（当前唯一主线）：
-   ① **重新部署 Worker**（不 deploy 就没有账号 API，App 会提示"账号接口还没部署"）；② 重拖 v2.43 Pages 包；
+   ① ~~重新部署 Worker~~ **已完成**（2026-09-23，含 `DATA_KEY`）；② ~~重拖 Pages 包~~ **已完成并核对通过**；
    ③ 覆盖安装 v2.45 APK（**不要卸载**）→「我的 → 加密换机同步 → 账号登录」→ 勾选同意 → 注册并上传；
    顺便验**自动同步**：改一条课表 → 回面板看"自动同步：已同步 · 刚刚"、云端时间变了；
    ④ **第二台设备（或先清数据）在开机登录页直接输云账号 + 密码** → 取回云端课表 → 二次确认 → 进主界面；
@@ -61,6 +62,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 
 ```powershell
 npm run test:notify       # 单跑某个套件（共 21 个：test:login/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 873 条断言）
+npm run check:cloud       # v2.45：线上账号链路自检（临时账号走注册→上传→下载→注销，自清理；需外网）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1   # 唯一正确出包方式（沙箱内跑不通，需在沙箱外）
 npx wrangler pages deploy dist --project-name unimate3                       # 部署演示站
