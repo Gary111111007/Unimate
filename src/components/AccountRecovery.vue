@@ -57,7 +57,7 @@ const autoSyncText = computed(() => {
   const s = autoSyncState.value;
   if (!db.settings.cloudAccount) return '未登录云端账号';
   if (db.settings.cloudAutoSync === false) return '已关闭 —— 关掉后一次请求都不发';
-  if (s.state === 'syncing') return '正在同步…（服务器在境外，可能较慢）';
+  if (s.state === 'syncing') return '正在同步…（服务器可能有点慢）';
   if (s.state === 'error') return '同步失败：' + s.message;
   if (s.state === 'skipped') return s.message;
   if (s.state === 'ok' && s.at) return s.message;
@@ -170,7 +170,7 @@ async function fetchFromCloud(): Promise<void> {
   if (name.length < 3) { cloudMsg.value = '请输入账号'; return; }
   if (cloudPass.value.length < 8) { cloudMsg.value = '密码至少 8 个字符'; return; }
   busy.value = true;
-  cloudMsg.value = '正在登录账号（服务器在境外，可能要十几秒，请勿退出）…';
+  cloudMsg.value = '正在登录（服务器可能有点慢，请勿退出）…';
   try {
     const session = await accountLogin(name, cloudPass.value);
     const meta = await accountInfo(session);
@@ -207,7 +207,7 @@ async function fetchFromCloud(): Promise<void> {
 async function uploadNow(): Promise<void> {
   if (!cloudSession.value || busy.value) return;
   busy.value = true;
-  cloudMsg.value = '正在打包并上传（服务器在境外，可能较慢）…';
+  cloudMsg.value = '正在打包并上传（服务器可能有点慢，请稍等）…';
   try {
     const result = await syncNow();
     await db.saveData();
@@ -410,7 +410,7 @@ async function doFileRestoreWithPending(): Promise<void> {
       <div class="row"><div class="title grow">账号与找回</div><button class="btn sm ghost" @click="db.closeRecovery()">关闭</button></div>
 
       <div class="small muted" style="margin-top: 6px; line-height: 1.7">
-        换手机时：<b>读备份文件</b>，或者<b>用账号从云端取回</b>。服务器在境外，取回可能较慢，请勿中途退出。
+        换手机时：<b>读备份文件</b>，或者<b>用账号从云端取回</b>。服务器可能有点慢，请勿中途退出。
       </div>
 
       <!-- ① 从本机文件恢复（产品负责人指定放第一位）：在登录页打开时它同时是"离线换机"入口 -->
@@ -439,7 +439,7 @@ async function doFileRestoreWithPending(): Promise<void> {
         <div class="field" style="margin-top: 10px"><label>账号</label><input v-model.trim="cloudAcct" autocomplete="off" placeholder="3~64 个字符" /></div>
         <div class="field"><label>密码</label><input v-model="cloudPass" type="password" autocomplete="off" placeholder="至少 8 个字符，App 不会保存" /></div>
         <button class="btn block" :disabled="busy" @click="fetchFromCloud">{{ busy ? '取回中，请勿退出…' : '取回云端课表' }}</button>
-        <div class="small muted" style="margin-top: 8px">服务器在境外，取回通常十几秒到一分钟（照片越多越慢）。</div>
+        <div class="small muted" style="margin-top: 8px">服务器可能有点慢，通常十几秒到一分钟（照片越多越慢）。</div>
         <div v-if="cloudMsg" class="small muted" style="margin-top: 8px">{{ cloudMsg }}</div>
       </div>
 

@@ -575,6 +575,4 @@ async function copyInterests(): Promise<void> {
 .pn { font-size: 12px; color: var(--muted); }
 .prow input { padding: 7px; border: 1px solid var(--line); border-radius: 8px; }
 .contact { background: var(--soft); box-shadow: none; margin-top: 12px; padding: 12px; }
-/* v2.46：账号登录卡里的"服务器在境外、可能较慢"提示（scoped 样式不跨组件，所以这里也要有一份） */
-.slowhint { margin-top: 8px; font-size: 11px; line-height: 1.6; color: var(--muted); }
 </style>

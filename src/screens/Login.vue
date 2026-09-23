@@ -44,7 +44,7 @@ async function cloudSignIn(): Promise<void> {
   if (name.length < 3) { cloudMsg.value = '请输入 Unimate 账号'; return; }
   if (cloudPass.value.length < 8) { cloudMsg.value = '密码至少 8 个字符'; return; }
   cloudBusy.value = true;
-  cloudMsg.value = '正在登录云账号（服务器在境外，可能要十几秒，请勿退出）…';
+  cloudMsg.value = '正在登录（服务器可能有点慢，请勿退出）…';
   try {
     const session = await accountLogin(name, cloudPass.value);
     const meta = await accountInfo(session);
@@ -104,7 +104,7 @@ async function cloudRegister(): Promise<void> {
   if (cloudPass.value !== cloudPassAgain.value) { cloudMsg.value = '两次输入的密码不一致'; return; }
   if (!cloudConsent.value) { cloudMsg.value = '请先勾选下面的同意项'; return; }
   cloudBusy.value = true;
-  cloudMsg.value = '正在注册（服务器在境外，可能要十几秒，请勿退出）…';
+  cloudMsg.value = '正在注册（服务器可能有点慢，请勿退出）…';
   try {
     const session = await accountSignup(name, cloudPass.value);
     await enterAsNewAccount(name, cloudPass.value, session);
@@ -161,18 +161,19 @@ async function useDemo(): Promise<void> {
           <input v-model="cloudConsent" type="checkbox" />
           <span>我同意把课表、记事、二课材料与照片备份到云端（服务器持有密钥、可以读取，用于换机取回）</span>
         </label>
-        <button v-if="mode === 'login'" class="btn block" :disabled="cloudBusy" @click="cloudSignIn">{{ cloudBusy ? '处理中，请勿退出…' : '登录并取回课表' }}</button>
-        <button v-else class="btn block" :disabled="cloudBusy" @click="cloudRegister">{{ cloudBusy ? '处理中，请勿退出…' : '注册并进入' }}</button>
+        <!-- v2.49：按钮只写"登录/注册"——"取回课表"是登录之后自动发生的事，不该写进按钮承诺 -->
+        <button v-if="mode === 'login'" class="btn block" :disabled="cloudBusy" @click="cloudSignIn">{{ cloudBusy ? '处理中，请勿退出…' : '登录' }}</button>
+        <button v-else class="btn block" :disabled="cloudBusy" @click="cloudRegister">{{ cloudBusy ? '处理中，请勿退出…' : '注册' }}</button>
         <div class="slowhint">
-          <template v-if="mode === 'login'">换新手机就直接登这个账号：云端有备份会自动取回；服务器在境外，通常十几秒到一分钟，期间请勿退出。</template>
+          <template v-if="mode === 'login'">换新手机就直接登这个账号：云端有备份会自动取回。服务器可能有点慢，通常十几秒到一分钟，期间请勿退出。</template>
           <template v-else>注册后先选高校、正常用；改完课表会自动备份到云端。</template>
         </div>
         <div v-if="cloudMsg" class="cloudmsg">{{ cloudMsg }}</div>
 
         <button class="btn block ghost" style="margin-top: 10px" @click="useDemo">用演示账号登录（admin / buct）</button>
 
-        <!-- v2.48：「账号与找回」放进登录页（换机、找回都在"还没登录"的时候用得上） -->
-        <button class="onelink" @click="db.openRecovery()">账号与找回 ›</button>
+        <!-- v2.48：「账号与找回」放进登录页；v2.49：给它一个**按钮**，不再只是一行小字 -->
+        <button class="btn block ghost sm" style="margin-top: 10px" @click="db.openRecovery()">账号与找回</button>
 
         <div class="diag" :class="{ bad: !db.storage.ok }">本机存储自检：{{ db.storage.ok ? '正常' : '异常' }} · {{ db.storage.detail }}</div>
         <div v-if="db.lastError" class="errbox">{{ db.lastError }}</div>
@@ -206,6 +207,4 @@ async function useDemo(): Promise<void> {
 .note { margin-top: 14px; line-height: 1.6; }
 .cloudmsg { margin-top: 10px; font-size: 11px; line-height: 1.7; color: var(--muted); background: var(--soft-2); border-radius: 8px; padding: 8px 10px; word-break: break-all; }
 .slowhint { margin-top: 8px; font-size: 11px; line-height: 1.6; color: var(--muted); }
-/* 「账号与找回」—— 只是一行小字，不占版面 */
-.onelink { display: block; margin: 10px auto 0; font-size: 11px; color: var(--muted); text-align: center; }
 </style>

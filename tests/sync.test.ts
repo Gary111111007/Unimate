@@ -780,7 +780,14 @@ console.log('\n--- v2.48：登录页只留账号、找回搬到登录页 ---');
     /登录状态会保留/.test(loginTpl) && /第一次登录需要联网/.test(loginTpl), '');
   ok('「账号与找回」入口在登录页，不在主页',
     /db\.openRecovery\(\)/.test(loginTpl) && !/openRecovery/.test(tt48), '');
-  ok('登录页那个入口只是一行小字（不占版面）', /class="onelink"/.test(loginTpl), '');
+  // v2.49：产品负责人要求"账号与找回单独留一个按钮"，不再是一行小字
+  ok('「账号与找回」在登录页是一个独立按钮', /class="btn block ghost sm"[\s\S]{0,80}db\.openRecovery\(\)/.test(loginTpl), '');
+  // 文案口径：界面上不提"服务器在境外"，只说"可能有点慢"
+  ok('登录/找回界面不出现"境外"字样（只说服务器可能有点慢）',
+    !/境外/.test(loginTpl) && !/境外/.test(ar48)
+    && /服务器可能有点慢/.test(loginTpl) && /服务器可能有点慢/.test(ar48), '');
+  ok('登录按钮只写"登录"（"取回课表"是登录后自动发生的事，不写进按钮承诺）',
+    /: '登录' \}\}/.test(loginTpl) && /: '注册' \}\}/.test(loginTpl) && !/登录并取回课表/.test(loginTpl), '');
 
   ok('找回面板在"还没进 App"时也能用：文件恢复走接管流程（离线换机）',
     /if \(!db\.session \|\| !db\.profile\)[\s\S]{0,900}adoptCloudBackup\(bytes, db, null\)/.test(ar48), '');
