@@ -169,6 +169,9 @@ console.log('\n--- v2.39：同步 API 走 pages.dev（绕开被污染/不可达�
     /cpSync\(workerSrc, join\(outDir, '_worker\.js'\)\)/.test(packer), '');
   ok('Pages 打包脚本可用（不再手工拷目录）',
     /unimate-cloudflare-' \+ version \+ '-upload'/.test(packer), '');
+  // v2.52：产品负责人要求"别再输出 ZIP 了，直接给文件夹"
+  ok('Pages 打包脚本不再压 ZIP（只出可拖放的目录）',
+    !/Compress-Archive/.test(packer) && !/\.zip'/.test(packer) && !/execFileSync/.test(packer), '');
 
   const docs = read('PRD.md') + read('Net.md');
   ok('文档记录了 workers.dev 在大陆被污染/不可达这一事实',

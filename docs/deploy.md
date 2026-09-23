@@ -27,11 +27,12 @@
 ```powershell
 cd E:\Gary\北京化工大学\北化app\Work
 npm run build
-node scripts\make-pages-package.mjs v2.43          # 生成"可拖放目录"（含同步/账号 API 的 _worker.js）
-npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.43-upload --project-name unimate3
+node scripts\make-pages-package.mjs v2.52          # 只生成"可拖放目录"（v2.52 起不再压 ZIP）
+npx wrangler pages deploy artifacts\cloudflare\unimate-cloudflare-v2.52-upload --project-name unimate3
 ```
 
 不想用命令行：回到 Cloudflare 项目页 → **Create new deployment** → 拖 **`artifacts\cloudflare\unimate-cloudflare-<版本>-upload` 这个目录**。
+（**只有目录，没有 ZIP** —— v2.52 起脚本不再压 ZIP；Pages 网页端本来也不接受 ZIP。）
 
 **⚠️ 三个坑（都踩过）**：
 

@@ -1,4 +1,4 @@
-# 项目上下文交接（压缩版 · 2026-09-23，v2.51）
+# 项目上下文交接（压缩版 · 2026-09-23，v2.52）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
@@ -11,14 +11,16 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 项 | 值 |
 | --- | --- |
 | 仓库 | `E:\Gary\北京化工大学\北化app\Work` |
-| 最新提交 | 本次 v2.51（**用户自己改密码** `POST /v1/password` + 面板「③ 修改密码」；另加「只登录（不取回数据）」与"已登录时主页也留一行找回入口"）；`95c135c` v2.50（找回重构 + 云端只带课表与记事 + 管理员页 `/admin`） |
+| 最新提交 | 本次 v2.52（**Pages 只出目录不压 ZIP** + 新建 `p4-parser/`、`p5-assistant/` 两个工位目录）；`ec85720` v2.51（用户自己改密码）；`95c135c` v2.50（找回重构 + 云端只带课表与记事 + 管理员页） |
 > **口径变更（v2.43，最重要的一条）**：产品负责人要求"像普通 App 那样账号登录、数据存云端"，并**明确撤销**了旧口径。
 > 现在主推**账号登录（服务器托管）**：备份存 R2、服务端持 `DATA_KEY` **能读**、忘记密码开发者可重置；
 > 端到端加密（服务器读不懂）**降为可选高级项**。`AGENTS.md` 硬规则 5 已改写 —— 旧表述（"数据默认全本地 / 只上传密文 / 服务器看不到你的数据"）**不许再写进 UI 或答辩材料**。
 | 先读哪 | 云端与 P3 的最新状态看 **`PRD.md` 开头的「当前接续摘要」** 与 **`Net.md` 的「当前云端接续摘要」**（本节只保留工程侧的通用交接） |
-| 未提交（本轮） | 无 —— v2.51 一起提交 |
+| 未提交（本轮） | 无 —— v2.52 一起提交 |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages）；**线上 = v2.39**（`assets/index-DroQga0f.js`，`catalog/` 三件套 200、`_worker.js` 生效） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.51，SHA `FA808010…`；v2.50 `6E6D41C8…`、v2.49 `198CCAE0…`、v2.48 `27FF3306…`） |
+| 最新 APK | `artifacts\android\unimate-debug.apk`（仍是 v2.51 `FA808010…` —— **v2.52 没改 `src/`，不需要重出**） |
+| Pages 交付 | **只有目录**：`node scripts\make-pages-package.mjs v2.52` → `artifacts\cloudflare\unimate-cloudflare-v2.52-upload`（15 文件 / 0.7 MB，根目录含 `_worker.js`）。**v2.52 起不再压 ZIP**（历史 ZIP 留档仍在 `artifacts/`） |
+| P4 / P5 工位 | [`p4-parser/`](../p4-parser/README.md)、[`p5-assistant/`](../p5-assistant/README.md)：**不参与构建**，各含 README（目标/红线/交付物/验收/接口约定）+ `NOTES.md`。**不许直接改 `src/`、`android/`、`cloudflare/`**，需要主工程配合就写进 `NOTES.md`，由产品负责人整合 |
 | 提醒口径 | 地平线 7 天；只清"过期 90 秒以上 + 账本里没有的"排期（`notify/plan.json`）；**错过的提醒不补发**；排期读取走**原生直读**（`scheduled()` 在安卓上没实现） |
 | 提醒兜底 | 心跳（有近期排期 10 分钟/否则 60 分钟）+ **提醒守护前台服务（v2.34 默认开）**：一条最低优先级静音常驻通知防 ROM 冻结；开机广播清场（过期/20 秒内要响的丢弃，不补发） |
 | 演示站状态 | **v2.45 已上传并核对通过**（2026-09-23）：`/health` 回 `atRest:true, accounts:true`；七条接口预检全 204；非白名单 403；线上前端 = `assets/index-BrCScQRS.js`（与 v2.45 APK 同一份代码）；`catalog/` 三件套 200 且 `bisu.json` 与本地同哈希 |
@@ -71,7 +73,8 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 ## 5. 常用命令
 
 ```powershell
-npm run test:notify       # 单跑某个套件（共 21 个：test:login/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 912 条断言）
+npm run test:notify       # 单跑某个套件（共 21 个：test:login/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard；合计 913 条断言）
+node scripts\make-pages-package.mjs v2.52   # 只出可拖放目录（不压 ZIP）
 npm run check:cloud       # v2.45：线上账号链路自检（临时账号走注册→上传→下载→注销，自清理；需外网）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1   # 唯一正确出包方式（沙箱内跑不通，需在沙箱外）

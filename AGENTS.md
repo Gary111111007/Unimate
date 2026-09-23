@@ -49,6 +49,13 @@
 12. **对用户说的话 ≠ 对开发说的话**（v2.49）：用户界面**不提"服务器在境外"**，只说"服务器可能有点慢"（产品负责人要求）；
     但 `PRD.md`/`AGENTS.md`/`docs/` 里**必须保留**"Cloudflare 在境外 ⇒ 账号模式构成数据出境"这条记录 —— 那是开发与合规要看的。
     改文案时别顺手把文档里这条也删了。
+13. **Pages 交付只出目录、不压 ZIP**（v2.52）：`node scripts\make-pages-package.mjs <版本>` 只产出
+    `artifacts/cloudflare/unimate-cloudflare-<版本>-upload/`；拖**这个目录本身**进 Pages → Production。
+    （Pages 网页端不接受 ZIP，多压一份只会多一份可能过期的副本。历史 ZIP 留在 `artifacts/` 里当记录。）
+14. **P4 / P5 是"工位目录"，不是主工程的一部分**（v2.52）：产物放 `p4-parser/`、`p5-assistant/`，
+    **不许直接改 `src/`、`android/`、`cloudflare/`**；需要主工程配合就写进对应目录的 `NOTES.md`，由产品负责人统一整合。
+    两条最硬的红线：**P4 的解析必须在本机**（不许把页面内容发到任何服务器）、
+    **P5 的模型 Key 只许在服务端 secret、默认不把课表/姓名发给模型**（要发必须先让用户明确同意并在「关于」里如实写）。
 
 ## 二、构建与验证
 
