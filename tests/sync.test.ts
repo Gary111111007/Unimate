@@ -757,5 +757,36 @@ console.log('\n--- v2.45：改完自动同步（账号模式）---');
     /const result = await syncNow\(\)/.test(meSrc), '');
 }
 
+/*
+ * v2.48：登录页只留「账号登录 / 注册账号」，「账号与找回」搬进登录页。
+ */
+console.log('\n--- v2.48：登录页只留账号、找回搬到登录页 ---');
+{
+  const login48 = read('src/screens/Login.vue');
+  const tt48 = read('src/views/TimetableView.vue');
+  const ar48 = read('src/components/AccountRecovery.vue');
+  // 只看模板：注释里会提到"本机登录/离线进入"这些历史写法，扫全文会误判
+  const loginTpl = (login48.match(/<template>([\s\S]*)<\/template>/) || [, ''])[1];
+
+  ok('登录页只有两个页签：账号登录 / 注册账号',
+    /mode === 'login'[\s\S]{0,80}账号登录/.test(loginTpl) && /mode === 'register'[\s\S]{0,80}注册账号/.test(loginTpl)
+    // 页签按钮只有两个：数 `@click="mode = ..."` 的出现次数（"换机取回"这四个字在同意文案里是正常话术，不能一并禁掉）
+    && (loginTpl.match(/@click="mode = /g) || []).length === 2
+    && !/本机登录|创建本地账号/.test(loginTpl), '');
+  ok('演示账号入口保留（离线也能进）', /用演示账号登录（admin \/ buct）/.test(loginTpl), '');
+  ok('登录页不再有"本机登录"表单（登录态是持久化的，用不着它）',
+    !/离线进入|本机已有账号/.test(loginTpl), '');
+  ok('登录页写明"登录状态会保留、只有退出后要再登"',
+    /登录状态会保留/.test(loginTpl) && /第一次登录需要联网/.test(loginTpl), '');
+  ok('「账号与找回」入口在登录页，不在主页',
+    /db\.openRecovery\(\)/.test(loginTpl) && !/openRecovery/.test(tt48), '');
+  ok('登录页那个入口只是一行小字（不占版面）', /class="onelink"/.test(loginTpl), '');
+
+  ok('找回面板在"还没进 App"时也能用：文件恢复走接管流程（离线换机）',
+    /if \(!db\.session \|\| !db\.profile\)[\s\S]{0,900}adoptCloudBackup\(bytes, db, null\)/.test(ar48), '');
+  ok('找回面板仍然先预览再二次确认才落地',
+    /await previewCloudBackup\(bytes, db\)/.test(ar48) && /confirmText: '恢复并进入'/.test(ar48), '');
+}
+
 console.log('\n通过：' + pass + ' 条 P3 同步断言');
 if (process.exitCode) process.exit(process.exitCode);

@@ -17,12 +17,13 @@ const isWeb = !isNativeWebView();
  * 不再上下堆两张卡（产品负责人反馈"这个界面二合一一下"）。演示账号按钮保留。
  */
 /**
- * v2.47：按产品负责人要求，登录页**只留两件事** —— 「账号登录」「注册账号」，外加一个演示账号入口。
- * 原来的"本机登录/创建本地账号"收进下方一行小字（本机已有账号时才显示）：
- * 不是不要它，而是**断网时总得让人进得去**（AGENTS.md：断网不得影响其它功能）。
+ * v2.48：登录页只有三样东西 —— 「账号登录」「注册账号」「用演示账号登录」，再加一行「账号与找回」。
+ *
+ * 为什么可以不再给"本机登录"留入口：**登录态是持久化的**（session 存在 manifest.json 里，boot 会恢复），
+ * 所以正常打开 App 根本不会回到这一页 —— 只有首次使用、退出登录之后才会。
+ * 产品负责人原话："第一次登录要联网，后续打开就不用了；后续也就在退出登录跟切换学校要联网。"
  */
 const mode = ref<'login' | 'register'>('login');
-const showLocal = ref(false);
 const username = ref('');
 const password = ref('');
 const displayName = ref('');
@@ -170,16 +171,8 @@ async function useDemo(): Promise<void> {
 
         <button class="btn block ghost" style="margin-top: 10px" @click="useDemo">用演示账号登录（admin / buct）</button>
 
-        <!-- 断网兜底：本机已经有账号时，给一条很小的离线入口（不占版面） -->
-        <template v-if="db.accounts.length">
-          <button v-if="!showLocal" class="onelink" @click="showLocal = true">本机已有账号？离线进入 ›</button>
-          <div v-else class="localbox">
-            <div class="field"><label>本机用户名</label><input v-model="username" placeholder="2~20 个字符" /></div>
-            <div class="field"><label>本机密码</label><input v-model="password" type="password" placeholder="至少 6 位" /></div>
-            <button class="btn block ghost" @click="submit">离线进入</button>
-            <button class="onelink" @click="showLocal = false">收起</button>
-          </div>
-        </template>
+        <!-- v2.48：「账号与找回」放进登录页（换机、找回都在"还没登录"的时候用得上） -->
+        <button class="onelink" @click="db.openRecovery()">账号与找回 ›</button>
 
         <div class="diag" :class="{ bad: !db.storage.ok }">本机存储自检：{{ db.storage.ok ? '正常' : '异常' }} · {{ db.storage.detail }}</div>
         <div v-if="db.lastError" class="errbox">{{ db.lastError }}</div>
@@ -188,7 +181,8 @@ async function useDemo(): Promise<void> {
           "选择高校"页每天最多一次的高校档案检查（只下载公开档案），以及两条<b>可选</b>的云端备份路径：
           <b>① 账号登录</b>（备份存云端服务器、服务端持密钥可读，换机输账号密码即可取回）；
           <b>② 端到端加密同步</b>（服务器只存密文，口令与恢复码不上传、不保存）。
-          本机登录密码只存不可逆哈希、没有"找回"入口；忘了它可以用「取回云端课表」重来，或重新建号后用备份恢复。
+          <b>登录状态会保留</b>：第一次登录需要联网，之后打开 App 不用再登；只有退出登录之后才需要再登一次。
+          换机或忘了密码，点下面的「账号与找回」。
         </div>
       </div>
     </div>
@@ -212,7 +206,6 @@ async function useDemo(): Promise<void> {
 .note { margin-top: 14px; line-height: 1.6; }
 .cloudmsg { margin-top: 10px; font-size: 11px; line-height: 1.7; color: var(--muted); background: var(--soft-2); border-radius: 8px; padding: 8px 10px; word-break: break-all; }
 .slowhint { margin-top: 8px; font-size: 11px; line-height: 1.6; color: var(--muted); }
-/* 「本机已有账号？离线进入」—— 只是一行小字，不占版面 */
+/* 「账号与找回」—— 只是一行小字，不占版面 */
 .onelink { display: block; margin: 10px auto 0; font-size: 11px; color: var(--muted); text-align: center; }
-.localbox { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
 </style>

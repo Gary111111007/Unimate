@@ -670,11 +670,8 @@ function toggleWeek(w: number): void {
       <button class="nav" @click="shift(1)" :disabled="week >= (db.activeTimetable?.totalWeeks || 18)">›</button>
       <button v-if="week !== db.currentWeek" class="btn sm ghost today" @click="goToday">回本周</button>
     </div>
-    <!-- v2.47：主页上给「账号找回」留一个很小的入口（产品负责人要求：不要塞在「我的」里） -->
-    <div v-if="db.activeTimetable" class="hintrow">
-      <span class="swipe-hint">左右滑动可切换周次</span>
-      <button class="minilink" @click="db.openRecovery()">账号找回 ›</button>
-    </div>
+    <!-- v2.48：入口挪到登录页了（产品负责人：「账号与找回」放在登录界面里） -->
+    <div v-if="db.activeTimetable" class="swipe-hint center">左右滑动可切换周次</div>
       <!-- 天气（Net.md P0）：默认关闭。关着、或还没拿到数据时这里一行都不渲染，
            不会给课表页顶出多余的空白；点一下 = 更新（同样受 30 分钟限制）。 -->
       <div v-if="wxNow" class="wxbar" @click="refreshWeather()" aria-label="天气，点一下更新">
@@ -952,9 +949,6 @@ function toggleWeek(w: number): void {
 .rktxt { flex: 1; min-width: 0; font-size: 12px; color: var(--strong); line-height: 1.35; }
 .rke { flex: none; width: 22px; height: 22px; border-radius: 50%; color: var(--muted); font-size: 14px; line-height: 1; }
 .nextbar { display: flex; align-items: center; gap: 9px; background: var(--card); border-radius: 11px; padding: 7px 10px; margin: 0 0 7px; box-shadow: var(--shadow); }
-/* v2.47：主页那行"很小的账号找回入口"，和周次提示共处一行，不占额外高度 */
-.hintrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px; }
-.minilink { font-size: 11px; color: var(--muted); padding: 2px 0; }
 .ndot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .ngrow { flex: 1; min-width: 0; }
 .n1 { display: flex; align-items: baseline; gap: 7px; font-size: 13px; line-height: 1.3; }

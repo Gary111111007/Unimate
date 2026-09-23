@@ -103,7 +103,37 @@ async function pickFile(e: Event): Promise<void> {
 
 async function restoreFromFile(): Promise<void> {
   if (!fileB64.value) { msg.value = '请先选择备份文件'; return; }
-  if (!db.session || !db.profile) { msg.value = '请先用账号登录，再恢复本机文件'; return; }
+  const bytes = base64ToBytes(fileB64.value);
+  /*
+   * v2.48：在**登录页**打开这个面板时（还没进 App），这份文件就是"换机备份" ——
+   * 走和云端取回完全一样的落地流程：读清单 → 接管/新建本机账号 → 绑定高校 → 恢复 → 进主界面。
+   * 这样"离线换机"（用系统分享把 .unimate.zip 传过来）就成立了，不需要先登录。
+   */
+  if (!db.session || !db.profile) {
+    busy.value = true;
+    msg.value = '正在读取备份…';
+    try {
+      const preview = await previewCloudBackup(bytes, db);
+      const blocked = adoptBlockedReason(preview.manifest, db);
+      if (blocked) { msg.value = blocked; return; }
+      const m = preview.manifest;
+      const ok = await db.confirm({
+        title: '确认用这份备份恢复并进入？',
+        body: '来自「' + m.schoolName + '」的账号 ' + m.username + ' · 备份时间 ' + m.exportedAt + ' · 课表 ' + m.counts.courses +
+          ' 条 / 记事 ' + m.counts.notes + ' 条 / 二课 ' + m.counts.records + ' 条 / 照片 ' + m.counts.photos + ' 张。',
+        detail: preview.willOverwrite
+          ? '本机这个账号已有数据，会用这份备份覆盖它。'
+          : '会接管/新建本机账号并直接进主界面；本机其它账号的数据不受影响。',
+        confirmText: '恢复并进入', cancelText: '取消', danger: preview.willOverwrite
+      });
+      if (!ok) { msg.value = '已取消'; return; }
+      msg.value = '正在恢复到本机（照片多时更慢，请稍等）…';
+      await adoptCloudBackup(bytes, db, null);
+      db.closeRecovery();
+    } catch (e: any) { msg.value = e?.message || '恢复失败'; }
+    finally { busy.value = false; }
+    return;
+  }
   const merge = mode.value === 'merge';
   const ok = await db.confirm({
     title: merge ? '确认按 id 合并这份备份？' : '确认用这份备份覆盖当前数据？',
@@ -123,7 +153,7 @@ async function restoreFromFile(): Promise<void> {
         kept = '；已留底：' + r.fileName;
       } catch { /* 留底失败不阻断恢复 */ }
     }
-    await restoreBackup(base64ToBytes(fileB64.value), userBase.value, merge);
+    await restoreBackup(bytes, userBase.value, merge);
     await db.loadUserData();
     fileB64.value = ''; fileInfo.value = '';
     msg.value = '恢复完成' + (merge ? '（合并）' : kept);
@@ -380,13 +410,16 @@ async function doFileRestoreWithPending(): Promise<void> {
       <div class="row"><div class="title grow">账号与找回</div><button class="btn sm ghost" @click="db.closeRecovery()">关闭</button></div>
 
       <div class="small muted" style="margin-top: 6px; line-height: 1.7">
-        换手机时：<b>读本机备份文件</b>，或者<b>用账号从云端取回</b>。服务器在境外，取回可能较慢，请勿中途退出。
+        换手机时：<b>读备份文件</b>，或者<b>用账号从云端取回</b>。服务器在境外，取回可能较慢，请勿中途退出。
       </div>
 
-      <!-- ① 从本机文件恢复（产品负责人指定放第一位） -->
+      <!-- ① 从本机文件恢复（产品负责人指定放第一位）：在登录页打开时它同时是"离线换机"入口 -->
       <div class="card" style="margin-top: 12px; box-shadow: none">
         <div class="bold">① 从本机文件恢复</div>
-        <div class="small muted" style="margin-top: 4px">选之前导出的 <b>.unimate.zip</b>（或第②步取回的备份）→ 预览 → 恢复。</div>
+        <div class="small muted" style="margin-top: 4px">
+          选之前导出的 <b>.unimate.zip</b>（或第②步取回的备份）→ 预览 → 恢复。
+          还没登录也能用：选完会问你要不要接管成新的本机账号，直接进主界面。
+        </div>
         <div class="field" style="margin-top: 10px"><label>备份文件</label><input type="file" accept=".zip,.umig" @change="pickFile" /></div>
         <div v-if="fileInfo" class="card small" style="background: var(--soft); box-shadow: none">{{ fileInfo }}</div>
         <div class="chips" style="margin: 10px 0">
