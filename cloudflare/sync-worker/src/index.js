@@ -286,6 +286,145 @@ async function backupGet(request, env, url, origin) {
   return new Response(bytes, { status: 200, headers: h });
 }
 
+/* ---------------------------------------------------------------------------
+ * v2.50 管理员：给"忘了密码找管理员重置"做一个人工入口（电脑/手机浏览器都能开）。
+ *
+ * 边界（刻意的）：
+ *  · 只有**重置密码**和**列账号名单**两个能力，**没有**下载用户数据、没有改环境的接口；
+ *  · 管理员密钥是单独的 secret `ADMIN_KEY`，没设就整个管理员接口 503；
+ *  · 新密码的 verifier 由**管理员浏览器**算（PBKDF2 210k 在浏览器里跑，不占 Worker 的 CPU 额度），
+ *    服务端只把 `sha256(盐 + verifier)` 换掉，并且顺手清掉该账号的会话令牌（被重置的设备必须重新登录）。
+ * ------------------------------------------------------------------------- */
+
+function normAccountForAdmin(raw) {
+  return String(raw || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function adminGuard(request, env, body) {
+  if (!env.ADMIN_KEY) return json({ error: '这个部署没有配置管理员密钥（secret ADMIN_KEY）' }, 503, '');
+  const key = String((body && body.key) || request.headers.get('X-Unimate-Admin') || '');
+  if (!key || key !== env.ADMIN_KEY) return json({ error: '管理员密钥不正确' }, 403, '');
+  return null;
+}
+
+/** R2 的 ListObjectsV2：列出所有账号记录对象（不需要自己维护索引，也就没有并发写索引的问题） */
+async function listAccountKeys(env) {
+  const url = 'https://' + env.R2_ACCOUNT_ID + '.r2.cloudflarestorage.com/' +
+    encodeURIComponent(env.R2_BUCKET_NAME) + '?list-type=2&prefix=' + encodeURIComponent('acct/') + '&max-keys=1000';
+  const res = await s3(env).fetch(url, { method: 'GET' });
+  if (!res.ok) throw new Error('列出账号失败（' + res.status + '）');
+  const xml = await res.text();
+  return Array.from(xml.matchAll(/<Key>([^<]+)<\/Key>/g)).map((m) => m[1]);
+}
+
+async function adminList(request, env, origin) {
+  const body = await readJson(request);
+  const denied = adminGuard(request, env, body);
+  if (denied) return denied;
+  try {
+    const keys = await listAccountKeys(env);
+    const accounts = [];
+    for (const key of keys) {
+      const res = await r2Object(env, key, { method: 'GET' });
+      if (!res.ok) continue;
+      try {
+        const rec = await res.json();
+        if (rec && rec.account) {
+          accounts.push({ account: rec.account, updatedAt: rec.updatedAt || '', size: rec.size || 0 });
+        }
+      } catch { /* 坏记录跳过 */ }
+    }
+    accounts.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    return json({ ok: true, accounts }, 200, origin);
+  } catch (e) {
+    return json({ error: e.message || '列出账号失败' }, 502, origin);
+  }
+}
+
+async function adminReset(request, env, origin) {
+  const body = await readJson(request);
+  const denied = adminGuard(request, env, body);
+  if (denied) return denied;
+  const name = normAccountForAdmin(body && body.account);
+  if (badAccount(name)) return json({ error: '账号格式不正确' }, 400, origin);
+  if (!VERIFIER_RE.test(String((body && body.verifier) || ''))) return json({ error: '口令校验值格式不正确' }, 400, origin);
+  try {
+    const record = await readRecord(env, name);
+    if (!record) return json({ error: '这个账号不存在' }, 404, origin);
+    record.verifierHash = await sha256Hex(record.salt + ':' + body.verifier);
+    record.session = null;                       // 被重置之后，旧设备的令牌立即失效
+    record.passwordResetAt = new Date().toISOString();
+    await writeRecord(env, name, record);
+    return json({ ok: true, account: name, resetAt: record.passwordResetAt }, 200, origin);
+  } catch (e) {
+    return json({ error: e.message || '重置失败' }, 502, origin);
+  }
+}
+
+/** 管理员页面（单文件、无外部依赖；手机和电脑都能开） */
+const ADMIN_PAGE = [
+  '<!doctype html><html lang="zh"><head><meta charset="utf-8">',
+  '<meta name="viewport" content="width=device-width,initial-scale=1">',
+  '<title>Unimate 管理员</title><style>',
+  'body{margin:0;padding:16px;font:15px/1.6 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#F5F7FA;color:#1B1F27}',
+  'h1{font-size:18px;margin:4px 0 10px}',
+  '.card{background:#fff;border-radius:12px;padding:14px;box-shadow:0 2px 10px rgba(20,24,31,.06);margin-bottom:12px}',
+  'input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #D8DEE7;border-radius:9px;font:inherit;margin:6px 0}',
+  'button{padding:10px 14px;border:0;border-radius:9px;font:inherit;font-weight:600;background:#2E5AAC;color:#fff}',
+  'button.grey{background:#EDF0F5;color:#1B1F27}',
+  'table{width:100%;border-collapse:collapse;font-size:13px}',
+  'td,th{padding:8px 6px;border-bottom:1px solid #EEF1F6;text-align:left;word-break:break-all}',
+  '.muted{color:#6B7482;font-size:12px}',
+  '.ok{color:#1B7F3B}.bad{color:#B42318}',
+  '</style></head><body>',
+  '<h1>Unimate 管理员</h1>',
+  '<div class="card"><div class="muted">用于给<b>忘记密码</b>的用户重置密码。<b>看不到用户数据</b>，只有这一件事。</div>',
+  '<input id="key" type="password" placeholder="管理员密钥（ADMIN_KEY）" autocomplete="off">',
+  '<button id="list">列出账号</button> <button class="grey" id="clear">清除本机保存的密钥</button>',
+  '<div id="out" class="muted"></div></div>',
+  '<div class="card"><div id="rows" class="muted">先输入密钥并点「列出账号」。</div></div>',
+  '<script>',
+  'var KEY="unimate-admin-key";',
+  'function b64url(buf){var b=new Uint8Array(buf),s="";for(var i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);',
+  'return btoa(s).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");}',
+  'function norm(a){return String(a||"").normalize("NFKC").trim().replace(/\\s+/g," ").toLowerCase();}',
+  'async function verifierOf(account,password){',
+  'var salt=new TextEncoder().encode("unimate-auth-v1\\u0000"+norm(account));',
+  'var km=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),{name:"PBKDF2"},false,["deriveBits"]);',
+  'var bits=await crypto.subtle.deriveBits({name:"PBKDF2",hash:"SHA-256",salt:salt,iterations:210000},km,256);',
+  'return b64url(bits);}',
+  'var $=function(id){return document.getElementById(id)};',
+  'function say(t,bad){$("out").innerHTML=\'<span class="\'+(bad?"bad":"ok")+\'">\'+t+\'</span>\';}',
+  'async function post(path,body){var r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});',
+  'var j=null;try{j=await r.json()}catch(e){} return {ok:r.ok,status:r.status,body:j||{}};}',
+  'function render(list){var rows=$("rows");if(!list.length){rows.textContent="还没有账号。";return;}',
+  'rows.innerHTML="<table><tr><th>账号</th><th>云端备份</th><th></th></tr>"+list.map(function(a){',
+  'return "<tr><td>"+a.account+"</td><td>"+(a.size?Math.round(a.size/1024)+" KB · "+a.updatedAt:"还没上传" )+"</td>"+',
+  '"<td><button data-a=\\""+a.account+"\\">重置密码</button></td></tr>"}).join("")+"</table>";',
+  'rows.querySelectorAll("button").forEach(function(b){b.onclick=function(){reset(b.getAttribute("data-a"))}});}',
+  'async function list(){var k=$("key").value.trim();if(!k){say("先填管理员密钥",1);return;}',
+  'localStorage.setItem(KEY,k);say("查询中…");',
+  'var r=await post("/v1/admin/list",{key:k});',
+  'if(!r.ok){say(r.body.error||("失败 "+r.status),1);return;}',
+  'say("共 "+r.body.accounts.length+" 个账号");render(r.body.accounts);}',
+  'async function reset(account){var k=localStorage.getItem(KEY)||$("key").value.trim();',
+  'var p=prompt("给 "+account+" 设置新密码（至少 8 位，请当面告知用户）");if(!p)return;',
+  'if(p.length<8){say("密码至少 8 位",1);return;}say("正在重置 "+account+"…");',
+  'var v=await verifierOf(account,p);',
+  'var r=await post("/v1/admin/reset",{key:k,account:account,verifier:v});',
+  'if(!r.ok){say(r.body.error||("失败 "+r.status),1);return;}',
+  'say("已重置 "+account+" —— 请把新密码告诉用户，并让他登录后立刻改掉。");}',
+  '$("list").onclick=list;',
+  '$("clear").onclick=function(){localStorage.removeItem(KEY);$("key").value="";say("已清除本机保存的密钥");};',
+  '$("key").value=localStorage.getItem(KEY)||"";',
+  'if($("key").value)list();',
+  '</script></body></html>'
+].join('');
+
+function adminPage() {
+  return new Response(ADMIN_PAGE, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
+}
+
 export default {
   async fetch(request, env) {
     const origin = allowedOrigin(request, env);
@@ -310,6 +449,11 @@ export default {
     if (url.pathname === '/v1/account' && request.method === 'DELETE') return accountDelete(request, env, url, origin);
     if (url.pathname === '/v1/backup' && request.method === 'PUT') return backupPut(request, env, url, origin);
     if (url.pathname === '/v1/backup' && request.method === 'GET') return backupGet(request, env, url, origin);
+
+    // v2.50 管理员：页面 + 两个接口（列账号 / 重置密码）
+    if (url.pathname === '/admin' && request.method === 'GET') return adminPage();
+    if (url.pathname === '/v1/admin/list' && request.method === 'POST') return adminList(request, env, origin);
+    if (url.pathname === '/v1/admin/reset' && request.method === 'POST') return adminReset(request, env, origin);
 
     if (url.pathname !== '/v1/presign' || request.method !== 'POST') return json({ error: 'not found' }, 404, origin);
 

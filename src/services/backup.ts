@@ -6,10 +6,33 @@ import { uuid, nowStamp } from './id.ts';
 import { SCHEMA_VERSION, APP_VERSION } from '../stores/db.ts';
 import type { SecondClassRecord, Account } from '../types.ts';
 
-const TEXT_FILES = [
+/**
+ * 全量备份的文本文件（**本机导出/留底**用它，包含二课记录）。
+ */
+const FULL_TEXT_FILES = [
   'timetable/timetables.json', 'timetable/courses.json',
   'notes/notes.json', 'secondclass/records.json', 'settings.json'
 ];
+
+/**
+ * 【v2.50】**换机备份**只带这些 —— 产品负责人定的口径：
+ * "在二课那里做成本地记录，换机登录只换课表"（顺带把体积压下来，不至于把照片都推上云）。
+ *
+ * 所以云端（账号模式 / 端到端同步）用的是这一份：**课表 + 记事 + 设置**，不含二课记录，也不含二课照片。
+ * 二课数据仍然存在本机（`schools/<schoolId>/users/<accountId>/secondclass/records.json`），
+ * 退出再登录同一账号还在，切到别的账号看不到，换回来又出现 —— 这正是产品负责人要的行为。
+ */
+export const STUDY_TEXT_FILES = [
+  'timetable/timetables.json', 'timetable/courses.json',
+  'notes/notes.json', 'settings.json'
+];
+
+export type BackupScope = 'full' | 'study';
+
+/** 这个范围要打包哪些文本文件（导出给测试用，避免单测里跑 Capacitor 文件系统） */
+export function textFilesFor(scope: BackupScope): string[] {
+  return scope === 'study' ? STUDY_TEXT_FILES.slice() : FULL_TEXT_FILES.slice();
+}
 
 export interface BackupManifest {
   app: 'Unimate';
@@ -19,6 +42,8 @@ export interface BackupManifest {
   schoolId: string;
   schoolName: string;
   username: string;
+  /** v2.50：full = 本机全量（含二课与照片）；study = 换机用（只有课表/记事/设置） */
+  scope?: BackupScope;
   counts: { timetables: number; courses: number; notes: number; records: number; photos: number };
   files: { path: string; size: number; sha256: string }[];
 }
@@ -40,14 +65,14 @@ function stamp(): string {
 }
 
 export async function exportBackup(schoolId: string, schoolName: string, username: string,
-  userBase: string, accounts: Account[], accountId: string): Promise<ExportResult> {
+  userBase: string, accounts: Account[], accountId: string, scope: BackupScope = 'full'): Promise<ExportResult> {
   const enc = new TextEncoder();
   const files: { name: string; data: Uint8Array }[] = [];
   const listed: BackupManifest['files'] = [];
   const counts: BackupManifest['counts'] = { timetables: 0, courses: 0, notes: 0, records: 0, photos: 0 };
 
   const texts: Record<string, string> = {};
-  for (const f of TEXT_FILES) {
+  for (const f of textFilesFor(scope)) {
     const raw = await readText(userBase + '/' + f);
     if (raw === null) continue;
     texts[f] = raw;
@@ -69,23 +94,26 @@ export async function exportBackup(schoolId: string, schoolName: string, usernam
   const interests = await readText('catalog/interests.json');
   if (interests) files.push({ name: 'catalog/interests.json', data: enc.encode(interests) });
 
-  for (const r of recs) {
-    for (const p of r.photos) {
-      for (const key of ['watermarkPath', 'originalPath'] as const) {
-        const rel = p[key];
-        if (!rel) continue;
-        const b64 = await readBinaryBase64(rel);
-        if (!b64) continue;
-        counts.photos++;
-        files.push({ name: 'files/' + rel, data: base64ToBytes(b64) });
-        listed.push({ path: 'files/' + rel, size: Math.round(b64.length * 0.75), sha256: await sha256Base64(b64) });
+  // 二课照片属于"本地记录"，换机范围不带（v2.50）
+  if (scope === 'full') {
+    for (const r of recs) {
+      for (const p of r.photos) {
+        for (const key of ['watermarkPath', 'originalPath'] as const) {
+          const rel = p[key];
+          if (!rel) continue;
+          const b64 = await readBinaryBase64(rel);
+          if (!b64) continue;
+          counts.photos++;
+          files.push({ name: 'files/' + rel, data: base64ToBytes(b64) });
+          listed.push({ path: 'files/' + rel, size: Math.round(b64.length * 0.75), sha256: await sha256Base64(b64) });
+        }
       }
     }
   }
 
   const manifest: BackupManifest = {
     app: 'Unimate', version: APP_VERSION, schemaVersion: SCHEMA_VERSION, exportedAt: nowStamp(),
-    schoolId, schoolName, username, counts, files: listed
+    schoolId, schoolName, username, scope, counts, files: listed
   };
   files.push({ name: 'BACKUP_MANIFEST.json', data: enc.encode(JSON.stringify(manifest, null, 2)) });
 
@@ -157,10 +185,21 @@ export async function restoreBackup(bytes: Uint8Array, userBase: string, merge: 
   };
 
   const get = (f: string) => byName('account/' + f);
-  await writeJson(userBase + '/timetable/timetables.json', merge ? mergeById(current.timetables, dec(get('timetable/timetables.json'), [])) : dec(get('timetable/timetables.json'), []));
-  await writeJson(userBase + '/timetable/courses.json', merge ? mergeById(current.courses, dec(get('timetable/courses.json'), [])) : dec(get('timetable/courses.json'), []));
-  await writeJson(userBase + '/notes/notes.json', merge ? mergeById(current.notes, dec(get('notes/notes.json'), [])) : dec(get('notes/notes.json'), []));
-  await writeJson(userBase + '/secondclass/records.json', merge ? mergeById(current.records, dec(get('secondclass/records.json'), [])) : dec(get('secondclass/records.json'), []));
+  /*
+   * 【v2.50 关键修正】**包里没有的文件一律不动**。
+   * 旧写法是 `dec(get(f), [])` —— 包里没有就写个空数组，等于"换机备份顺手把本机的二课记录清空了"。
+   * 现在换机备份本来就不带二课（scope=study），如果还按旧写法，新设备恢复后没事、但**在已用过的设备上恢复会把二课清掉**。
+   */
+  const putIfPresent = async (file: string, target: string, currentList: any[]) => {
+    const data = get(file);
+    if (!data) return;                       // 包里没有 → 保持本机现状（v2.50 修正）
+    const fromPack = dec<any[]>(data, []);
+    await writeJson(target, merge ? mergeById(currentList, fromPack) : fromPack);
+  };
+  await putIfPresent('timetable/timetables.json', userBase + '/timetable/timetables.json', current.timetables);
+  await putIfPresent('timetable/courses.json', userBase + '/timetable/courses.json', current.courses);
+  await putIfPresent('notes/notes.json', userBase + '/notes/notes.json', current.notes);
+  await putIfPresent('secondclass/records.json', userBase + '/secondclass/records.json', current.records);
   const st = get('settings.json');
   if (st) await writeText(userBase + '/settings.json', new TextDecoder().decode(st));
 

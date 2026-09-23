@@ -139,9 +139,10 @@ console.log('\n--- v2.39：同步 API 走 pages.dev（绕开被污染/不可达�
   const pagesWorker = read('cloudflare/pages/_worker.js');
   ok('Pages 上有 Advanced Mode 入口 _worker.js', pagesWorker.length > 500, '');
   // v2.41 多了 /v1/put、/v1/get（正文中转）；v2.43 又多了账号 API 四条。静态资源仍然交给 env.ASSETS
-  ok('只接管同步/账号 API 的几条路径，其余交给静态资源',
+  ok('只接管同步/账号/管理员 API 的几条路径，其余交给静态资源',
     /const API_PATHS = \['\/health', '\/v1\/presign', '\/v1\/put', '\/v1\/get',/.test(pagesWorker)
-    && /'\/v1\/signup', '\/v1\/login', '\/v1\/account', '\/v1\/backup'\]/.test(pagesWorker)
+    && /'\/v1\/signup', '\/v1\/login', '\/v1\/account', '\/v1\/backup',/.test(pagesWorker)
+    && /'\/admin', '\/v1\/admin\/list', '\/v1\/admin\/reset'\]/.test(pagesWorker)
     && /return env\.ASSETS\.fetch\(request\)/.test(pagesWorker), '');
   ok('上游仍是真 Worker（边缘转发，Cloudflare 内部解析不受本地污染影响）',
     /const UPSTREAM = 'https:\/\/unimate-sync\.2025040140\.workers\.dev'/.test(pagesWorker), '');
@@ -793,6 +794,106 @@ console.log('\n--- v2.48：登录页只留账号、找回搬到登录页 ---');
     /if \(!db\.session \|\| !db\.profile\)[\s\S]{0,900}adoptCloudBackup\(bytes, db, null\)/.test(ar48), '');
   ok('找回面板仍然先预览再二次确认才落地',
     /await previewCloudBackup\(bytes, db\)/.test(ar48) && /confirmText: '恢复并进入'/.test(ar48), '');
+}
+
+/*
+ * v2.50：① 本机找回（列本机账号直接进入）；② 云备份只带课表/记事（二课与照片留本机）；
+ *       ③ 管理员重置密码（页面 + 两个接口）；④ 找回面板里 ② 只出现一次。
+ */
+console.log('\n--- v2.50：本机找回 / 二课不上云 / 管理员重置 ---');
+{
+  const { textFilesFor } = await import('../src/services/backup.ts');
+  const backupSrc = read('src/services/backup.ts');
+  ok('换机备份不含二课记录（只带课表/记事/设置）',
+    !textFilesFor('study').some((f) => f.startsWith('secondclass/'))
+    && textFilesFor('study').some((f) => f.startsWith('timetable/'))
+    && textFilesFor('full').some((f) => f.startsWith('secondclass/')), textFilesFor('study').join(','));
+  ok('换机范围不打包二课照片（只在 full 里走 files/）',
+    /if \(scope === 'full'\) \{[\s\S]{0,400}files\//.test(backupSrc), '');
+  ok('恢复时"包里没有的文件不动"（否则换机备份会把本机二课清空）',
+    /const putIfPresent[\s\S]{0,400}if \(!data\) return;/.test(backupSrc)
+    && !/dec\(get\('secondclass\/records\.json'\), \[\]\)/.test(backupSrc), '');
+  ok('云上传与端到端上传都用换机范围（study）',
+    /accountId, 'study'\)/.test(read('src/services/cloudAutoSync.ts'))
+    && /db\.session\.accountId, 'study'\)/.test(read('src/components/AccountRecovery.vue')), '');
+
+  const ar50 = read('src/components/AccountRecovery.vue');
+  ok('找回面板第一项是"从本机找回"，并列出本机记录过的账号',
+    /① 从本机找回/.test(ar50) && /v-for="a in localAccounts"/.test(ar50) && /db\.enterAccount\(id\)/.test(ar50), '');
+  ok('本机找回不校验密码（设备即信任边界），并说明这一点', /不用再输密码/.test(ar50), '');
+  ok('db 里有 enterAccount，且复用 finishLogin（有学校就直接进主界面）',
+    /async function enterAccount\(accountId: string\)/.test(read('src/stores/db.ts'))
+    && /await finishLogin\(\)/.test(read('src/stores/db.ts')), '');
+  // 只数模板里的**标题元素**（注释里也会写"② …"，别把注释数进来）
+  const arTpl50 = (ar50.match(/<template>([\s\S]*)<\/template>/) || [, ''])[1];
+  const blocks = (arTpl50.match(/<div class="bold">② 用账号从云端取回<\/div>/g) || []).length;
+  ok('找回面板里 ② 只渲染一次（截图里那块重复是长截图拼接，代码里只有一份）', blocks === 1, '出现 ' + blocks + ' 次');
+  ok('面板写明"忘了密码找管理员重置"并给出管理员入口',
+    /admin/.test(ar50) && /unimate3\.pages\.dev\/admin/.test(ar50), '');
+  ok('面板如实写明云端备份的范围（只带课表与记事）', /只带课表与记事/.test(ar50), '');
+
+  const pages50 = read('cloudflare/pages/_worker.js');
+  ok('Pages 中继转发管理员页面与接口（手机才打得开）',
+    /'\/admin', '\/v1\/admin\/list', '\/v1\/admin\/reset'/.test(pages50), '');
+
+  // 管理员重置：打桩 R2，真跑一遍"注册 → 管理员列账号 → 重置 → 旧密码失效、新密码可登录"
+  const worker50: any = await import('../cloudflare/sync-worker/src/index.js');
+  const realFetch50 = globalThis.fetch;
+  const store50 = new Map<string, Uint8Array>();
+  globalThis.fetch = (async (input: any, init: any = {}) => {
+    const req = input instanceof Request ? input : new Request(typeof input === 'string' ? input : input.url, init);
+    const u = new URL(req.url);
+    const path = u.pathname.replace(/^\/[^/]+\//, '');
+    const method = req.method.toUpperCase();
+    if (u.searchParams.get('list-type') === '2') {             // ListObjectsV2
+      const keys = [...store50.keys()].filter((k) => k.startsWith(u.searchParams.get('prefix') || ''));
+      return new Response('<?xml version="1.0"?><ListBucketResult>' + keys.map((k) => '<Key>' + k + '</Key>').join('') + '</ListBucketResult>',
+        { status: 200, headers: { 'Content-Type': 'application/xml' } });
+    }
+    if (method === 'PUT') { store50.set(path, new Uint8Array(await req.arrayBuffer())); return new Response(null, { status: 200 }); }
+    if (method === 'DELETE') { store50.delete(path); return new Response(null, { status: 204 }); }
+    const hit = store50.get(path);
+    if (!hit) return new Response('nf', { status: 404 });
+    return new Response(hit, { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as any;
+  const env50 = {
+    APP_ORIGINS: 'https://localhost', R2_BUCKET_NAME: 'unimate-sync', R2_ACCOUNT_ID: '0123456789abcdef0123456789abcdef',
+    R2_ACCESS_KEY_ID: 'k', R2_SECRET_ACCESS_KEY: 's', SYNC_OBJECT_PEPPER: 'p'.repeat(32),
+    ADMIN_KEY: 'admin-key-for-test-only', SYNC_RATE_LIMITER: { limit: async () => ({ success: true }) }
+  };
+  const call50 = (path: string, body: any) => worker50.default.fetch(new Request('https://sync.example' + path,
+    { method: 'POST', headers: { Origin: 'https://localhost', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), env50);
+  try {
+    const page = await worker50.default.fetch(new Request('https://sync.example/admin'), env50);
+    const html = await page.text();
+    ok('管理员页面能打开，且内置了与客户端一致的 PBKDF2 派生（浏览器里算 verifier）',
+      page.status === 200 && html.includes('PBKDF2') && html.includes('210000') && html.includes('unimate-auth-v1'), '');
+    ok('管理员页面不提供下载用户数据的能力（只有列账号 + 重置）',
+      !/\/v1\/backup/.test(html) && /重置密码/.test(html), '');
+
+    const noKey50 = await worker50.default.fetch(new Request('https://sync.example/v1/admin/list',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }), { ...env50, ADMIN_KEY: '' });
+    ok('没配 ADMIN_KEY 时管理员接口 503（其它功能不受影响）', noKey50.status === 503, String(noKey50.status));
+    const wrong50 = await call50('/v1/admin/list', { key: 'nope' });
+    ok('管理员密钥不对 → 403', wrong50.status === 403, String(wrong50.status));
+
+    const oldVerifier = await deriveAuthVerifier('reset-target', 'old-password-123');
+    const up = await call50('/v1/signup', { account: 'reset-target', verifier: oldVerifier });
+    ok('先注册一个账号用于验证重置流程', up.status === 201, String(up.status));
+    const listed: any = await (await call50('/v1/admin/list', { key: env50.ADMIN_KEY })).json();
+    ok('管理员能看到账号名单（含是否有云端备份）',
+      Array.isArray(listed.accounts) && listed.accounts.some((a: any) => a.account === 'reset-target'), JSON.stringify(listed).slice(0, 120));
+
+    const newVerifier = await deriveAuthVerifier('reset-target', 'new-password-456');
+    const reset: any = await (await call50('/v1/admin/reset', { key: env50.ADMIN_KEY, account: 'reset-target', verifier: newVerifier })).json();
+    ok('管理员重置成功并记录时间', reset.ok === true && !!reset.resetAt, JSON.stringify(reset));
+    const oldLogin = await call50('/v1/login', { account: 'reset-target', verifier: oldVerifier });
+    const newLogin = await call50('/v1/login', { account: 'reset-target', verifier: newVerifier });
+    ok('重置后：旧密码登录失败、新密码可用（这是"找管理员重置"的核心承诺）',
+      oldLogin.status === 401 && newLogin.status === 200, 'old=' + oldLogin.status + ' new=' + newLogin.status);
+  } finally {
+    globalThis.fetch = realFetch50;
+  }
 }
 
 console.log('\n通过：' + pass + ' 条 P3 同步断言');

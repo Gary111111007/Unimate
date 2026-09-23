@@ -140,9 +140,10 @@ export async function syncNow(): Promise<AutoSyncStatus> {
 export function initCloudAutoSync(db = useDb()): AutoSyncRunner {
   if (runner && wired) return runner;
   const runnerNew = createAutoSync({
+    // v2.50：自动同步上传的是"换机范围"的备份 —— 只有课表/记事/设置，不含二课记录与照片
     build: () => exportBackup(db.profile!.schoolId, db.profile!.name, db.session!.username,
       'schools/' + db.profile!.schoolId + '/users/' + db.session!.accountId,
-      db.accounts as Account[], db.session!.accountId).then((r) => r.bytes),
+      db.accounts as Account[], db.session!.accountId, 'study').then((r) => r.bytes),
     session: () => (db.settings.cloudAccount as CloudAccountSession | null) || null,
     enabled: () => db.settings.cloudAutoSync !== false,
     upload: (session, bytes) => accountUpload(session, bytes),

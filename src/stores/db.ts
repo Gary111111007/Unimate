@@ -356,6 +356,26 @@ function answerConfirm(ok: boolean): void {
     return accounts.value;
   }
 
+  /**
+   * 【v2.50】"从本机找回"：直接切到这台手机上记录过的某个账号。
+   *
+   * 产品负责人要求"在应用目录里记了账号信息，找回就直接从这儿找回"，所以这里**不再校验密码** ——
+   * 本机设备本身就是信任边界（能解锁这台手机的人本来也能看到本机数据）。
+   * 走的是和登录同一套 finishLogin()：有绑定学校就直接进主界面，没绑就去选校。
+   */
+  async function enterAccount(accountId: string): Promise<boolean> {
+    try {
+      await loadAccounts();
+      const acc = accounts.value.find((a) => a.id === accountId);
+      if (!acc) { notify('本机没有这个账号'); return false; }
+      acc.lastLoginAt = nowStamp();
+      try { await writeJson(await accountsPath(), accounts.value); } catch (e) { fail('记录登录时间', e); }
+      session.value = { accountId: acc.id, username: acc.username, displayName: acc.displayName, isDemo: acc.isDemo };
+      await finishLogin();
+      return true;
+    } catch (e) { fail('从本机找回', e); return false; }
+  }
+
   async function ensureDemoAccount(): Promise<Account | null> {
     try {
       await loadAccounts();
@@ -887,6 +907,8 @@ function hourTotal(kind: HourKind): number {
     recoveryOpen, openRecovery, closeRecovery,
     notifyCleanup,
     boot, selectSchool, applyProfile, changeSchool, addInterest, ensureDemoAccount, register, login, logout, switchSchool,
+    /** v2.50：「从本机找回」——切到本机记录过的账号（不校验密码，见函数注释） */
+    enterAccount,
     loadUserData, saveData, seedDemo, resetDemo, notify,
     /** v2.45：订阅"数据已落盘"的信号（自动同步用）。只登记回调，不做退订/去重 —— 调用方自己保证只注册一次 */
     onDataChanged,

@@ -53,6 +53,30 @@ const pendingUploadAccount = ref('');
 const pendingRestoreAccount = ref('');
 
 const cloudSession = computed(() => db.settings.cloudAccount || null);
+/**
+ * ② 本机记录过的账号（v2.50）。
+ * 产品负责人原话："第一个从本地找回应该是你在应用目录下记录了账号的一些信息，然后找回可以直接从这里找回。"
+ * 所以这里直接列 `accounts.json` 里记着的账号 + 它们各自的学校，点「进入」就切过去（本机设备即信任边界，不再要密码）。
+ */
+const localAccounts = computed(() => db.accounts.map((a) => ({
+  id: a.id,
+  name: a.displayName || a.username,
+  username: a.username,
+  isDemo: !!a.isDemo,
+  school: (a.schoolId && (db.profileOf(a.schoolId) as any)?.shortName) || '未选学校',
+  lastLoginAt: a.lastLoginAt || ''
+})));
+
+async function enterLocal(id: string): Promise<void> {
+  busy.value = true;
+  msg.value = '正在切回这个账号…';
+  try {
+    const ok = await db.enterAccount(id);
+    if (!ok) { msg.value = '没找到这个账号'; return; }
+    db.closeRecovery();
+  } catch (e: any) { msg.value = e?.message || '切换失败'; }
+  finally { busy.value = false; }
+}
 const autoSyncText = computed(() => {
   const s = autoSyncState.value;
   if (!db.settings.cloudAccount) return '未登录云端账号';
@@ -267,8 +291,9 @@ async function e2eeUpload(): Promise<void> {
   busy.value = true;
   syncMsg.value = '正在本地加密…';
   try {
+    // v2.50：端到端那条也是"换机"用途，同样只带课表/记事/设置
     const made = await guard('生成同步备份', exportBackup(db.profile.schoolId, db.profile.name, db.session.username,
-      userBase.value, db.accounts, db.session.accountId), 60_000, null);
+      userBase.value, db.accounts, db.session.accountId, 'study'), 60_000, null);
     if (!made) { syncMsg.value = '生成本地备份超时，请重试'; return; }
     const pack = await encryptForSync(made.bytes, acctPass.value, db.settings.sync || undefined, account);
     if (pack.recoveryCode) {
@@ -410,23 +435,38 @@ async function doFileRestoreWithPending(): Promise<void> {
       <div class="row"><div class="title grow">账号与找回</div><button class="btn sm ghost" @click="db.closeRecovery()">关闭</button></div>
 
       <div class="small muted" style="margin-top: 6px; line-height: 1.7">
-        换手机时：<b>读备份文件</b>，或者<b>用账号从云端取回</b>。服务器可能有点慢，请勿中途退出。
+        换手机时：从<b>本机找回</b> / <b>读备份文件</b> / <b>用账号从云端取回</b>。服务器可能有点慢，请勿中途退出。<br />
+        云端备份<b>只带课表与记事</b>；二课记录和照片留在本机，不占云端空间。
       </div>
 
-      <!-- ① 从本机文件恢复（产品负责人指定放第一位）：在登录页打开时它同时是"离线换机"入口 -->
+      <!-- ① 从本机找回（产品负责人指定放第一位）：直接列出这台手机上记录过的账号 -->
       <div class="card" style="margin-top: 12px; box-shadow: none">
-        <div class="bold">① 从本机文件恢复</div>
+        <div class="bold">① 从本机找回</div>
         <div class="small muted" style="margin-top: 4px">
-          选之前导出的 <b>.unimate.zip</b>（或第②步取回的备份）→ 预览 → 恢复。
-          还没登录也能用：选完会问你要不要接管成新的本机账号，直接进主界面。
+          这台手机上用过的账号都记在本机，点「进入」就切回去 —— 不用再输密码。
         </div>
-        <div class="field" style="margin-top: 10px"><label>备份文件</label><input type="file" accept=".zip,.umig" @change="pickFile" /></div>
+        <template v-if="localAccounts.length">
+          <div v-for="a in localAccounts" :key="a.id" class="li" style="padding: 10px 0">
+            <div class="grow">
+              <div class="bold small">{{ a.name }}<span v-if="a.isDemo" class="pill warn" style="margin-left: 6px">演示</span></div>
+              <div class="small muted">{{ a.username }} · {{ a.school }}<template v-if="a.lastLoginAt"> · 上次 {{ a.lastLoginAt }}</template></div>
+            </div>
+            <button class="btn sm ghost" :disabled="busy" @click="enterLocal(a.id)">进入</button>
+          </div>
+        </template>
+        <div v-else class="small muted" style="margin-top: 8px">这台手机还没有记录过任何账号。</div>
+
+        <div class="hairline" style="margin: 12px 0"></div>
+        <div class="small muted" style="margin-bottom: 8px">
+          或者：从<b>备份文件</b>恢复（换机时旧设备导出的 <b>.unimate.zip</b>）→ 预览 → 恢复。没登录也能用。
+        </div>
+        <div class="field"><input type="file" accept=".zip,.umig" @change="pickFile" /></div>
         <div v-if="fileInfo" class="card small" style="background: var(--soft); box-shadow: none">{{ fileInfo }}</div>
-        <div class="chips" style="margin: 10px 0">
+        <div v-if="fileB64" class="chips" style="margin: 10px 0">
           <button class="chip sm" :class="{ on: mode === 'overwrite' }" @click="mode = 'overwrite'">覆盖（自动留底）</button>
           <button class="chip sm" :class="{ on: mode === 'merge' }" @click="mode = 'merge'">合并（按 id）</button>
         </div>
-        <button class="btn block" :disabled="!fileB64 || busy" @click="doFileRestoreWithPending">开始恢复</button>
+        <button v-if="fileB64" class="btn block" :disabled="busy" @click="doFileRestoreWithPending">开始恢复</button>
         <div v-if="msg" class="small muted" style="margin-top: 8px">{{ msg }}</div>
       </div>
 
@@ -439,6 +479,10 @@ async function doFileRestoreWithPending(): Promise<void> {
         <div class="field" style="margin-top: 10px"><label>账号</label><input v-model.trim="cloudAcct" autocomplete="off" placeholder="3~64 个字符" /></div>
         <div class="field"><label>密码</label><input v-model="cloudPass" type="password" autocomplete="off" placeholder="至少 8 个字符，App 不会保存" /></div>
         <button class="btn block" :disabled="busy" @click="fetchFromCloud">{{ busy ? '取回中，请勿退出…' : '取回云端课表' }}</button>
+        <div class="small muted" style="margin-top: 8px">
+          忘了密码？云端目前只能由管理员重置 —— 用电脑或手机打开
+          <b>unimate3.pages.dev/admin</b>（需要管理员密钥）。
+        </div>
         <div class="small muted" style="margin-top: 8px">服务器可能有点慢，通常十几秒到一分钟（照片越多越慢）。</div>
         <div v-if="cloudMsg" class="small muted" style="margin-top: 8px">{{ cloudMsg }}</div>
       </div>

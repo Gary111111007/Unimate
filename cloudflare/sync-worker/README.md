@@ -33,6 +33,9 @@ Worker 有两组能力（v2.43 起）：
 5. **（v2.43 新增，建议做）** `npx wrangler secret put DATA_KEY` —— 填一串随机字符（至少 32 字节）。它是账号备份的落盘密钥。
    不设也能跑（界面会提示"未设落盘密钥"），但那样云端备份就只有 R2 的静态加密兜底。
    **这条 secret 丢了 = 已上传的账号备份解不开**，跟其他 secret 一样：只在 Cloudflare 保存，别写进仓库/聊天/截图。
+5b. **（v2.50 新增）** `npx wrangler secret put ADMIN_KEY` —— 管理员密钥，用来打开「忘记密码 → 管理员重置」页面。
+   不设的话管理员接口一律返回 503（其它功能不受影响）。管理员页面地址：`https://unimate3.pages.dev/admin`（电脑、手机都能开）。
+   **管理员能力被刻意收窄**：只列账号名单 + 重置密码，**不能下载用户数据**；重置后旧设备的会话令牌立即失效。
 6. 执行 `npm run deploy`，确认地址为 `https://unimate-sync.2025040140.workers.dev`。
 7. **（v2.43 起）改过 Worker 代码后必须重新 deploy**：账号 API 是新增路由，不 deploy 的话 App 会提示"服务器上的账号接口还没部署"。
 8. 打开 `/health`，应返回 `{"ok":true,"service":"unimate-sync","atRest":<bool>,"accounts":true}`。
