@@ -1,0 +1,150 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/uni-assistant-bridge.schema.json",
+  "title": "UniAssistantBridge",
+  "description": "Layer A：Android 侧唯一 Interface 的 DTO 契约。对应主规划 **v2.3.2 §1.4** 的正式接口定义，逐字段转写。\n\n【与 v1.0 的区别】v2.3.2 已正式冻结 `BusySlot` / `TodoSummary` / `ActionCard` 的字段与跨字段不变量，本文件不再含任何【推断】字段（旧的 OQ-10 已关闭）。\n\n【两层结构】Layer A（本文件）是 App 内部形状；Layer B（request/response.schema.json，**v1.1**）是线上形状。由 `N8nAdapter` 双向投影，映射表见 docs/android-embed-contract.md。两个 Layer 的字段绝不互相泄漏。\n\n【跨字段不变量不在本 schema 里表达】JSON Schema 无法表达时间先后与条件必填。三条不变量由 tests 的不变量组单独断言——见 fixtures/contract-cases/invariants.cases.mjs。**不要**把不变量写成 schema 关键字却没人校验。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request", "response"],
+  "properties": {
+    "request": { "$ref": "#/definitions/UniRequest" },
+    "response": { "$ref": "#/definitions/UniResponse" }
+  },
+  "definitions": {
+    "UniRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "now", "timezone", "context"],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "用户原话。与 Layer B 的 message 同源同界。"
+        },
+        "now": {
+          "type": "string",
+          "format": "date-time",
+          "description": "客户端当前时间。投影到 Layer B 的 timestamp。"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "IANA 时区名。投影到 Layer B 的 timezone。"
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "本机上下文。**注意：它不是线上胶囊**——投影到 Layer B 的 `contextCapsule` 时会被剥离字段，见 android-embed-contract.md 的映射表。",
+          "properties": {
+            "schedule": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/BusySlot" },
+              "description": "主规划未规定条数上界，故此处不设 maxItems。"
+            },
+            "todoSummary": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/TodoSummary" },
+              "description": "主规划未规定条数上界，故此处不设 maxItems。"
+            }
+          }
+        }
+      }
+    },
+
+    "UniResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["answer", "source", "cards", "explain", "offlineCapable", "requestId"],
+      "properties": {
+        "answer": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "给用户看的一句话。"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["local_rule", "n8n_rule", "llm_fallback"],
+          "description": "§1.4 正式枚举。比赛 MVP 只可能取 local_rule / n8n_rule；llm_fallback 需 E12 确认后才可能出现（当前保持关闭，是死分支）。"
+        },
+        "cards": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/ActionCard" },
+          "description": "主规划未规定条数上界，故此处不设 maxItems。"
+        },
+        "explain": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 200 },
+          "description": "§1.4 创新点 3『可解释』。规则命中的依据要能在这里说清，答辩现场可核对。"
+        },
+        "offlineCapable": {
+          "type": "boolean",
+          "description": "本次回答是否在断网下同样成立。断网时核心查询必须仍可答（§1.4 MVP 验收）。"
+        },
+        "requestId": { "type": "string", "format": "uuid" }
+      }
+    },
+
+    "BusySlot": {
+      "description": "§1.4 v2.3.2 正式定义：interface BusySlot { startAt; endAt; title?; location?; periodLabel? }\n\n【不变量】endAt 必须晚于 startAt（由 tests 不变量组断言）。\n【投影规则】title / location / periodLabel **只属于 Layer A**——本机用它们回答『下一节什么课、在哪』；投影到线上胶囊时必须**全部剥离**，胶囊里只留 startAt/endAt。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startAt", "endAt"],
+      "properties": {
+        "startAt": { "type": "string", "format": "date-time" },
+        "endAt": { "type": "string", "format": "date-time" },
+        "title": { "type": "string", "maxLength": 50, "description": "仅本机可见。禁止进入胶囊。" },
+        "location": { "type": "string", "maxLength": 50, "description": "仅本机可见。禁止进入胶囊。" },
+        "periodLabel": { "type": "string", "maxLength": 20, "description": "如『第3-4节』。仅本机可见。禁止进入胶囊。" }
+      }
+    },
+
+    "TodoSummary": {
+      "description": "§1.4 v2.3.2 正式定义：interface TodoSummary { title; dueAt?; done }\n\n【投影规则】`title` **只在本机使用**；E12 未确认时线上胶囊不得携带标题或正文，只能携带数量与最近截止时间——即折叠成 `todoStatus{pendingCount, nextDueAt}`。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "done"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 50, "description": "仅本机可见。禁止进入胶囊。" },
+        "dueAt": { "type": "string", "format": "date-time" },
+        "done": { "type": "boolean", "description": "§1.4 明确『必填』。" }
+      }
+    },
+
+    "ActionCard": {
+      "description": "§1.4 v2.3.2 正式定义：interface ActionCard { type; title; time?; impact?; operation; noteDraft?; requiresConfirmation }\n\n【不变量】\n  ① `operation === 'note.create'` 时，`noteDraft` 必填 **且** `requiresConfirmation === true`；\n  ② 其它 operation **不得**携带 `noteDraft`。\n两条都由 tests 不变量组断言（JSON Schema 表达不了条件必填）。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "operation", "requiresConfirmation"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["note_draft", "schedule_hint", "conflict_hint", "brief_item"]
+        },
+        "title": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "time": { "type": "string", "format": "date-time" },
+        "impact": { "type": "string", "maxLength": 200 },
+        "operation": {
+          "type": "string",
+          "enum": ["none", "note.create", "open.schedule"],
+          "description": "卡片准备执行的动作。`none` = 纯展示，不引发任何写入。"
+        },
+        "noteDraft": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["title"],
+          "description": "仅在 operation === 'note.create' 时出现（不变量 ②）。",
+          "properties": {
+            "title": { "type": "string", "minLength": 1, "maxLength": 50 },
+            "remindAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        "requiresConfirmation": {
+          "type": "boolean",
+          "description": "写入类卡片必须为 true（不变量 ①）。App 侧统一走主工程 db.confirm / ConfirmDialog；P5 工位不实现 UI。"
+        }
+      }
+    }
+  }
+}

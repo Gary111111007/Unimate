@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/tool.notes.create.schema.json",
+  "title": "notes.create",
+  "description": "逐字对应主规划 §6.5 的全文。\n【比赛口径】MVP 只产出待确认的 ActionCard，不写数据库（§1.4、§十一 n3）；本 schema 描述的是【写入接口的参数契约】，赛后用。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "idempotencyKey", "title", "content"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "idempotencyKey": { "type": "string", "format": "uuid", "minLength": 16, "maxLength": 64 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 50 },
+    "content": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "remindAt": { "type": "string", "format": "date-time" },
+    "tags": {
+      "type": "array",
+      "maxItems": 5,
+      "items": { "type": "string", "maxLength": 12 }
+    }
+  }
+}

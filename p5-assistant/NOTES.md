@@ -1,5 +1,48 @@
 # P5 进展记录（接手的人从这里开始写）
 
+## 📦 交付物在哪（2026-09-25 起）
+
+**`p5-assistant/n8n/`** —— 完整的 n8n Agent 编排层，**已随本仓库**（不再依赖仓库外的 `t\n8n\`）。
+
+```
+p5-assistant/n8n/
+├── core/        本机规则引擎（纯 TS，无构建步骤，Node 原生类型擦除直接跑）
+├── schemas/     14 个 .schema.json（Layer B v1.1）
+├── workflows/   6 个 n8n Workflow JSON
+├── tests/       四套测试 + lib/（**不需要 npm install**）
+├── tools/       生成器与真实运行/顺序断言工具
+├── fixtures/    纯虚构 fixture（无任何真实学生数据）
+├── docs/ ops/ prompts/   设计与运维文档
+└── credentials/ **空目录**（只允许写凭据名称与用途，永远不放值）
+```
+
+**怎么自检**（在 `p5-assistant/n8n/` 下）：
+
+```bash
+node tests/run-contract-tests.mjs           # 303
+node tests/run-uni-core-tests.mjs           # 405
+node tests/run-schedule-adapter-tests.mjs   # 1,221
+node tests/run-security-tests.mjs           # 1,057
+# 合计 2,986 断言，0 失败，退出码全 0
+```
+
+**先读哪几份**：`report.md`（一页结论）→ `docs/task-state.md`（门禁与阶段）→
+`docs/open-questions.md`（未决问题）→ `docs/decision-log.md`（为什么这么设计）。
+
+> ### ⚠️ 真源约定（2026-09-25 起，请照此执行）
+>
+> | | 位置 | 地位 |
+> | --- | --- | --- |
+> | ✅ **正式交付真源** | `p5-assistant/n8n/` | **纳入 Git**，随分支提交 |
+> | 📦 历史工作副本 | `F:\A_LIU_Astrspire\t\n8n\`（仓库外） | **保留**，不随分支提交 |
+>
+> - **后续修改只在仓库内的 `p5-assistant/n8n/` 进行。**
+> - **不再要求两边持续双向同步。**
+> - **不删除、不移动、不覆盖历史工作副本。**
+> - 工作副本里出现的 `C:\Users\...` 与 `F:\A_LIU_Astrspire\...` 都是**本机历史证据路径**，不属于交付内容。
+
+---
+
 ## 现在的状态
 
 - [ ] 还没开工
@@ -222,7 +265,76 @@ Android 嵌入、APK 出包、真机行为。**全部逐条列为未验证。**
 
 ### 隔离目录
 
-现在有 7 个，**全部保留**（P11 的 `unimate-n8n-iso-p11-runtime-20260925` 是**破损态证据**，别删）：`n8n-iso`、`-p07`、`-p071`、`-p08`、
-`unimate-n8n-iso-p11-runtime2-20260925`、`unimate-n8n-iso-p11-roundtrip-20260925`。
-`tests/roundtrip-check.mjs` 现在有路径守卫（不许删、不许复用、不许指向保留目录），
+现在有 **9 个**，**全部保留**（`unimate-n8n-iso-p11-runtime-20260925` 是**破损态证据**，别删）：
+`n8n-iso`、`-p07`、`-p071`、`-p08`、`unimate-n8n-iso-p11-runtime-20260925`、
+`unimate-n8n-iso-p11-runtime2-20260925`、`unimate-n8n-iso-p11-roundtrip-20260925`、
+**`unimate-n8n-iso-p09-20260925`**、**`unimate-n8n-iso-p09-roundtrip-20260925`**（后两个是 P09 复跑）。
+准确清单以 `n8n/docs/open-questions.md` 的 `RESERVED-ISO-DIRS` 块为准（守卫直接读它）。
+`tests/roundtrip-check.mjs` 有路径守卫（不许删、不许复用、不许指向保留目录），
 **删除任何目录都需要产品负责人二次确认**。
+
+---
+
+## 接手记录（2026-09-25，P09 —— 可观测性，比赛范围内的部分）
+
+### 你接线时会碰到的一件事：网关多了两个节点
+
+`agent_gateway` 从 6 节点变成 **8 节点**，链路是：
+
+```
+Agent Webhook → Precheck Payload → Precheck OK? ─┬─(true)→ Route To Router → Shape Response
+                                                 └─(false)──────────────────↗
+Shape Response → Build Log Input → Log Request → Respond
+```
+
+**对 Android 侧是零影响**：请求体、响应体（仍是 §6.2 那 8 个字段）、错误码**一个都没变**。
+变化的只是 n8n 内部多写了一条脱敏日志。
+
+### 一条你可能会踩的口径（写出来免得再踩一次）
+
+**`Respond` 的响应体不能读 `$json`。** 它排在 `Log Request` 之后，那时的 `$json` 是
+**观测工作流产出的日志行**——读它等于把日志字段发给客户端。现在是
+`={{ $('Shape Response').first().json }}`。**改这个节点前先看 `t/n8n/docs/observability.md` §4。**
+
+### 这条链路是**实测**出来的，不是设计出来的
+
+第一版写成"`Shape Response` 分叉喂两个节点"，**结构核对、单测、往返核对全绿**，
+隔离实例一跑才发现执行顺序是 `Respond` 先、日志后——与 §4.11「响应返回前记录」相反。
+**把分叉数组顺序倒过来也没用**。最后改成串接才确定下来。
+所以：**改了 Workflow 就跑一次真实实例**（`t/n8n/ops/p11-runtime-runbook.md`），别推理。
+
+### 新增的两个可执行工具（都在 `t/n8n/tools/`）
+
+| 工具 | 作用 | 什么时候跑 |
+| --- | --- | --- |
+| `p11-runtime-check.mjs` | 隔离实例上打 16 个场景 + 20 次一致性 | 改了 Workflow 之后 |
+| `check-log-order.mjs` | 从 **n8n 执行数据**里断言「记录先于应答」 | 同上，紧跟在前一个之后 |
+
+## 接手记录（2026-09-25，四项裁决落地）
+
+### 你只要记住这四条口径
+
+| # | 裁决 | 对你的影响 |
+| --- | --- | --- |
+| 1 | **比赛版不单设第七个 Workflow** | 错误处理继续用现有 6 个 Workflow 内的**统一 Error Envelope**。独立 `agent_error_handler` 列为**部署阶段可重新评估项**。**不得宣称生产日志持久化 / 告警 / 故障恢复已验证** |
+| 2 | **9 个隔离目录全部保留** | 本次无删除授权。**也不要为了"整理目录"再跑往返核对造新副本** |
+| 3 | **比赛交付范围内正式关闭 LLM** | **不配置模型 Key**，不向模型发送课表/姓名/成绩/胶囊。**未来启用必须作为新版本重新评审**（用户明确同意 + 数据最小化 + 服务端 Secret + 「关于」页如实披露） |
+| 4 | **截断时暂不生成"查看全部"卡** | `MAX_CARDS = 12` 不变，`open.schedule` 路径不变。**当前不得宣称"查看全部交互已实现"**——没有界面能消费它 |
+
+### 顺带修到的一样东西（你接线时会用到）
+
+G1 门禁判据里有一条是「`prompts/data-boundary.md` 与实现一致」。核对时发现**这条从来没人盯**，
+而**文档已经漂了**——它还写着 `periodLabel`（"第3-4节"）和记事标题**可以出网**，
+而实现早在 P02.1 就把它们剥掉了。
+
+已重写为 **v2.0**，并新增 **K 组**断言：文档里的机器可读块与 `request.schema.json`
+**逐字段精确比对**，多一个少一个都报红。**所以你接线时以 `data-boundary.md` §2.1 那张表为准**——
+那是有断言钉着的。
+
+### P09 新增但**未验证**的（别写成通过）
+
+- **`agent_error_handler` 没建**：它会是第 7 个 Workflow，与"比赛版最多 6 个"冲突（见 `t/n8n/docs/open-questions.md` **OQ-16**）。
+- **告警一条都没接**：`t/n8n/ops/alerts.md` 把 §9.3 八条逐条标注了"能否落地"，结论是**零条**可在比赛环境触发。
+- rollup / 日报未实现；`agent_log` 表未部署；故障注入未做。
+- `latency_ms` / `input_length` 在本机网关**取不到，恒为 `null`**（不是 bug，是数据边界的结果；补法记账在 `observability.md` §4.3）。
+- **延迟 / 命中率 / 成本一个数字都没有**——没有真实流量，不填。

@@ -1,0 +1,126 @@
+{
+  "id": "unimate-schedule-query",
+  "name": "schedule_query",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "requestId"
+            },
+            {
+              "name": "userId"
+            },
+            {
+              "name": "date"
+            },
+            {
+              "name": "dateRange"
+            },
+            {
+              "name": "timezone"
+            },
+            {
+              "name": "termStart"
+            },
+            {
+              "name": "periods"
+            },
+            {
+              "name": "rows"
+            }
+          ]
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000024",
+      "name": "Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Clamp Range（主规划 §4.7 节点 2）──────────────────────────\n// 日期范围上限 31 天：**超出直接拒，不静默截断**——截断会让用户以为查了整学期。\n// date 与 dateRange 互斥（tool.schedule.query.schema.json 的 oneOf），这里再兜一次。\n//\n// 【硬约束】不访问网络、不读 $env / process.env、不碰教务页面。\nconst d = $input.first().json;\nconst DATE_RE = /^\\d{4}-\\d{2}-\\d{2}$/;\nconst day = (s) => Date.parse(s + 'T00:00:00Z');\n\nlet from = null, to = null, rangeError = null;\nif (d.date !== undefined && d.dateRange !== undefined) {\n  rangeError = 'date 与 dateRange 不能同时给';\n} else if (d.date !== undefined) {\n  from = d.date; to = d.date;\n} else if (d.dateRange !== undefined) {\n  from = d.dateRange.from; to = d.dateRange.to;\n} else {\n  rangeError = '缺少 date 或 dateRange';\n}\n\nif (!rangeError) {\n  if (!DATE_RE.test(String(from)) || !DATE_RE.test(String(to))) {\n    rangeError = '日期必须是 YYYY-MM-DD';\n  } else if (day(to) < day(from)) {\n    rangeError = 'to 早于 from';\n  } else if ((day(to) - day(from)) / 86400000 > 30) {\n    rangeError = '日期范围超过 31 天';   // 含端点最多 31 个自然日\n  }\n}\n\nreturn [{ json: { ...d, from, to, rangeError } }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000025",
+      "name": "Clamp Range",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Schedule Adapter（学校差异全部在这里；§4.7 节点 5）─────────\n// 做两件学校特有的事：① 节次表映射（第 3-4 节 → 10:00–11:40）\n//                    ② 周次展开（'1-16' + 单双周 → 16 个具体日期）\n// 节次表由调用方传入 —— 真实学校的作息时间不许硬编码进本文件。\n//\n// 【硬约束】不访问网络、不读 $env / process.env、不碰教务页面、不含任何学校选择器。\nconst d = $input.first().json;\nif (d.rangeError) return [{ json: { ...d, busySlots: [], dropped: 0 } }];\n\nconst DATE_RE = /^\\d{4}-\\d{2}-\\d{2}$/;\nconst HM_RE = /^([01]\\d|2[0-3]):[0-5]\\d$/;\nconst tz = d.timezone || 'Asia/Shanghai';\n// 课表按【学校当地时】表达，窗口按【使用者当地日】——跨时区时两者不是同一天，必须分开。\nconst schedTz = d.scheduleTimezone || tz;\n\nconst wd = (iso) => { const w = new Date(iso + 'T12:00:00Z').getUTCDay(); return w === 0 ? 7 : w; };\nconst shift = (iso, n) => {\n  const t = new Date(iso + 'T12:00:00Z');\n  t.setUTCDate(t.getUTCDate() + n);\n  return t.toISOString().slice(0, 10);\n};\nconst mondayOf = (iso) => (DATE_RE.test(String(iso)) ? shift(iso, 1 - wd(iso)) : null);\n// Intl.formatToParts 拿到 Invalid Date 会直接抛 RangeError。\n// 本节点的契约是不抛异常，所以先挡一道——与 core/uni-core.ts 的 isRealDate 同一处防线。\nconst offsetOf = (zone, at) => {\n  if (isNaN(at.getTime())) return '+00:00';\n  const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' }).formatToParts(at);\n  const name = (parts.find((p) => p.type === 'timeZoneName') || {}).value || 'GMT+00:00';\n  const m = name.match(/GMT([+-]\\d{2}:\\d{2})/);\n  return m ? m[1] : '+00:00';\n};\nconst atLocal = (zone, dateISO, hm) => dateISO + 'T' + hm + ':00' + offsetOf(zone, new Date(dateISO + 'T12:00:00Z'));\n\nconst parseWeeks = (expr, parity) => {\n  const set = {};\n  String(expr === null || expr === undefined ? '' : expr).split(',').forEach((part) => {\n    const s = part.trim();\n    const m = s.match(/^(\\d{1,2})\\s*-\\s*(\\d{1,2})$/);\n    if (m) { for (let w = Number(m[1]); w <= Number(m[2]); w++) set[w] = 1; }\n    else if (/^\\d{1,2}$/.test(s)) set[Number(s)] = 1;\n  });\n  return Object.keys(set).map(Number)\n    .filter((w) => w >= 1 && w <= 30)\n    .filter((w) => (parity === 'odd' ? w % 2 === 1 : parity === 'even' ? w % 2 === 0 : true))\n    .sort((a, b) => a - b);\n};\n\nconst table = {};\n(d.periods || []).forEach((p) => { if (p && Number.isInteger(p.period)) table[p.period] = p; });\n\nconst termMonday = mondayOf(d.termStart);\nconst rows = d.rows || [];\nlet dropped = 0;\nconst courses = [];\nif (!termMonday) {\n  dropped = rows.length;   // 学期起点不可解析 → 整份丢弃，不猜\n} else {\n  rows.forEach((r) => {\n    if (!r || !r.courseName || !Number.isInteger(r.weekday) || r.weekday < 1 || r.weekday > 7) { dropped++; return; }\n    const weeks = parseWeeks(r.weeks, r.parity);\n    const nums = (Array.isArray(r.periods) ? r.periods.slice() : []).sort((a, b) => a - b);\n    const first = nums.length ? table[nums[0]] : null;\n    const last = nums.length ? table[nums[nums.length - 1]] : null;\n    if (!weeks.length || !first || !last || !HM_RE.test(first.start) || !HM_RE.test(last.end)) { dropped++; return; }\n    const label = nums.length === 1 ? '第' + nums[0] + '节' : '第' + nums[0] + '-' + nums[nums.length - 1] + '节';\n    weeks.forEach((w) => {\n      courses.push({\n        date: shift(termMonday, (w - 1) * 7 + (r.weekday - 1)),\n        startHM: first.start, endHM: last.end,\n        name: r.courseName, location: r.room || null, periodLabel: label,\n      });\n    });\n  });\n}\n\nconst seen = {};\nconst busySlots = [];\n// 窗口判定用【时刻交叠】，不是日期字符串落在区间里 —— 与 core/schedule-reader.ts 的\n// project() 以及 UniCore 内部的 slotsIn() 三处边界规则必须完全一致。\nconst fromMs = Date.parse(atLocal(tz, d.from, '00:00'));\nconst toMs = Date.parse(atLocal(tz, d.to, '23:59'));\nconst windowOk = isFinite(fromMs) && isFinite(toMs) && toMs >= fromMs;\n\nif (windowOk) {\n  courses.forEach((c) => {\n    const startAt = atLocal(schedTz, c.date, c.startHM);\n    const endAt = atLocal(schedTz, c.date, c.endHM);\n    if (!(Date.parse(endAt) > Date.parse(startAt))) { dropped++; return; }  // 反序/零长段一律丢\n    if (!(Date.parse(endAt) > fromMs && Date.parse(startAt) < toMs)) return;\n    const key = c.name + '|' + c.date + '|' + c.startHM + '|' + c.endHM;    // 同名同时段是重复行；不同名是真实冲突\n    if (seen[key]) return;\n    seen[key] = 1;\n    const slot = { startAt: startAt, endAt: endAt, title: c.name };\n    if (c.location) slot.location = c.location;\n    if (c.periodLabel) slot.periodLabel = c.periodLabel;\n    busySlots.push(slot);\n  });\n}\nbusySlots.sort((a, b) =>\n  Date.parse(a.startAt) - Date.parse(b.startAt) ||\n  String(a.title).localeCompare(String(b.title)) ||\n  String(a.endAt).localeCompare(String(b.endAt)));\n\nreturn [{ json: { ...d, busySlots: busySlots, dropped: dropped } }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000026",
+      "name": "Schedule Adapter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Build Result（主规划 §4.7 节点 6）─────────────────────────\n// 派生字段在 Adapter 侧算完，不交给模型算（§4.7 约束）。\n//\n// ★ 仍然【不】产出 coursesInTheWindow（\"范围内有几门课\"）——但理由变了：\n//   P07 时理由是「OQ-11 未裁决，不能绕过」；OQ-11 已于 P07.1 裁决为**实现**，\n//   而裁决同时写明「**优先在本机 UniCore 内完成统计，不为这个计数向公开 DTO 增加字段**」。\n//   所以统计口径（连续时段合并）只允许存在于一处：UniCore 的 handleWeekPlan。\n//   在这里再给一个数，就会出现**第二个口径**——而两个口径迟早会不一致。\n//\n// 【硬约束】不访问网络、不读 $env / process.env、不碰教务页面。\nconst d = $input.first().json;\nconst slots = d.busySlots || [];\nreturn [{ json: {\n  success: !d.rangeError,\n  intent: d.intent ?? null,\n  data: {\n    from: d.from ?? null,\n    to: d.to ?? null,\n    busySlots: slots,\n    firstStart: slots.length ? slots[0].startAt : null,\n    dropped: d.dropped ?? 0,\n  },\n  errorCode: d.rangeError ? 'E_SCHEMA' : null,\n  retryable: false,\n  cacheMode: 'disabled',\n  llmUsed: false,\n  requestId: d.requestId ?? null,\n} }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000027",
+      "name": "Build Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Input": {
+      "main": [
+        [
+          {
+            "node": "Clamp Range",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clamp Range": {
+      "main": [
+        [
+          {
+            "node": "Schedule Adapter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Adapter": {
+      "main": [
+        [
+          {
+            "node": "Build Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

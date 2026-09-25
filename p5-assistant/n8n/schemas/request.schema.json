@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/request.schema.json",
+  "title": "UniWireRequest",
+  "description": "Layer B：n8n 线上请求契约。**v1.1**，对应主规划 v2.3.2 §6.1。\n\n【v1.1 变更】`schemaVersion` 由 1.0 升为 1.1；新增可选 `contextCapsule`（关闭 OQ-09）。这是破坏性变更：旧 1.0 请求一律被 `Version Check` 拒绝为 `E_VERSION_UNSUPPORTED`(426)。\n\n【Tool 子契约不跟随升级】`tool.*.schema.json` 继续独立使用各自的 1.0——它们与线上 envelope 是两套契约，不共用版本号。\n\n调用方 = N8nAdapter（出站）；提供方 = agent_gateway。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "inputType",
+    "message",
+    "timezone",
+    "timestamp",
+    "clientVersion"
+  ],
+  "definitions": {
+    "TimeWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startAt", "endAt"],
+      "properties": {
+        "startAt": { "type": "string", "format": "date-time" },
+        "endAt": { "type": "string", "format": "date-time" }
+      },
+      "description": "跨字段不变量：endAt 必须晚于 startAt。JSON Schema 表达不了时间先后，由 tests 的不变量组单独断言。"
+    },
+    "CapsuleBusySlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startAt", "endAt"],
+      "properties": {
+        "startAt": { "type": "string", "format": "date-time" },
+        "endAt": { "type": "string", "format": "date-time" }
+      },
+      "description": "胶囊里的忙闲段【只有时间】。课程名/教师/教室不是被忽略，是 schema 层直接拒绝（additionalProperties: false）。"
+    }
+  },
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "enum": ["1.1"],
+      "description": "不在白名单内 → 网关返回 E_VERSION_UNSUPPORTED(426)。**1.0 已作废**。"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "由网关生成或合法透传；全程用于端到端追踪。"
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "format": "uuid",
+      "description": "【仅写操作必填】。主规划 §6.1 明写此约束；schema 层无法表达条件必填，由 `tool.notes.create.schema.json` 强制。"
+    },
+    "userId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "【非权威】服务端从 token 解析的 userId 才是权威值。此字段只用于日志比对；与 token 不一致 → 401 E_AUTH。"
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "会话上下文键。绑定到 memory 的 sessionKey；禁止硬编码 'default'，禁止走 $fromAI。"
+    },
+    "inputType": {
+      "type": "string",
+      "enum": ["text", "voice"]
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "用户原话。**始终只放原话**——不把胶囊 JSON 塞进 message（§6.1 明令）。上界 500 与 §4.2.1 长度闸门、§7.5 的 agent_log.input_length CHECK 一致。"
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "IANA 时区名。相对时间换算【只】用它，不用 n8n 服务器时区（§4.2.2）。"
+    },
+    "locale": {
+      "type": "string",
+      "maxLength": 16
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "客户端时间，ISO-8601 带偏移。"
+    },
+    "clientVersion": {
+      "type": "string",
+      "maxLength": 32
+    },
+    "contextCapsule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectionVersion", "purpose", "window"],
+      "description": "【v1.1 新增，可选】最小数据胶囊。只在远端确实需要结构化上下文时由 N8nAdapter 生成；它不是 `UniRequest.context` 的原样复制，白名单只有本 schema 列出的这些（§6.1）。\n\n禁止进入胶囊：课程名、教师、教室、记事标题/正文、姓名、学号、照片、账号与登录凭据——全部由 additionalProperties: false 在 schema 层拒绝，不靠自觉。",
+      "properties": {
+        "projectionVersion": {
+          "const": "1",
+          "description": "投影规则版本。与 Layer B 的 schemaVersion 解耦：胶囊字段结构变了才升它。"
+        },
+        "purpose": {
+          "type": "string",
+          "enum": ["availability", "conflict", "brief"],
+          "description": "用途。决定远端该用哪套派生逻辑，也便于日志里按用途统计。"
+        },
+        "window": {
+          "$ref": "#/definitions/TimeWindow",
+          "description": "查询窗口。必填——没有窗口，忙闲段无从解释。"
+        },
+        "busySlots": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "$ref": "#/definitions/CapsuleBusySlot" },
+          "description": "窗口内的忙闲段，最多 20 条（§6.1）。"
+        },
+        "todoStatus": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pendingCount"],
+          "description": "待办【统计】，不是待办列表——只汇总数量与最近截止时间，不带标题。",
+          "properties": {
+            "pendingCount": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "未完成待办数。负数无意义。上界主规划未规定，故不设。"
+            },
+            "nextDueAt": { "type": "string", "format": "date-time" }
+          }
+        }
+      }
+    }
+  }
+}

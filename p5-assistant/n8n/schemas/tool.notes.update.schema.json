@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/tool.notes.update.schema.json",
+  "title": "notes.update",
+  "description": "参数契约来自主规划 §4.5。\n【约束】必须唯一定位目标：0 条 → E_NOT_FOUND；≥2 条 → E_AMBIGUOUS（candidates 至多 5 条且不含正文）。带 expectedVersion 时做乐观锁，不匹配 → E_CONFLICT。不允许『模糊匹配到多条就改第一条』。\n【比赛口径】不进入 MVP，统一返回 E_UNSUPPORTED（§1.4）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "userId", "patch"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "userId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "targetId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "targetHint": { "type": "string", "maxLength": 50 },
+    "patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "content": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "remindAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "expectedVersion": { "type": "integer", "minimum": 0 }
+  },
+  "anyOf": [
+    { "required": ["targetId"] },
+    { "required": ["targetHint"] }
+  ]
+}

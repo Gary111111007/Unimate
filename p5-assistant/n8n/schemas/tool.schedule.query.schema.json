@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/tool.schedule.query.schema.json",
+  "title": "schedule.query",
+  "description": "参数契约来自主规划 §4.7。【比赛 MVP 的 6 个 Workflow 之一】\n【约束】学校差异全部在 Schedule Adapter 里，工作流与提示词都不出现学校特有的解析规则。日期范围上限 31 天（§4.7 节点 2）。\n【时间语义默认值】P-01 取『未来最近的那一个』；P-02 取今年不跨年——两者均待产品负责人确认（OQ-07）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "userId", "timezone"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "userId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "单日查询。与 dateRange 互斥。"
+    },
+    "dateRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "description": "范围查询。跨度上界 31 天由 Clamp Range 节点强制（JSON Schema 表达不了跨字段算术，故此处只校验格式）。",
+      "properties": {
+        "from": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "to": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+      }
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "相对时间换算只用它（§4.2.2）。"
+    }
+  },
+  "oneOf": [
+    { "required": ["date"] },
+    { "required": ["dateRange"] }
+  ]
+}

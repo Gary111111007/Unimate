@@ -1,0 +1,10 @@
+# n8n 工位行尾规则
+#
+# 让这份交付物的检出**完全确定**，不受 core.autocrlf 影响。
+#
+# 为什么需要它：本仓库 core.autocrlf=true，新克隆出来是 CRLF。
+# 虽然四套测试已经对 CRLF 免疫（`stripComments` 已修，见 tests/README.md §八），
+# 但"能跑"和"确定"是两件事 —— 有了这条规则，任何人克隆下来拿到的都是同一份字节。
+#
+# 历史工作副本（仓库外的 t\n8n\）不受本文件影响，保持原样。
+* text=auto eol=lf

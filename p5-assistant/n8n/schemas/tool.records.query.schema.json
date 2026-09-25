@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/tool.records.query.schema.json",
+  "title": "records.query",
+  "description": "参数契约来自主规划 §4.12（v2.0 为回应 F1 而新增）。\n【比赛口径】§1.4 已把二课移出 MVP；本 schema 冻结契约但【不创建】对应 Workflow。§4.12 与 §15.1-Q9 的措辞尚未同步，见 open-questions.md OQ-04。\n响应侧形状：{ earned, required, remaining, byCategory[] }，且 earned >= required 时 remaining = 0 而非负数。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "userId"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "userId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "category": { "type": "string", "maxLength": 32 }
+  }
+}
