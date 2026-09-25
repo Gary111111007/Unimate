@@ -1,0 +1,9 @@
+{
+  "java.configuration.runtimes": [
+    {
+      "name": "JavaSE-17",
+      "path": "C:\\Users\\Legion\\AppData\\Local\\Android\\jdk17\\jdk-17.0.20.1+1",
+      "default": true
+    }
+  ]
+}
