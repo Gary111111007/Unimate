@@ -800,29 +800,37 @@ function testIsoDirGuard() {
     check('J', `保留目录是绝对路径：${r}`, /^[A-Za-z]:\\/.test(r) || r.startsWith('/'), r)
   }
 
-  // J-1b ★ 防漂移（P09 补）：**Temp 里实际存在的 `unimate-n8n-iso-*` 目录必须都登记过。**
+  // J-1b ★ 防漂移（P09 补，C 盘红线 §七.4 后扩展）：
+  //   **实际存在的 `unimate-n8n-iso-*` 目录必须都已登记。**
   //   守卫是按这份清单拒绝的 —— 没登记的目录**不在拒绝清单里**，只剩"目标必须不存在"
   //   那一条兜着。P09 审计时文档只列了 4 条、磁盘上有 7 个，中间那 3 个就是这么漏的。
   //
-  //   只做**单向**断言（磁盘 ⊆ 清单）：目录被产品负责人批准删除后这条仍然成立，
-  //   不会因为"清单里多了一条已删的"而报红。
-  let onDisk = null
-  try {
-    onDisk = readdirSync(TEMP, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && e.name.startsWith('unimate-n8n-iso-'))
-      .map((e) => e.name)
-  } catch (e) {
-    onDisk = null
-  }
-  if (onDisk === null) {
-    fail('J', '读不到系统 Temp', `无法读取 ${TEMP} —— 这条防漂移断言不能静默跳过`)
-  } else {
+  //   ★ 扫描根 = **保留清单里各条目的父目录（去重）**，不再写死系统 TEMP。
+  //     这样一次覆盖两个落点：C 盘 TEMP（历史实例）与 F 盘运行根（红线之后的新落点）。
+  //     写死 TEMP 的版本**看不见 F 盘的实例** —— 那正是扩展守卫之后新增的盲区。
+  //
+  //   只做**单向**断言（磁盘 ⊆ 清单）：目录被批准删除后这条仍然成立。
+  //   **聚合为一条断言**（不是每个目录一条），避免断言总数随目录数漂移。
+  const scanRoots = [...new Set((reserved ?? []).map((r) => dirname(r)))]
+  const unregistered = []
+  const unreadable = []
+  for (const root of scanRoots) {
+    let entries
+    try {
+      entries = readdirSync(root, { withFileTypes: true })
+    } catch (e) {
+      unreadable.push(root)
+      continue
+    }
     const reservedCanon = new Set((reserved ?? []).map((r) => canonTest(r)))
-    for (const name of onDisk) {
-      check('J', `磁盘上的隔离目录已登记：${name}`, reservedCanon.has(canonTest(join(TEMP, name))),
-        `它在 Temp 里存在，但不在 RESERVED-ISO-DIRS 块里 —— 守卫拒绝不了它`)
+    for (const e of entries) {
+      if (!e.isDirectory() || !e.name.startsWith('unimate-n8n-iso-')) continue
+      if (!reservedCanon.has(canonTest(join(root, e.name)))) unregistered.push(join(root, e.name))
     }
   }
+  check('J', `隔离目录都已登记（扫了 ${scanRoots.length} 个根）`, unregistered.length === 0,
+    `以下目录存在但不在 RESERVED-ISO-DIRS 块里 —— 守卫拒绝不了它们：\n      ${unregistered.join('\n      ')}`)
+  check('J', '扫描根都读得到', unreadable.length === 0, `读不到：${unreadable.join(', ')}`)
 
   const g = (raw, opts = {}) => guardIsoDir(raw, { tempDir: TEMP, reserved, exists: () => false, ...opts })
   const hasErr = (r, key) => r.errors.some((e) => e.startsWith(key + ':'))
@@ -837,7 +845,8 @@ function testIsoDirGuard() {
 
   // J-4 裁决第 4 条：必须在系统临时目录内
   const outside = process.platform === 'win32' ? 'C:\\Users\\Legion\\unimate-n8n-iso-x' : '/home/u/unimate-n8n-iso-x'
-  check('J', '临时目录之外 → 拒绝', hasErr(g(outside), 'outsideTemp'), JSON.stringify(g(outside).errors))
+  // 键名从 `outsideTemp` 改成 `outsideAllowedRoots`（C 盘红线 §七.4 之后，允许的根不止 TEMP 一个）
+  check('J', '允许的根之外 → 拒绝', hasErr(g(outside), 'outsideAllowedRoots'), JSON.stringify(g(outside).errors))
 
   // J-5 裁决第 5 条：白名单前缀
   const badName = process.platform === 'win32' ? 'C:\\Temp\\n8n-iso-p11' : '/tmp/n8n-iso-p11'
@@ -886,6 +895,53 @@ function testIsoDirGuard() {
   check('J', '返回绝对路径', okRes.path === GOOD, String(okRes.path))
   check('J', '带尾随分隔符也能规范化', g(GOOD + (process.platform === 'win32' ? '\\' : '/')).ok, '尾随分隔符导致误判')
 
+  // J-9b ★ 《C 盘存储红线》§七.4：允许经过校验的 F 盘运行根
+  //
+  //   原守卫只认系统 %TEMP%，而 Windows 上它就是 C 盘 —— 于是"跑一次往返核对"
+  //   与"C 盘红线"直接冲突。这里逐条钉住运行根的校验规则。
+  const FROOT = process.platform === 'win32'
+    ? 'F:\\A_LIU_Astrspire\\A_runtime\\UnimateUL'
+    : '/mnt/f/A_LIU_Astrspire/A_runtime/UnimateUL'
+  const fTarget = join(FROOT, 'unimate-n8n-iso-guardtest-0002')
+  const gF = (raw, opts = {}) =>
+    guardIsoDir(raw, { tempDir: TEMP, reserved, exists: () => false, runtimeRoots: [FROOT], allowTemp: false, ...opts })
+
+  check('J', '运行根内的新目录 → 通过', gF(fTarget).ok, JSON.stringify(gF(fTarget).errors))
+  check('J', '运行根之外（同盘其它路径）→ 拒绝',
+    hasErr(gF(join(FROOT, '..', 'unimate-n8n-iso-x')), 'outsideAllowedRoots'),
+    JSON.stringify(gF(join(FROOT, '..', 'unimate-n8n-iso-x')).errors))
+  // allowTemp:false 之后，**TEMP 内的目标也必须被拒** —— 这才是"关掉 C 盘那条路"
+  check('J', 'allowTemp:false 时 TEMP 内目标 → 拒绝',
+    hasErr(gF(GOOD), 'outsideAllowedRoots'), JSON.stringify(gF(GOOD).errors))
+  // 反过来：不传 allowTemp:false 时行为不变（向后兼容，旧调用方不受影响）
+  check('J', '未关 TEMP 时 TEMP 内目标仍通过（向后兼容）',
+    guardIsoDir(GOOD, { tempDir: TEMP, reserved, exists: () => false }).ok, '旧行为被破坏')
+  // 前缀规则在运行根下同样生效
+  check('J', '运行根下前缀不合法 → 拒绝',
+    hasErr(gF(join(FROOT, 'n8n-iso-p11')), 'badPrefix'),
+    JSON.stringify(gF(join(FROOT, 'n8n-iso-p11')).errors))
+  // 运行根自身也要过校验 —— 否则等于把守卫拆了
+  const badRoots = [
+    ['盘符根', process.platform === 'win32' ? 'F:\\' : '/'],
+    ['C 盘', process.platform === 'win32' ? 'C:\\Users\\Legion\\runtime' : '/c/Users/runtime'],
+    ['TEMP 之内', join(TEMP, 'runtime')],
+    ['保留目录之内', join(reserved[0], 'runtime')],
+  ]
+  for (const [name, root] of badRoots) {
+    const r = guardIsoDir(fTarget, { tempDir: TEMP, reserved, exists: () => false, runtimeRoots: [root], allowTemp: false })
+    check('J', `运行根不合法（${name}）→ 拒绝`, hasErr(r, 'badRuntimeRoot'), JSON.stringify(r.errors))
+  }
+  // ★ 设计选择：**坏运行根 → 整体拒绝（fail closed）**，不是"把它忽略掉继续跑"。
+  //   与本模块的总原则一致（§设计原则：任何一项校验不通过都只报错、不做任何事）。
+  //   理由：运行根配错是**配置错误**，而忽略配置错误正是"C 盘红线"要防的那类事
+  //   —— 若悄悄降级成"只用好根"，配错的人永远不会知道。
+  const mixed = guardIsoDir(fTarget, { tempDir: TEMP, reserved, exists: () => false, runtimeRoots: ['C:\\bad', FROOT], allowTemp: false })
+  check('J', '存在坏运行根 → 整体拒绝（fail closed）', !mixed.ok && hasErr(mixed, 'badRuntimeRoot'),
+    JSON.stringify(mixed.errors))
+  // 已存在 / 保留目录 的规则在运行根下同样生效
+  check('J', '运行根下目标已存在 → 拒绝',
+    hasErr(gF(fTarget, { exists: () => true }), 'alreadyExists'), 'alreadyExists 在运行根下失效')
+
   // J-10 结构性断言：脚本里**不许再有删除动作**，也不许再有默认目标
   //      ★ 必须剥掉注释再查：脚本头部的注释里写着"本文件里没有任何 rmSync"这句话本身，
   //        全文匹配会把那句说明当成违规——和 D22 是同一类自伤。
@@ -897,6 +953,10 @@ function testIsoDirGuard() {
   check('J', 'roundtrip-check 从 open-questions 读保留清单', code.includes('parseReservedDirs'), '没有从文档读拒绝清单')
   // 但那条说明**必须**还在（它告诉下一个人这里为什么不删东西）
   check('J', '脚本头部保留了"不删目录"的说明', /没有任何 rmSync|不删除任何目录/.test(src), '红线说明被删掉了')
+  // ★ C 盘红线 §七.4 的结构性断言：运行根必须显式给、且 TEMP 必须被关掉
+  check('J', 'roundtrip-check 读 UNIMATE_RUNTIME_ROOT', code.includes('UNIMATE_RUNTIME_ROOT'), '运行根没有显式入口')
+  check('J', 'roundtrip-check 没有运行根默认值', !/UNIMATE_RUNTIME_ROOT\s*\?\?/.test(code), '运行根有 ?? 默认值')
+  check('J', 'roundtrip-check 关闭了 TEMP 这条路径', /allowTemp:\s*false/.test(code), 'TEMP 仍是允许的落点（C 盘红线 §七.4）')
 }
 
 /** 与守卫内部的 canon 同构，供测试构造"已存在"判定用。 */

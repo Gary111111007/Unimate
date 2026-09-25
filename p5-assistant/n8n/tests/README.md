@@ -13,7 +13,8 @@ node tests/run-contract-tests.mjs           # 契约（schema × fixture）     
 node tests/run-uni-core-tests.mjs           # UniCore 行为 + 路由/观测一致性 405 断言
 node tests/run-schedule-adapter-tests.mjs   # 课表 Adapter seam + 周统计  1,221 断言
 node tests/run-security-tests.mjs           # 安全（G4 判据）+ 目录守卫   1,057 断言
-UNIMATE_ISO_N8N=<一个**新的**专用目录> node tests/roundtrip-check.mjs   # 往返核对（慢，起隔离实例）
+UNIMATE_RUNTIME_ROOT=<F 盘运行根> UNIMATE_ISO_N8N=<运行根下的新目录> \
+  node tests/roundtrip-check.mjs            # 往返核对（慢，起隔离实例）
 ```
 
 **真实 n8n 运行验证**（需要**先起一个隔离实例**，不属于上面四条）：
@@ -31,7 +32,8 @@ UNIMATE_ISO_DB="<隔离目录>/.n8n/database.sqlite" node tools/check-log-order.
 - **退出码**：`0` = 全通过；`1` = 有失败；`2` = **前置缺失**（`check-log-order.mjs` 没给 `UNIMATE_ISO_DB` 时故意 fail closed）。
 - **Node 版本**：需要 **Node 22.6+** —— `core/*.ts` 靠**原生类型擦除**被直接 `import`。本机 Node **24.18.0**，`process.features.typescript === 'strip'`。
 - ⚠️ **strip-only 模式不支持 `enum` / `namespace` / 装饰器 / parameter property**（`constructor(private readonly x)`）。`core/` 下的类必须**显式声明字段 + 在构造函数体里赋值**，否则抛 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。P07 踩过，见 `docs/size-budget.md` §2.1b。
-- ⚠️ `roundtrip-check.mjs` **没有默认目标，也不会删除目录**。必须显式传入 `UNIMATE_ISO_N8N`，且目标必须是系统 Temp 下、名称以 `unimate-n8n-iso-` 开头、运行前不存在的新目录。路径守卫在任何创建动作前执行；命中保留目录、相对路径、Temp 外路径或已有目录都会 fail closed。见已关闭的 OQ-15。
+- ⚠️ `roundtrip-check.mjs` **没有默认目标，也不会删除目录**。必须显式传入 `UNIMATE_RUNTIME_ROOT` 与 `UNIMATE_ISO_N8N`，且目标必须**位于运行根之内**、名称以 `unimate-n8n-iso-` 开头、运行前不存在。路径守卫在任何创建动作前执行；命中保留目录、相对路径、运行根之外或已有目录都会 fail closed。见已关闭的 OQ-15。
+- ⚠️ **`UNIMATE_RUNTIME_ROOT` 没有默认值，且不允许落在系统 `%TEMP%`**（Windows 上 `%TEMP%` 就在 C 盘）。这是《C 盘存储红线》§七.4 的要求：脚本以 `allowTemp: false` 运行，落点只能是显式给出的 F 盘运行根。
 - ⚠️ **建了新的隔离目录就要登记**进 `docs/open-questions.md` 的 `RESERVED-ISO-DIRS` 块——**J-1b 会检查**（P09 新增的防漂移断言，它当场抓到过 P09 自己建的两个目录）。
 
 ---
@@ -103,7 +105,7 @@ UNIMATE_ISO_DB="<隔离目录>/.n8n/database.sqlite" node tools/check-log-order.
 | **G** | 参数污染与拒绝路径 | 13 类污染输入全部被预检拒（`userId` 数组/对象/null…）；拒绝后输入未被修改；比赛版**没有删除能力** |
 | **H** | Secret 扫描 | 规则**唯一真源**在 `ops/secret-scan-report.md`，测试读出来重跑；0 命中；Workflow JSON 无凭据值；`credentials/` 为空 |
 | **I** | 清单完整性 | G4 矩阵恰好 8 行、威胁矩阵恰好 6 行；`N/A` 行**也必须填证据**（填的是"确认它没被实现"）；不得声称没做过的事 |
-| **J** | **隔离目录守卫**（P11 新增，P09 扩） | `iso-dir-guard` 的 7 条拒绝路径逐条对抗验证（未传参 / 相对路径 / Temp 外 / 前缀不合法 / 已存在 / 命中保留目录 / 保留目录的子路径）+ 反向用例；结构性断言：`roundtrip-check.mjs` **不许再出现 `rmSync`**、不许有 `??` 默认值、校验必须发生在动作之前。**J-1b（P09）**：Temp 里实际存在的 `unimate-n8n-iso-*` 目录**必须都已登记**在 `RESERVED-ISO-DIRS` 块里 |
+| **J** | **隔离目录守卫**（P11 新增，P09 与 C 盘红线扩） | `iso-dir-guard` 的 7 条拒绝路径逐条对抗验证（未传参 / 相对路径 / Temp 外 / 前缀不合法 / 已存在 / 命中保留目录 / 保留目录的子路径）+ 反向用例；结构性断言：`roundtrip-check.mjs` **不许再出现 `rmSync`**、不许有 `??` 默认值、校验必须发生在动作之前。**J-1b（P09）**：Temp 里实际存在的 `unimate-n8n-iso-*` 目录**必须都已登记**在 `RESERVED-ISO-DIRS` 块里 |
 | **K** | **数据边界文档 ↔ 实现**（P09 新增，**G1 判据**） | `prompts/data-boundary.md` 的 `REMOTE-USER-DATA` 机器可读块，与 `request.schema.json` 里**实际存在**的字段**精确比对**（多一个少一个都红）；反向扫描禁止字段（`periodLabel`/`title`/`location`/… 不许出现在允许清单里）；文档必须写明"模型链路关闭"与"不配置模型 Key"；文档必须**如实标注**界面文案未验证；全部 Workflow 无 LLM 节点；`credentials/` 为空 |
 
 **四条要读准的地方**：

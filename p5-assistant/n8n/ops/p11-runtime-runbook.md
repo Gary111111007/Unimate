@@ -24,15 +24,25 @@ P11 之前，三层验证**全都是绿的**：结构往返核对、路由规则
 
 ## 一 准备：选一个**全新**的隔离目录
 
+> ⚠️ **《C 盘存储红线》§七.4 之后：隔离实例不再落在系统 `%TEMP%`。**
+> Windows 上 `%TEMP%` 就在 C 盘，而该策略禁止在 C 盘新建 n8n 隔离实例。
+> 守卫已扩展为**强制要求一个经过校验的 F 盘运行根**，并**关掉了 TEMP 这条路径**。
+
 ```bash
 # 必须满足（tests/lib/iso-dir-guard.mjs 会校验）：
-#   · 绝对路径，位于系统 Temp 内
+#   · UNIMATE_RUNTIME_ROOT 必须显式提供（**没有默认值**，不给就拒绝运行）
+#   · 运行根自身也要过校验：绝对路径、不是盘符根、不在 C 盘、
+#     不与系统 TEMP 重叠、不落在任何保留目录之内
+#   · 目标必须是绝对路径，且位于运行根之内（**不允许落在系统 TEMP**）
 #   · 目录名以 unimate-n8n-iso- 开头
 #   · **执行前尚不存在**
 #   · 不与 docs/open-questions.md 里 RESERVED-ISO-DIRS 的任何保留目录构成父子关系
-export N8N_USER_FOLDER="<你的系统 Temp>/unimate-n8n-iso-<唯一后缀>"
-# Windows 例：C:/Users/<你>/AppData/Local/Temp/unimate-n8n-iso-<唯一后缀>
+export UNIMATE_RUNTIME_ROOT="F:/A_LIU_Astrspire/A_runtime/UnimateUL"
+export N8N_USER_FOLDER="$UNIMATE_RUNTIME_ROOT/unimate-n8n-iso-<唯一后缀>"
 ```
+
+**运行根不是随便挑的**：它由 `C_DRIVE_STORAGE_POLICY.md` §二 规定为
+`F:\A_LIU_Astrspire\A_runtime\UnimateUL\`。
 
 **保留目录（一律不许碰）**：见 `docs/open-questions.md` 的 `RESERVED-ISO-DIRS` 块——
 **别在这里抄条数**，那份清单只会越来越长（P11 时 4 条，P09 时 9 条）。
@@ -151,8 +161,9 @@ n8n execute --id unimate-notes-query --rawOutput
 ## 九 复跑清单（改了 Workflow 之后照这个顺序走）
 
 1. `node tools/gen-workflows.mjs`（重出 6 个 JSON）
-2. 四套测试 + 往返核对（用**新**的 `UNIMATE_ISO_N8N`）
-3. 新隔离目录 → `import:workflow` → **`publish:workflow` × 6** → `n8n start`（非 5678，仅 loopback）
+2. 四套测试 + 往返核对（用**新**的 `UNIMATE_RUNTIME_ROOT` + `UNIMATE_ISO_N8N`）
+   —— **落在 F 盘运行根，不要用系统 `%TEMP%`**（C 盘红线 §七.4）
+3. 新隔离目录（**F 盘**）→ `import:workflow` → **`publish:workflow` × 6** → `n8n start`（非 5678，仅 loopback）
 4. `UNIMATE_P11_BASE=… UNIMATE_EVIDENCE_DIR=… node tools/p11-runtime-check.mjs`
 5. `UNIMATE_ISO_DB=… node tools/check-log-order.mjs`
 6. **登记新目录**进 `docs/open-questions.md` 的 `RESERVED-ISO-DIRS` 块（否则 J-1b 红）

@@ -6,7 +6,8 @@
 // 冷启动几十秒。主测试要保持"随手可跑"，这个放在阶段收尾与最终验收各跑一次。
 //
 // 用法（**目标必须显式给出**）：
-//   UNIMATE_ISO_N8N=<你的系统 Temp>/unimate-n8n-iso-<唯一后缀> \
+//   UNIMATE_RUNTIME_ROOT=<F 盘运行根> \
+//   UNIMATE_ISO_N8N=<F 盘运行根>/unimate-n8n-iso-<唯一后缀> \
 //     node tests/roundtrip-check.mjs
 //
 // 它自己会：
@@ -42,14 +43,35 @@ const good = () => { checks++ }
 //     本文件里没有任何 rmSync：删目录这件事已经从这个脚本里彻底拿掉了。
 const reservedText = existsSync(RESERVED_DOC) ? readFileSync(RESERVED_DOC, 'utf8') : ''
 const reserved = parseReservedDirs(reservedText)
-const guard = guardIsoDir(process.env.UNIMATE_ISO_N8N, { reserved })
+
+// ★ 《C 盘存储红线》§七.4：不再以系统 %TEMP% 为落点（Windows 上它就是 C 盘）。
+//   必须显式给出 F 盘运行根，且 `allowTemp: false` —— **TEMP 这条路彻底关掉**。
+//   与 UNIMATE_ISO_N8N 同一条原则：没有默认值，不给就拒绝运行。
+const RUNTIME_ROOT = process.env.UNIMATE_RUNTIME_ROOT
+if (!RUNTIME_ROOT || !String(RUNTIME_ROOT).trim()) {
+  console.error('✗ 未提供 UNIMATE_RUNTIME_ROOT —— 已停止，**没有创建、删除或修改任何东西**。\n')
+  console.error('  原因：《C 盘存储红线》§七.4。系统 %TEMP% 在 Windows 上位于 C 盘，')
+  console.error('        不再作为隔离实例的落点；本脚本**没有默认运行根**。')
+  console.error('  用法：')
+  console.error('    UNIMATE_RUNTIME_ROOT="F:/A_LIU_Astrspire/A_runtime/UnimateUL" \\')
+  console.error('    UNIMATE_ISO_N8N="F:/A_LIU_Astrspire/A_runtime/UnimateUL/unimate-n8n-iso-<唯一后缀>" \\')
+  console.error('      node tests/roundtrip-check.mjs')
+  process.exit(1)
+}
+
+const guard = guardIsoDir(process.env.UNIMATE_ISO_N8N, {
+  reserved,
+  runtimeRoots: [RUNTIME_ROOT],
+  allowTemp: false,
+})
 
 if (!guard.ok) {
   console.error('✗ 隔离目录校验未通过 —— 已停止，**没有创建、删除或修改任何东西**：\n')
   for (const e of guard.errors) console.error('   •', e)
   console.error('\n  目标必须满足：')
   console.error('    · 通过 UNIMATE_ISO_N8N 显式提供（本脚本不再有默认值）')
-  console.error('    · 是绝对路径，且位于系统临时目录内')
+  console.error(`    · 是绝对路径，且位于 UNIMATE_RUNTIME_ROOT（${RUNTIME_ROOT}）之内`)
+  console.error('      —— **不允许落在系统临时目录**（C 盘红线 §七.4）')
   console.error(`    · 目录名以 "${'unimate-n8n-iso-'}" 开头`)
   console.error('    · 执行前**尚不存在**（已存在 ⇒ 停，不删、不清、不复用）')
   console.error('    · 不是保留目录本身，也不与保留目录构成父子关系')

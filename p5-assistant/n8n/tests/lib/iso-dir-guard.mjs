@@ -19,6 +19,13 @@
 //   8 显式拒绝四个保留目录及其父子路径 → `reserved`
 //   9 全部路径校验在任何删除动作之前完成 → 本模块是纯函数，天然满足
 //  10 新目录跑完保留，不自动清理      → 由调用方保证（本模块不提供清理）
+//
+// 【《C 盘存储红线》§七.4 的追加（产品负责人 2026-09-25）】：
+//   原守卫只认系统 `%TEMP%`，而 `%TEMP%` 在 Windows 上就是 **C 盘** ——
+//   于是"跑一次往返核对"与"C 盘红线"直接冲突，且**不得拿"测试要求"当继续写 C 盘的理由**。
+//   现在守卫接受**经过校验的运行根**（`runtimeRoots`），并可用 `allowTemp: false`
+//   彻底关掉 TEMP 这条路径。运行根本身也要过 `validateRuntimeRoot`：
+//   绝对路径、不是盘符根、不在 C 盘、不与 TEMP 重叠、不与保留目录互相包含。
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { existsSync } from 'node:fs'
@@ -63,11 +70,69 @@ function isInsideOrEqual(a, b) {
 }
 
 /**
+ * 校验一个「F 盘运行根」是否可用于承载隔离实例。
+ *
+ * 《C 盘存储红线》§七.4 要求：守卫不能只认系统 `%TEMP%`，必须允许经过校验的 F 盘运行根。
+ * 但"允许 F 盘"不等于"随便一个目录都行"——运行根自身也要过一遍校验，否则等于把守卫拆了。
+ *
+ * @param {string} root
+ * @param {{tempDir:string, reserved:string[]}} ctx
+ * @returns {string[]} 错误列表（空 = 该运行根可用）
+ */
+export function validateRuntimeRoot(root, ctx) {
+  const errors = []
+  if (typeof root !== 'string' || root.trim() === '') {
+    return ['badRuntimeRoot: 运行根为空']
+  }
+  const raw = root.trim()
+  if (!isAbsolute(raw)) return [`badRuntimeRoot: 运行根必须是绝对路径，收到「${raw}」`]
+  const r = resolve(raw)
+
+  // ① 不得是盘符根（`F:\`）——那等于把整个盘当运行根
+  const rootPart = parseRoot(r)
+  if (canon(r) === canon(rootPart)) {
+    errors.push(`badRuntimeRoot: 运行根不能是盘符根（「${rootPart}」）——范围过大`)
+  }
+
+  // ② Windows 上不得位于 C 盘。《C 盘存储红线》的全部目的就是这条。
+  if (process.platform === 'win32' && /^[a-z]:/i.test(r) && r[0].toLowerCase() === 'c') {
+    errors.push(`badRuntimeRoot: 运行根不得位于 C 盘，收到「${r}」`)
+  }
+
+  // ③ 不得与系统临时目录重叠（运行根套着 TEMP 或反过来，都说明配置错了）
+  if (isInsideOrEqual(r, ctx.tempDir) || isInsideOrEqual(ctx.tempDir, r)) {
+    errors.push(`badRuntimeRoot: 运行根不得与系统临时目录重叠（TEMP=${ctx.tempDir}，运行根=${r}）`)
+  }
+
+  // ④ 运行根**不得落在**保留目录之内。
+  //
+  //    ⚠️ 反向关系（保留目录落在运行根内）**不是错误**，是常态：
+  //    运行根里跑出来的每个隔离实例都会被登记进保留清单，于是运行根天然包含若干保留目录。
+  //    第一版把这条写成"互为包含都拒绝"，结果**运行根自己把自己否掉了**
+  //    （保留清单里一有该根下的实例，这个根就再也用不了）——由 J-9b 实测抓出。
+  //    真正要防的是"把运行根塞进某个受保护的目录里"，那是单向的。
+  for (const res of ctx.reserved) {
+    if (isInsideOrEqual(r, res)) errors.push(`badRuntimeRoot: 运行根落在保留目录「${res}」内`)
+  }
+
+  return errors
+}
+
+/** 取路径的盘符根（Windows: `F:\`；POSIX: `/`）。 */
+function parseRoot(p) {
+  const m = /^([A-Za-z]:[\\/])/.exec(p)
+  if (m) return m[1]
+  return p.startsWith('/') ? '/' : ''
+}
+
+/**
  * 校验隔离目录。
  *
  * @param {string|undefined} rawValue  UNIMATE_ISO_N8N 的值
  * @param {object} [opts]
  * @param {string} [opts.tempDir]  系统临时目录（默认 os.tmpdir()，测试可注入）
+ * @param {string[]} [opts.runtimeRoots] 额外允许的运行根（F 盘运行根）；每个都要过 validateRuntimeRoot
+ * @param {boolean} [opts.allowTemp] 是否仍允许系统临时目录（默认 true；**传 false 时才真正禁止写 C 盘**）
  * @param {string[]|null} [opts.reserved] 保留目录清单；null 表示清单不可用 → 拒绝
  * @param {(p:string)=>boolean} [opts.exists] 存在性判定（测试可注入）
  * @returns {{ok:boolean, errors:string[], path:string|null}}
@@ -76,6 +141,8 @@ export function guardIsoDir(rawValue, opts = {}) {
   const tempDir = opts.tempDir ?? tmpdir()
   const reserved = opts.reserved === undefined ? [] : opts.reserved
   const exists = opts.exists ?? existsSync
+  const runtimeRoots = opts.runtimeRoots ?? []
+  const allowTemp = opts.allowTemp !== false
   const errors = []
 
   // ① 必须显式提供（**没有默认值**——危险的默认目标就是被这条删掉的）
@@ -90,6 +157,14 @@ export function guardIsoDir(rawValue, opts = {}) {
     return { ok: false, errors: ['reservedListUnavailable: 读不到保留目录清单，拒绝运行'], path: null }
   }
 
+  // ②b 每个运行根都要先自己过校验；有问题的运行根**不参与**白名单
+  const goodRoots = []
+  for (const root of runtimeRoots) {
+    const errs = validateRuntimeRoot(root, { tempDir, reserved })
+    if (errs.length) errors.push(...errs)
+    else goodRoots.push(resolve(root))
+  }
+
   // ③ 必须是绝对路径
   if (!isAbsolute(raw)) {
     errors.push(`notAbsolute: 必须是绝对路径，收到「${raw}」`)
@@ -97,9 +172,12 @@ export function guardIsoDir(rawValue, opts = {}) {
   }
   const target = resolve(raw)
 
-  // ④ 必须在系统临时目录之内
-  if (!isInsideOrEqual(target, tempDir)) {
-    errors.push(`outsideTemp: 必须位于系统临时目录内（${tempDir}），收到「${target}」`)
+  // ④ 必须落在**允许的根**之内：系统临时目录（若允许）或某个通过校验的运行根
+  const allowed = (allowTemp ? [tempDir] : []).concat(goodRoots)
+  if (!allowed.some((r) => isInsideOrEqual(target, r))) {
+    errors.push(
+      `outsideAllowedRoots: 必须位于允许的根之内（${allowed.join(' ｜ ')}），收到「${target}」`
+    )
   }
 
   // ⑤ 目录名必须带白名单前缀

@@ -44,7 +44,7 @@
 | 根 | `report.md`、`.gitignore`、`.gitattributes` | 3 |
 | **合计** | | **75** |
 
-**总大小**：820,810 字节（801.6 KiB）。
+**总大小**：832513 字节（813.0 KiB）。
 
 ---
 
@@ -59,7 +59,7 @@ cd p5-assistant/n8n
 node tests/run-contract-tests.mjs           # 303
 node tests/run-uni-core-tests.mjs           # 405
 node tests/run-schedule-adapter-tests.mjs   # 1,221
-node tests/run-security-tests.mjs           # 1,059
+node tests/run-security-tests.mjs           # 1,072
 ```
 
 | 套件 | 断言 | 失败 | 退出码 |
@@ -67,8 +67,8 @@ node tests/run-security-tests.mjs           # 1,059
 | `run-contract-tests` | **303** | 0 | 0 |
 | `run-uni-core-tests` | **405** | 0 | 0 |
 | `run-schedule-adapter-tests` | **1,221** | 0 | 0 |
-| `run-security-tests` | **1,059** | 0 | 0 |
-| **合计** | **2,988** | **0** | **全 0** |
+| `run-security-tests` | **1,072** | 0 | 0 |
+| **合计** | **3,001** | **0** | **全 0** |
 
 - **不需要 `npm install`**。只用 Node 内置能力（`node:fs` / `node:path` / `node:url` / `node:sqlite`）。
 - **Node 版本**：需要 **22.6+**（`core/*.ts` 靠原生类型擦除被直接 `import`）。实测环境 **24.18.0**。
@@ -82,7 +82,7 @@ node tests/run-security-tests.mjs           # 1,059
 | `run-contract-tests` | 303 | **303** |
 | `run-uni-core-tests` | 405 | **405** |
 | `run-schedule-adapter-tests` | 1,221 | **1,221** |
-| `run-security-tests` | 1,059 | **1,059** |
+| `run-security-tests` | 1,059 | **1,072** |
 
 **背景**：本仓库 `core.autocrlf=true`，新克隆出来是 CRLF。修复前 `run-security-tests` 在 CRLF 下**必红**，原因与代码无关（见 §五.1）。
 
@@ -182,7 +182,7 @@ node tests/run-security-tests.mjs    # H 组按同一套规则重跑扫描
 - 数据胶囊白名单**恰好 5 项**（D-9 精确集合断言）
 - 拒绝路径**零副作用**（§13.6 #4）
 - 观测链路已接入（`agent_observability` **不再是孤儿工作流**），且执行顺序实测正确
-- 四套测试 2,988 断言全绿；凭据扫描 0 命中；体积 12.3%
+- 四套测试 3,001 断言全绿；凭据扫描 0 命中；体积 12.3%
 
 ### 4.2 未验证（**逐条列出，不得写成通过**）
 
@@ -318,7 +318,19 @@ A  p5-assistant/n8n/                          （75 个文件）
 > 错因是读了**会话开始时的 git 快照**而没有复核。
 > **后续修正走独立 fix commit，不 amend、不 reset、不切分支。**
 
-### 8.2 本次确认纳入的三件配套改动
+### 8.2 守卫改造（《C 盘存储红线》§七.4，本轮）
+
+隔离实例的落点**从系统 `%TEMP%` 迁到 F 盘运行根** —— Windows 上 `%TEMP%` 就在 C 盘。
+
+| 项 | 变化 |
+| --- | --- |
+| `iso-dir-guard.mjs` | 新增 `runtimeRoots` / `allowTemp` / `validateRuntimeRoot`；运行根自身也要过校验（绝对路径、非盘符根、不在 C 盘、不与 TEMP 重叠、不落在保留目录内） |
+| `roundtrip-check.mjs` | **必须**显式提供 `UNIMATE_RUNTIME_ROOT`（**无默认值**），并以 `allowTemp: false` 运行 |
+| 安全测试 | J 组新增 14 条断言；**3 个变异全被抓** |
+| **实测** | `F:\A_LIU_Astrspire\A_runtime\UnimateUL\` 上往返核对 **48 项通过 / 0 失败** |
+| 断言总数 | 安全套件 **1,059 → 1,072**；四套合计 **3,001** |
+
+### 8.3 本次确认纳入的三件配套改动
 
 | # | 事项 | 状态 |
 | --- | --- | --- |

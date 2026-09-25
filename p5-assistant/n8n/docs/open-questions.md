@@ -293,10 +293,13 @@
 
 | 项 | 内容 |
 | --- | --- |
-| **裁决（产品负责人，2026-09-25，第二次）** | **9 个目录全部保留；本次没有删除授权。** 不删除、不移动、不清空、不覆盖。**OQ-14 保持开放**。后续需要清理时，必须先给出完整目录清单，再由产品负责人**二次确认** |
+| **裁决（产品负责人，2026-09-25，第二次）** | **C 盘上那 9 个目录全部保留；本次没有删除授权。** 不删除、不移动、不清空、不覆盖。**OQ-14 保持开放**。后续需要清理时，必须先给出完整目录清单，再由产品负责人**二次确认** |
+| **⑩ 是 C 盘红线之后新加的** | 它**在 F 盘**（`A_runtime` 运行根），是守卫改造的验证实例，**不属于**"C 盘上那 9 个"那批 |
 | **不要为了整理目录制造新副本** | 产品负责人明确要求：**不要为了整理目录而继续制造新的无必要隔离副本**。往返核对只在必要时跑，且必须另起新目录（守卫强制）——**不要为了"凑整齐"去跑** |
 
-#### 9 个目录的完整登记（精确绝对路径 / 用途 / 是否含缺陷证据）
+#### 10 个目录的完整登记（精确绝对路径 / 用途 / 是否含缺陷证据）
+
+前 9 个在 **C 盘**（历史，受 OQ-14 保护）；第 10 个在 **F 盘**（C 盘红线之后的合规落点）。
 
 `…` = `C:\Users\Legion\AppData\Local\Temp\`
 
@@ -311,6 +314,7 @@
 | ⑦ | `…\unimate-n8n-iso-p11-roundtrip-20260925` | P11 | 往返核对 | ⚠️ 记录性：45 项通过 |
 | ⑧ | `…\unimate-n8n-iso-p09-20260925` | P09 复跑 | 观测链路接入后的真实运行 | ⚠️ 记录性：**17 项判定 + 20 次一致**，且含**执行顺序实测**（第 8 个缺陷的修复证据） |
 | ⑨ | `…\unimate-n8n-iso-p09-roundtrip-20260925` | P09 | 往返核对 | ⚠️ 记录性：48 项通过 |
+| ⑩ | `F:\A_LIU_Astrspire\A_runtime\UnimateUL\unimate-n8n-iso-policy-verify-20260925` | **守卫改造验证** | ⚠️ **F 盘首个合规实例**（C 盘红线 §七.4）；往返核对 48 项通过。**它不在 C 盘** |
 
 **共同点**：各自含一个隔离实例的 SQLite（`database.sqlite`）与 n8n 用户目录，体量几百 KB 级。
 **全部不含真实数据**——每次跑用的都是纯虚构 fixture，无账号、无 Cookie、无密钥、无教务数据。
@@ -336,6 +340,7 @@ C:\Users\Legion\AppData\Local\Temp\unimate-n8n-iso-p11-runtime2-20260925
 C:\Users\Legion\AppData\Local\Temp\unimate-n8n-iso-p11-roundtrip-20260925
 C:\Users\Legion\AppData\Local\Temp\unimate-n8n-iso-p09-20260925
 C:\Users\Legion\AppData\Local\Temp\unimate-n8n-iso-p09-roundtrip-20260925
+F:\A_LIU_Astrspire\A_runtime\UnimateUL\unimate-n8n-iso-policy-verify-20260925
 <!-- RESERVED-ISO-DIRS-END -->
 ```
 
