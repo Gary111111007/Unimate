@@ -5,7 +5,7 @@
 | 版本 | 1.0 |
 | 日期 | 2026-09-25 |
 | 交付物 | `p5-assistant/n8n/` |
-| 状态 | **已验收，已暂存，未提交** |
+| 状态 | **已验收、已提交（本地 `Astrspire` 分支）、未推送** |
 | 范围 | 比赛交付。**不代表主工程状态**，不含生产部署与真机 |
 
 > **一页结论**
@@ -290,6 +290,19 @@ src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
 
 ## 八 提交状态
 
+### 8.1 基线提交
+
+| 项 | 值 |
+| --- | --- |
+| **分支** | **`Astrspire`** |
+| **基线提交** | **`1ec272778f6766cd48661ffe7828327579efb065`** |
+| commit message | `feat(p5): 纳入 n8n Agent 比赛交付基线` |
+| 提交内容 | **81 个文件路径** —— 75 个 n8n 交付文件 + `AGENTS.md` + `C_DRIVE_STORAGE_POLICY.md` + `p5-assistant/NOTES.md`、`README.md` + 本文件 + `C_DRIVE_COMPLIANCE.md` |
+| diff stat | `81 files changed, 15301 insertions(+), 4 deletions(-)` |
+| `git diff --cached --check` | exit 0 |
+| **推送状态** | **尚未推送**（`Astrspire` 相对 `origin/Astrspire` **ahead 1**） |
+| `src/` `android/` `cloudflare/` | **无改动** |
+
 ```
 M  AGENTS.md                                  （新增第 15 条 C 盘存储红线）
 A  C_DRIVE_STORAGE_POLICY.md
@@ -298,17 +311,14 @@ M  p5-assistant/README.md
 A  p5-assistant/DELIVERY.md
 A  p5-assistant/C_DRIVE_COMPLIANCE.md
 A  p5-assistant/n8n/                          （75 个文件）
-
-81 files changed, 15301 insertions(+), 4 deletions(-)
-git diff --cached --check  → exit 0
 ```
 
-- **共 81 个文件路径**（75 个 n8n 交付文件 + `AGENTS.md` + `C_DRIVE_STORAGE_POLICY.md` + 两份 `p5-assistant` 文档 + 两份报告）。
-- **已暂存，未 commit、未 push。**
-- `git status --short -- src/ android/ cloudflare/` **为空**。
-- commit message：`feat(p5): 纳入 n8n Agent 比赛交付基线`
+> ⚠️ **更正**：本文件早期版本把提交说成落在 `main` 上 —— **那是错的**。
+> 实际分支是 `Astrspire`；`main` 停在 `2099ed2`，**未被本任务改动**。
+> 错因是读了**会话开始时的 git 快照**而没有复核。
+> **后续修正走独立 fix commit，不 amend、不 reset、不切分支。**
 
-### 8.1 本轮确认纳入的三件配套改动
+### 8.2 本次确认纳入的三件配套改动
 
 | # | 事项 | 状态 |
 | --- | --- | --- |
