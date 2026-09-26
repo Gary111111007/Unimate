@@ -66,8 +66,9 @@ Write-Host "ANDROID_HOME = $sdk"
 
 Write-Host ""
 
-Write-Host "[1/6] 单元测试：登录链路 + 解析器 Golden Test + 考试解析 Golden Test + 高校档案(北化/北二外) + 课表分享编解码/二维码 + 备份容器格式 + 提醒时刻过桥契约 + 课表配色一致性 + 启动防挂起 + 声明顺序地雷 + 启动路径不变量 + 模板引用 + CSS 变量 + 手册条款完整性 + 工具箱位置几何 + 版权署名 + 手势去重"
+Write-Host "[1/6] Uni 本机助手 + 单元测试：登录链路 + 解析器 Golden Test + 考试解析 Golden Test + 高校档案(北化/北二外) + 课表分享编解码/二维码 + 备份容器格式 + 提醒时刻过桥契约 + 课表配色一致性 + 启动防挂起 + 声明顺序地雷 + 启动路径不变量 + 模板引用 + CSS 变量 + 手册条款完整性 + 工具箱位置几何 + 版权署名 + 手势去重"
 Invoke-Npm 'test:login'
+Invoke-Npm 'test:uni'
 
 Invoke-Npm 'test:parser'
 Invoke-Npm 'test:exam'

@@ -37,7 +37,8 @@ ok('解除时会 clearTimeout', script.includes('clearTimeout(watchdog)'));
 
 // 启动里不许有裸 await 的原生调用（都必须经 guard 限时）
 const dbSrc = readFileSync(join(root, 'src', 'stores', 'db.ts'), 'utf8');
-const bootBody = (dbSrc.match(/async function boot\(\): Promise<void> \{([\s\S]*?)\n  \}\n/) || [, ''])[1];
+// Git 在 Windows 工作区可能检出 CRLF；启动不变量不能因为行尾不同而误报。
+const bootBody = (dbSrc.match(/async function boot\(\): Promise<void> \{([\s\S]*?)\r?\n  \}\r?\n/) || [, ''])[1];
 ok('取到 boot 函数体', bootBody.length > 100, bootBody.length + ' 字符');
 const naked = bootBody.split('\n').filter((l) => /\bawait\s+(probeStorage|readJson|finishLogin|cleanupStaleOnBoot)\s*\(/.test(l) && !l.includes('guard('));
 ok('boot 里没有未包超时的原生调用', naked.length === 0, naked.map((x) => x.trim()).join(' | '));

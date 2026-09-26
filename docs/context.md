@@ -18,7 +18,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 先读哪 | 云端与 P3 的最新状态看 **`PRD.md` 开头的「当前接续摘要」** 与 **`Net.md` 的「当前云端接续摘要」**（本节只保留工程侧的通用交接） |
 | 未提交（本轮） | 无 —— v2.57 一起提交 |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages）；**线上 = v2.39**（`assets/index-DroQga0f.js`，`catalog/` 三件套 200、`_worker.js` 生效） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.57，SHA `01809686…`；v2.56 `8E5007C0…`、v2.55 `664171BE…`） |
+| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.60，SHA `95348995…`，6.69 MiB；含 Uni 本机助手；**静态出包已验证，真机待验**） |
 | 提醒（v2.57 收尾） | ① **补位闹钟**：每条提醒再多排一个 +2 分钟的闹钟（独立请求码 `id + 500000`；投递时 `cancelBackupAlarm` 一起撤，不会重复弹），冻结场景下的第二道保险；② **心跳走 `setAlarmClock`**（被 ROM 拦则落回 allowWhileIdle），醒来就把刚过期的提醒投出去；③ 自检报告显示"另有 K 条 2 分钟补位闹钟"；④ 界面如实写明：不开「允许后台运行」→ 提醒可能晚几分钟到十几分钟，想准点只有**开那一项**或**打开系统日历兜底** |
 | 提醒的边界（写死，别再重复劳动） | 产品负责人**既不开"允许后台运行"也不开厂商自启动**。App 侧能做的已到极限（精确闹钟自动授予、闹钟确实在系统里、渠道 HIGH+声音、前台守护在跑、补位闹钟 + 心跳 + 选择性系统日历兜底）。**除非他改变主意去开那两个系统开关，否则不再为 ColorOS 冻结改 App 代码** —— 见 PRD 11.65 D 节的搁置口径 |
 | 系统日历兜底（v2.56） | 产品负责人明确"**我不想允许在后台运行**"，而 v2.55 真机报告只剩 `电池优化豁免：未豁免` 这一项。于是做**选择性写系统日历**：闹钟由**系统日历 App 持有**（系统应用不受冻结影响）。三条纪律：**默认关**（`localStorage 'unimate_calendar_sync'`）；每条事件带 `Events.CUSTOM_APP_PACKAGE` 标记，**只删自己写的**；关开关或点「清空已写入的日程」（二次确认）会全部清掉。原生方法：`calendarRequest/calendarStatus/calendarSync/calendarClear`；清单加 `READ_CALENDAR`/`WRITE_CALENDAR`（只在打开开关时才申请）。前端：`calendarSyncEnabled/setCalendarSync/syncCalendarNow/clearCalendarEvents/calendarEventsFromSchedule` + 纯函数 `calendarEventsFor`（`test:calendar` 8 条）。**接线在 `rescheduleAll()` 末尾**：开关打开时把同一批提醒写进日历 |
@@ -28,7 +28,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 新增测试套件登记 | `test:avatar` 已同时登记进 `package.json` 与 `scripts/build-apk.ps1`（后者用 node 按字节插入，**必须保住 1 个 UTF-8 BOM**；本次踩过"BOM 叠成 3 个"，已修） |
 | 提醒渠道（v2.53） | Android 8+ 的**横幅与声音由渠道 importance 决定**，而**应用级通知权限 granted 不代表渠道没被静音**（渠道创建后不可改）。原生 `notifyChannelStatus` 读 `importance/sound/blocked` + Doze `isDeviceIdleMode`；自检报告多两行；「我的 → 通知设置」新增「**重建通知渠道**」（tag 存 localStorage，点一下换 `class-<新tag>`/`todo-<新tag>` 建 HIGH+铃声新渠道、删旧渠道、**随后必须 `rescheduleAll()` 把排期搬过去**，否则旧排期引用已删渠道会被系统静默丢弃） |
 | Pages 交付 | **只有目录**：`node scripts\make-pages-package.mjs v2.52` → `artifacts\cloudflare\unimate-cloudflare-v2.52-upload`（15 文件 / 0.7 MB，根目录含 `_worker.js`）。**v2.52 起不再压 ZIP**（历史 ZIP 留档仍在 `artifacts/`） |
-| P4 / P5 工位 | [`p4-parser/`](../p4-parser/README.md)、[`p5-assistant/`](../p5-assistant/README.md)：**不参与构建**，各含 README（目标/红线/交付物/验收/接口约定）+ `NOTES.md`。**不许直接改 `src/`、`android/`、`cloudflare/`**，需要主工程配合就写进 `NOTES.md`，由产品负责人整合 |
+| P4 / P5 工位 | [`p4-parser/`](../p4-parser/README.md) 仍不参与构建；P5 的交付真源仍在 [`p5-assistant/n8n/`](../p5-assistant/n8n/)，但 v2.60 已由产品负责人整合其 `LocalRulesAdapter` 到主工程 Uni 页。线上 n8n、LLM 与生产部署仍未接入 APK |
 | 提醒口径 | 地平线 7 天；只清"过期 90 秒以上 + 账本里没有的"排期（`notify/plan.json`）；**错过的提醒不补发**；排期读取走**原生直读**（`scheduled()` 在安卓上没实现） |
 | 提醒兜底 | 心跳（有近期排期 10 分钟/否则 60 分钟）+ **提醒守护前台服务（v2.34 默认开）**：一条最低优先级静音常驻通知防 ROM 冻结；开机广播清场（过期/20 秒内要响的丢弃，不补发） |
 | 演示站状态 | **v2.45 已上传并核对通过**（2026-09-23）：`/health` 回 `atRest:true, accounts:true`；七条接口预检全 204；非白名单 403；线上前端 = `assets/index-BrCScQRS.js`（与 v2.45 APK 同一份代码）；`catalog/` 三件套 200 且 `bisu.json` 与本地同哈希 |
@@ -75,7 +75,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 2b. （可选）补桶 CORS：`cd cloudflare\sync-worker` → `npx wrangler r2 bucket cors set unimate-sync --file cors.json`（直传兜底那条路才通）。
 3. 本机没有 Cloudflare 凭据（`npx wrangler pages deploy` 会报缺 `CLOUDFLARE_API_TOKEN`），所以拖放由产品负责人做；命令与排查见 `docs/deploy.md`。
 4. ~~北二外待核实项~~ —— 产品负责人 2026-09-21 明确「不用管了」；~~P2.5 解析适配器热更新~~ —— **v2.29 已完成**。
-5. 下一步候选：**P5 AI 助手** →（可选）**P4 智能解析**（`Net.md` §2.6/§2.7）。
+5. 下一步候选：P5 的线上 `N8nAdapter`（必须继续满足最小胶囊与明确授权）→（可选）**P4 智能解析**（`Net.md` §2.6/§2.7）。
 
 ## 4. 硬约束（违反即返工，详见 AGENTS.md）
 
@@ -87,7 +87,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 ## 5. 常用命令
 
 ```powershell
-npm run test:notify       # 单跑某个套件（共 23 个：test:login/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard/avatar/calendar；合计 951 条断言）
+npm run test:notify       # 单跑某个套件（共 24 个：test:login/uni/parser/exam/school/share/weather/sync/schoolpack/adapters/toolbox/gesture/notify/boot/refs/order/css/watermark/handbook/zip/color/guard/avatar/calendar；合计 966 条断言）
 node scripts\make-pages-package.mjs v2.52   # 只出可拖放目录（不压 ZIP）
 npm run check:cloud       # v2.45：线上账号链路自检（临时账号走注册→上传→下载→注销，自清理；需外网）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
