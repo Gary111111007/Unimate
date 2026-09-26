@@ -179,3 +179,66 @@ App（手机，数据都在这里）
 1. **用哪个模型？**（DeepSeek / 通义 / 智谱 / OpenAI）—— 决定 API Key 从哪来、服务器放境内还是境外；
 2. **离线层打算怎么答？** 建议就是"本机关键词 + 本地数据"（不联网、不用模型），他截图里那句"试试离线查课"就是这个意思 —— **这部分不需要服务器，也不需要模型**；
 3. **聊天界面放哪？** 他想做成 App 内一个页面（推荐），还是独立网页演示（现在的原型）？
+
+---
+
+## 九、怎么出一份「能拖到 Cloudflare Pages 的包」交给产品负责人（2026-09-26）
+
+产品负责人要的东西长这样（`artifacts/cloudflare/unimate-cloudflare-<版本>-upload/`）：
+
+```
+unimate-cloudflare-v2.57-upload/
+├── assets/                ← 构建产物（前端 bundle）
+├── catalog/               ← 高校档案（清单 + 签名 + 各校 json）
+├── _worker.js             ← ★ 必须在根目录：Pages 的 Advanced Mode 入口（同步 API + 密文中转）
+├── index.html
+└── sample-timetable.html
+```
+
+**它不是手工拷出来的**，仓库里有脚本负责生成：`scripts/make-pages-package.mjs`。
+
+### 9.1 前置条件（两件，缺一不可）
+
+1. **仓库是私有的**（匿名访问返回 404）→ 需要产品负责人在 GitHub 上把你加成协作者：
+   `仓库 → Settings → Collaborators → Add people`（或者他给你一个临时 PAT）。
+2. **代码要拉到 `main` 分支**：GitHub 上的 `main` 就是正式版；**不要**在别的分支上出包。
+
+### 9.2 出包命令（三条，照抄即可）
+
+```powershell
+git clone https://github.com/Gary111111007/UnimateUL.git
+cd UnimateUL
+git checkout main
+
+npm install                                   # 第一次会拉依赖，需要网络
+npm run build                                 # 生成 dist/（前端产物）
+node scripts\make-pages-package.mjs v2.57      # ← 生成要发给产品负责人的那个文件夹
+```
+
+最后会打印：
+
+```
+Pages 上传目录：…\artifacts\cloudflare\unimate-cloudflare-v2.57-upload
+  文件 15 个 / 0.7 MB，根目录含 _worker.js
+```
+
+把 **`artifacts/cloudflare/unimate-cloudflare-v2.57-upload` 这个文件夹**发给产品负责人。
+（跨人传输包成 zip 没关系 —— 他拖到 Pages 之前会解压；Pages 网页端只接受**目录**，不接受 zip。）
+
+### 9.3 四个坑（都是我们踩过的）
+
+1. **不要跑 `scripts\build-apk.ps1`** —— 那是打安卓 APK 的，需要 Android SDK，和你无关；
+   你只需要 `npm install → npm run build → make-pages-package` 这三条。
+2. **`artifacts/` 不在仓库里**（被 `.gitignore` 排除），所以必须自己构建，别指望 clone 下来就有。
+3. **版本号参数只是命名用**（`v2.57` 可以换成任何字符串），它不影响包内容。
+4. **Node 需要 18 以上**（建议 20/22）；Windows 下路径**尽量别带中文**，省得踩编码坑。
+
+### 9.4 你的页面怎么进这个包（两种做法，选一个）
+
+| 做法 | 步骤 | 适合 |
+| --- | --- | --- |
+| **A. 合进主工程（推荐，最终形态）** | 你把页面代码放到 **`p5-assistant/ui/`**（Vue 单文件组件或 HTML 原型都行），**不要直接改 `src/`**（`AGENTS.md` 第 14 条红线）；写清"放在哪个 tab / 怎么进入"到 `NOTES.md`；产品负责人负责合并进 `src/`。合并后你再跑 9.2 的三条命令出包 | 这个页面要成为 App 的一部分 |
+| **B. 先独立看一眼效果** | 你自己建一个**独立的** Cloudflare Pages 项目（用你自己的账号），把自己项目的构建产物目录拖上去，只把 **URL** 发过来 | 只是想先验证界面/交互 |
+
+**别做的事**：不要把自己那份产物直接覆盖到 `unimate3` 项目上 —— 那个站点还挂着同步 API 的 `_worker.js` 与 `catalog/`，
+覆盖掉会让 App 的登录/同步/高校档案一起坏（`unimate3` 只能由产品负责人用 9.2 的包更新）。
