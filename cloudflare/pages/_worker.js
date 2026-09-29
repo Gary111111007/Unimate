@@ -24,7 +24,7 @@ const UPSTREAM = 'https://unimate-sync.2025040140.workers.dev';
 // v2.43 起还要转发账号 API（注册/登录/账号信息/备份读写）—— 它们一样必须挂在 pages.dev 上，
 // 否则手机上又会撞上"直连域名不通"那类问题。
 const API_PATHS = ['/health', '/v1/presign', '/v1/put', '/v1/get',
-  '/v1/signup', '/v1/login', '/v1/account', '/v1/backup',
+  '/v1/signup', '/v1/login', '/v1/account', '/v1/backup', '/v1/agent/chat',
   // v2.51 用户自己改密码
   '/v1/password',
   // v2.50 管理员：页面 + 列账号 / 重置密码。挂在 pages.dev 上手机才打得开（workers.dev 在大陆不通）

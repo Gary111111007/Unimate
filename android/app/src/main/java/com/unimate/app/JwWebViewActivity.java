@@ -58,6 +58,7 @@ public class JwWebViewActivity extends Activity {
      *  "exam" = 考试，按钮**常驻**并显示「识别考试」（产品负责人："这个界面你得一直保有一个按键，叫做识别考试"）。
      */
     private String mode = "timetable";
+    private String actionLabel = "读取当前结果";
     private boolean allowExternal;
     private String homeUrl = "";
     private boolean retriedOnce;
@@ -76,6 +77,7 @@ public class JwWebViewActivity extends Activity {
         String title = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_TITLE), "Unimate");
         selector = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_SELECTOR), "");
         mode = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_MODE), "timetable");
+        actionLabel = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_ACTION_LABEL), "读取当前结果");
         allowExternal = args.getBooleanExtra(JwWebViewPlugin.EXTRA_ALLOW_EXTERNAL, false);
         if (isExamMode() && (selector == null || selector.isEmpty())) {
             // 考试页是 jqGrid：优先取整个表格容器，取不到再退到行容器/整页
@@ -218,9 +220,9 @@ public class JwWebViewActivity extends Activity {
         fabLp.rightMargin = (int) (10 * dp);
         fab.setLayoutParams(fabLp);
         fab.setListener(() -> runScrape());
-        if (isExamMode()) {
-            fab.setLabel("识别考试");
-            fab.setVisibility(View.VISIBLE);   // 考试模式常驻
+        if (isExamMode() || isCampusMode()) {
+            fab.setLabel(isExamMode() ? "识别考试" : actionLabel);
+            fab.setVisibility(View.VISIBLE);   // 考试/校园数据模式常驻
         } else {
             fab.setVisibility(View.GONE);
         }
@@ -333,7 +335,7 @@ public class JwWebViewActivity extends Activity {
         String h = hostOf(url);
         boolean timetable = h.contains("jwglxt");
         // 考试模式：按钮常驻（学生要先自己点"查询"，那一刻页面还没到考试页，按钮就必须在场）
-        if (fab != null) fab.setVisibility(isExamMode() ? View.VISIBLE : (timetable ? View.VISIBLE : View.GONE));
+        if (fab != null) fab.setVisibility((isExamMode() || isCampusMode()) ? View.VISIBLE : (timetable ? View.VISIBLE : View.GONE));
         if (titleView != null && url != null && !url.isEmpty() && !url.equals("about:blank")) {
             String t = webView == null ? null : webView.getTitle();
             if (t != null && !t.trim().isEmpty()) titleView.setText(t.trim());
@@ -341,6 +343,7 @@ public class JwWebViewActivity extends Activity {
     }
 
     private boolean isExamMode() { return "exam".equalsIgnoreCase(mode); }
+    private boolean isCampusMode() { return "campus".equalsIgnoreCase(mode); }
 
     private TextView nav(String glyph) {
         TextView t = new TextView(this);

@@ -1,6 +1,6 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v2.60 ｜ 日期 2026-09-26 ｜ 状态：P5 的 **Uni 本机规则助手已嵌入 Android 主工程并产出 APK**（见 10.14、11.68）；线上 n8n/LLM 仍未接入。v2.59 校园数据 API 仍只有需求与安全边界，尚未实现、未连接真实教务接口、未真机验证。
+> 版本 v2.64 ｜ 日期 2026-09-29 ｜ 状态：**北化「校园工具」基础版已进入 APK**：离线校园示意图、MOTION 公开场馆状态、本机体测评分、登录教务后读取空闲教室/全校课表、保存选课目标和手动跳转均已接入；真实选课 POST 仍按 Q20 强制关闭。成绩/GPA、完整缓存语义、自动选课哨兵仍未实现。自动化构建与包内反查已通过，教务登录采集和整套页面真机点击仍待验证。
 > 联网口径：账号登录与云端同步为默认主路线；高校档案/解析规则更新、天气和 Uni/n8n 属在线增强；端到端加密同步仍是可选高级模式。账号模式的服务端持密钥可读，Cloudflare 境外节点的数据出境限制继续成立（见 11.51 与 AGENTS.md）。
 > 签名算法是 `Net.md` 原定的 **Ed25519**；但客户端**用纯 JS 验签、不依赖平台 WebCrypto**（真机逼出来的一次返工，见 11.35 A 节）。
 > 范围：App 大部分场景允许并预期连接公网，但网络不得成为启动和读取已有数据的前置条件；本机始终保留完整工作副本，在线刷新/同步失败时按域保留上一次有效结果。
@@ -15,8 +15,8 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| v2.60 Uni Android 接线 | **本机规则层已实现并静态出包验证**：独立 Uni 页可回答下一节、今日/明日安排、本周课程统计、空档、冲突、简报，并生成需二次确认的记事草稿；不调用模型或 n8n。24 套件 966 条全绿，APK 6.69 MiB，包内反查通过。**真机安装与交互未验证；线上 n8n/LLM 未接入。** |
-| v2.59 校园数据 API | **已写入 PRD，尚未实现**：空闲教室、成绩/GPA 为只读能力；选课采用默认关闭的限速哨兵，用户必须明确选择目标并二次确认。学校 POST 超时/认证失败时绝不自动重放，不绕过验证码，不保管教务密码。 |
+| v2.63 悬浮入口缩放与全窗口拖动 | 月亮与课表工具箱平时只显示小图标；第一次点击放大，第二次执行原功能；4.2 秒不操作自动缩小。月亮按钮本体保持透明、无实体边框及“Uni/离线”文字；月牙带蓝紫粉青渐变流光、柔光和轻微呼吸，外层新增 36px→62px 同步缩放的 Gemini 渐变透明玻璃圈，包含背景模糊、内高光与柔和外晕；系统要求减少动态效果时停止动画。拖动超过 8px 不触发点击，位置以全窗口相对锚点保存，横竖屏和字号变化后仍夹在屏内；“我中午吃什么呢”等常见用餐问题优先本机快速回答。26 套件 1012 条全绿，APK 6.70 MiB，签名与包内反查通过。**真机拖动手感和不同系统缩放仍待验证。** |
+| v2.64 校园工具基础版 | **已实现基础闭环**：北化离线示意图；MOTION 公开场馆目录/状态；本机体测评分；用户主动登录教务并查询后读取空闲教室或课程目录；选课目标本机保存/二次确认删除；只打开学校选课页。`courseSelectionPost=false`，不自动提交、不读取或保存教务密码/Cookie 值/登录表单。**未实现**成绩/GPA、完整缓存语义与自动选课哨兵；教务采集和页面交互待真机验证。 |
 | v2.58 联网增强、离线不断档 | **已写入 PRD，尚未实现**：先读本机、后台按域刷新；区分最近成功与最近尝试；失败保留旧值；确认空才可覆盖为空；离线写入进入待同步状态；验收见 AC-75~AC-81。参考 THEIA v0.7.7 的数据质量语义，但不照搬第三方密码保管与桌面 loopback API。 |
 | 北二外档案 | **云端已上线**：`https://unimate3.pages.dev/catalog/` 的清单、签名和 `bisu.json` 均返回 200，SHA-256 与本地包一致；APK 不内置北二外完整档案。**待真机**完成“可下载 → 下载 → 切换”。 |
 | P3 云端 | **已部署**：私有 R2 bucket `unimate-sync`；Worker `https://unimate-sync.2025040140.workers.dev`；四项 secret 已设置（只记名称，不记值）：`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `SYNC_OBJECT_PEPPER`。 |
@@ -51,7 +51,7 @@
 
 当前交付物：
 
-- APK（v2.60，**静态出包已验证、待真机复验**）：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，6.69 MiB，SHA-256 `95348995651173C6A5A5C9D2C69466549414280EFEBE9B10D5F757F70DF2DE8D`。
+- APK（v2.63，**静态出包已验证、待真机复验**）：[`artifacts/android/unimate-debug.apk`](artifacts/android/unimate-debug.apk)，6.70 MiB，SHA-256 `8A450E7BEE6B57FCDEB07E732F036590E160FE3FF0E7DFCD1816237E4A8FEFEA`。
 - Pages 直接拖放目录：[`artifacts/cloudflare/unimate-cloudflare-v2.57-upload`](artifacts/cloudflare/unimate-cloudflare-v2.57-upload)（前端 bundle 变了；`_worker.js` 与 v2.53 相同）。
 - Pages 交付形态：**只出可拖放目录**（v2.52 起不再压 ZIP）：[`artifacts/cloudflare/unimate-cloudflare-v2.52-upload`](artifacts/cloudflare/unimate-cloudflare-v2.52-upload)。
 - **Worker 也要重新部署**（本次新增管理员页面与两个接口）+ 可选设 `ADMIN_KEY`：`cd cloudflare\sync-worker` → `npx wrangler secret put ADMIN_KEY`（自定一串随机字符）→ `npm run deploy`。不设的话管理员接口返回 503，其它功能不受影响。
@@ -1175,6 +1175,38 @@
 | AC-95 | 检查数据边界与源码 | 问答只使用结构化课表与未删除记事摘要；无 Cookie、教务密码、照片、成绩或二课明细；本机问答桥接无 `fetch`/模型/n8n 调用 |
 | AC-96 | 解压 APK 并检查主 bundle | 能找到 `Uni 本机助手`、`离线可用`、`这周有几节课`、`当前版本不连接大模型`；bundle 与 `dist` 逐字节一致，APK 签名通过 |
 | AC-97 | 真机覆盖安装并逐项点击 Uni 页面 | 页面布局、五栏底部导航、深浅色、问答、课表跳转、二次确认记事均可用且无崩溃。**当前未验证，须由产品负责人真机执行。** |
+
+> v2.61 曾由 AC-98~AC-104 取代 AC-92~AC-96 的“仅本机 / 新增记事先确认”口径；自 v2.62 起，产品负责人重新明确要求“用户说要干什么时先询问是否加入记事本”，因此新增记事与提醒恢复为**对话式确认后执行**。删除、批量修改、覆盖等高风险操作仍必须走统一 `db.confirm()`，两类确认不可混为一谈。
+
+### 10.15 第五十八轮新增验收项（v2.61，AC-98 ~ AC-104，Uni 双模式 Agent）
+
+| 编号 | 操作 | 预期 |
+| --- | --- | --- |
+| AC-98 | 有网且 Worker 已部署时发送普通聊天和“查明天课表” | 普通聊天由 DeepSeek 返回；数据型请求返回结构化 Tool Call，由 Android `getSchedule` 执行；DeepSeek 不读取本机数据库 |
+| AC-99 | 关闭网络后依次查询课表、记事，新增记事并打开 App 功能 | 自动显示 Offline Mode；本机规则生成结构化 Tool Call；课表/记事离线可读写，页面可打开，不等待模型 |
+| AC-100 | Offline Mode 下恢复网络后再发送请求 | 无需重启 App；下一次请求自动重试 Online Mode，成功后状态切回 Online |
+| AC-101 | 审查网络请求与模型上下文 | 只发送用户主动输入和必要对话文本、可用 Tool 名称；不自动发送课表、教师、教室、记事、天气或 Tool 返回结果；APK 不含模型 Key |
+| AC-102 | 构造删除/批量修改/覆盖 Tool 并尝试执行 | Tool 必须标 `risk: high`；先走统一 `db.confirm()`，确认前 0 写入；token 五分钟失效且只能消费一次。当前版本不向模型暴露删除 Tool |
+| AC-103 | 短按、长按月亮悬浮入口 | 短按进入 Uni 并聚焦文字输入；长按 560 ms 进入 `ASR → Agent → Tool → TTS`；ASR/TTS 可替换且不 import DeepSeek Provider |
+| AC-104 | 正式构建与包内反查 | 25 套件 991 条断言全绿；Vite、Capacitor、Gradle、签名和 bundle 一致性通过；新双模式文案存在，旧“当前版本不连接大模型”不存在。真机语音与真实 DeepSeek 请求另行验证 |
+
+### 10.16 第五十九轮新增验收项（v2.62，AC-105 ~ AC-108，快速回答与记事确认）
+
+| 编号 | 操作 | 预期 |
+| --- | --- | --- |
+| AC-105 | 发送问候、致谢、能力询问或明确的页面/课表指令 | `LocalRulePlanner` 在网络 Provider 之前直接处理，`source=local_rule`，不等待在线模型 |
+| AC-106 | 发送“记一下带实验报告”或“周五交高数作业” | 先询问是否加入记事本，询问阶段 0 写入；明确肯定后只写入 1 次，否定、无待确认时回复“是”或重复确认均不写入 |
+| AC-107 | 配置自建 Agent 网关并检查账号/备份 | Agent 地址只通过 `VITE_AGENT_API_BASE` 注入；`VITE_SYNC_API_BASE` 不变，账号登录与备份链路不被临时模型地址覆盖 |
+| AC-108 | 正式构建、APK 反查与真机复验 | 自动化测试、Vite、Capacitor、Gradle、签名与 bundle 一致性全部通过；真机需复验回答速度、两轮确认、提醒排期和网络切换 |
+
+### 10.17 第六十轮新增验收项（v2.63，AC-109 ~ AC-112，悬浮入口缩放与移动）
+
+| 编号 | 操作 | 预期 |
+| --- | --- | --- |
+| AC-109 | 查看月亮与工具箱悬浮入口 | 平时只显示小图标；第一次点击平滑放大，4.2 秒无操作自动缩小。月亮按钮本体无实体底板和文字；月牙有 Gemini 风格渐变流光、柔光和轻微呼吸，外层透明玻璃圈随入口从 36px 放大到 62px，具备背景模糊、渐变折射、内高光和柔和外晕；系统“减少动态效果”开启时停止动画；工具箱放大后显示标签 |
+| AC-110 | 放大后再次点击 | 月亮进入文字助手，工具箱打开原菜单；月亮长按语音入口继续保留 |
+| AC-111 | 将两个入口拖向窗口四边与底栏区域 | 可在整个可视窗口移动，四边保留 8px；拖动超过 8px 不触发点击或菜单；松手保存相对位置 |
+| AC-112 | 改字号、旋转/分屏后重开 App | 按新窗口尺寸恢复相对位置，不出屏；完整构建、签名、bundle 一致性与包内新类名反查通过 |
 
 ---
 
@@ -3815,7 +3847,7 @@ interface DomainSyncState {
 
 ---
 
-### 11.67 第五十六轮（v2.59，2026-09-25）：校园数据 API、空闲教室、成绩/GPA与选课哨兵（规划，未实现）
+### 11.67 第五十六轮（v2.59，2026-09-25；v2.64 基础版落地）：校园数据 API、空闲教室、成绩/GPA与选课哨兵
 
 #### A. 参考与许可
 
@@ -3878,7 +3910,7 @@ interface CourseSelectionController {
 4. 选课目录和目标保存（仍只读）。
 5. 在学校规则与授权明确后，最后接入受限 POST 哨兵。
 
-完成标准见 AC-82~AC-91。本功能不进入当前 P5/P11 比赛最短路径，不能因为写进 PRD 就宣称已实现。
+v2.64 已完成第 1、2、4 项的基础链路，并额外落地离线地图、MOTION 公开场馆状态和本机体测评分；第 3 项未实现，第 5 项受 Q20 阻塞且 `courseSelectionPost=false`。当前空闲教室与课程目录采用“用户在原教务页查询后主动读取结果”的窄化方案，不读取 Cookie 值、密码或登录表单。完整 AC-82~AC-91 尚未全部关闭，不得把基础版宣称为自动抢课已完成。
 
 ---
 
@@ -3891,6 +3923,50 @@ interface CourseSelectionController {
 已验证：`test:uni` 17/17；主工程完整 24 套件 966/966；Vite 生产构建；Gradle `assembleDebug`；`apksigner verify`；包名/SDK/权限；bundle 与 `dist` 一致；APK 内存在四条 Uni 关键文案。产物 6.69 MiB，SHA-256 `95348995651173C6A5A5C9D2C69466549414280EFEBE9B10D5F757F70DF2DE8D`。
 
 未验证：真机安装、五栏底部导航在不同屏幕/字号下的观感、真机问答与记事确认交互；线上 `N8nAdapter`、LLM、生产鉴权/限流/数据库均未接入 APK。完成标准见 AC-92~AC-97。
+
+---
+
+### 11.69 第五十八轮（v2.61，2026-09-26）：Uni 轻量双模式 Agent
+
+本轮没有推倒 v2.60 的 Uni 页与 P5 本机规则，而是在其外层补齐四个窄接口：`AgentPlanner` 负责理解与 Tool 选择；`AgentTool` 负责 JSON Schema、参数校验、风险和执行；`StudentAgentPort` 隔离现有 Pinia/UI/天气/提醒；`VoiceInput` / `VoiceOutput` 隔离 ASR/TTS。总体结构见 [`docs/agent-architecture.md`](docs/agent-architecture.md)。
+
+Online Mode 的 App 只请求自有 `/v1/agent/chat`。Cloudflare Worker 从 secret 读取 `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL`，用 DeepSeek Chat Completions Function Calling 在固定白名单中选择 Tool；Worker 不执行 Tool，Android 再校验 Tool 名和参数并在本机执行。当前对话只发送用户主动输入与必要的普通问答上下文，课表、记事、教师、教室、天气和 Tool 结果不自动回传。模型 Key 不进入 APK。
+
+Offline Mode 使用 `LocalRulePlanner` 生成与 DeepSeek 相同的结构化 Tool Call，支持课表、记事查询与新增、提醒、天气缓存和页面跳转。无网或网关失败会自动降级；网络恢复后的下一次请求重新尝试 Online。当前 Tool 为 `getSchedule`、`getNote`、`addNote`、`createReminder`、`getWeather`、`openFeature`。新增/修改可直接执行；高风险 Tool 由 Agent Core 发一次性确认 token 并统一走 `db.confirm()`，当前不向模型暴露删除 Tool。
+
+月亮悬浮入口保持不变：短按切 Uni 并聚焦文字输入，长按 560 ms 进入 `ASR → Agent → Tool → TTS`。默认 Voice 适配器不引入 SDK 或大模型；当前 APK 未新增录音权限，因此只能把接口、入口、超时和降级提示标为完成，不能把 Android 真机 ASR/TTS 写成已可用。
+
+已验证：`test:agent` 23/23、`test:uni` 19/19；完整 25 套件 991/991；Vite 生产构建；Capacitor 同步；Gradle `assembleDebug`；`apksigner verify`；包名/SDK/权限；APK 内 bundle 与 `dist` 一致。最终产物 6.70 MB，SHA-256 `81897979E4F430106EDB3E96EFADD59C8210A6A9D09C663629B22B6E992BC49D`。
+
+未验证：Worker/Pages 重新部署、真实 DeepSeek 请求与计费、真机 Online/Offline 切换、月亮短按/长按、Tool 写入与提醒、ASR/TTS。完成标准见 AC-98~AC-104。
+
+---
+
+### 11.70 第五十九轮（v2.62，2026-09-27）：快速回答、记事确认与独立 Agent 地址
+
+本轮把 P5 本地原型中已验证的快速规则正式移植到 Android 主工程。`AgentCore` 新增可选 `localPlanner` 快速路径，`UniView` 在在线 Provider 前先交给 `LocalRulePlanner`；问候、致谢、能力询问、页面打开及明确的课表/记事指令命中后不再等待网络或模型。开放式问题仍交给 Online Planner，网关失败时继续沿用 Offline 降级。
+
+记事与提醒新增两轮状态机：第一轮只回复“是否加入记事本”，不调用 `db.addNote()`；只有上一轮确实存在本机提议且本轮明确肯定，才生成一次 `addNote` / `createReminder` Tool Call。否定会取消；无待确认时单独回复“是”、以及完成后的重复“是”，都不会再次写入。Tool 结果仍不回灌在线模型上下文。
+
+`HttpAIProvider` 新增独立 `VITE_AGENT_API_BASE`，未配置时回落到现有 Pages 网关；`VITE_SYNC_API_BASE` 继续只负责账号与备份，避免把临时本地模型地址误用于云账号链路。手机不能用电脑的 `127.0.0.1:8787`，若接本地蒸馏模型，仍需部署手机可访问的稳定 HTTPS 地址后重新构建。
+
+已验证：`test:agent` 31/31、`test:uni` 19/19、`test:p5-prototype` 3/3；完整 26 套件 1002/1002；Vite 生产构建；Capacitor 同步；Gradle `assembleDebug`；`apksigner verify`；包名/SDK/权限；APK 内 bundle 与 `dist` 一致。反向取证确认 APK 内存在询问、肯定/否定提示、快速问候与 Agent 路由，旧“当前版本不连接大模型”文案不存在。最终产物 6.70 MiB，SHA-256 `842DCFB6355B2872BC0EF394B8E8DE4D53F251EA2A2681EA6972F90C8190B1A4`。
+
+未验证：稳定 HTTPS Agent 地址、真实 DeepSeek 请求与计费、Android 真机回答速度、网络切换、两轮记事/提醒写入、月亮手势及 ASR/TTS。完成标准见 AC-105~AC-108。
+
+---
+
+### 11.71 第六十轮（v2.63，2026-09-27）：悬浮入口小尺寸待机与全窗口拖动
+
+月亮入口与课表工具箱统一为两段式交互：待机尺寸分别为 40px、38px，只显示图标；第一次点击放大到 68px、64px，第二次点击才执行原来的文字助手或工具箱菜单。月亮图形从 27px 放大到 46px，按钮本体保持透明、无实体边框、无“Uni/离线”文字；月牙增加蓝紫粉青渐变流光、双层柔光和 2.8 秒轻微呼吸，外层透明玻璃圈从 36px 同步放大到 62px，使用背景模糊、渐变折射、内高光与柔和外晕制造玻璃质感。放大时柔光增强，离线时自动降低饱和度。系统开启 `prefers-reduced-motion` 时停止动画。工具箱放大后显示标签。4.2 秒无操作自动缩小；月亮长按 560ms 的语音入口继续保留。
+
+两个入口均复用 `services/toolbox.ts` 的坐标夹取与相对锚点换算。`barH=0` 明确表示全窗口移动，四边保留 8px；拖动超过 8px 后取消点击语义，松手把位置写入账号设置。工具箱沿用 `toolFab`，月亮新增 `moonFab`；改变字号、横竖屏或分屏后会按新视口重算，避免绝对像素导致按钮丢失。位置保存通过 `guard()` 限时，不会因原生存储挂起卡住界面。
+
+同时为截图中的“我中午吃什么呢”等常见早餐、午餐、晚餐问题增加本机规则回答：无需等待在线 Provider，也不会因 Agent 网关不可达直接落到“暂时无法连接”；其它开放问题仍按在线 Agent → 离线降级链路处理。
+
+已验证：`test:toolbox` 29/29、`test:agent` 36/36、`test:refs` 2/2、`test:order` 4/4、`test:css` 19/19；完整 26 套件 1012/1012；Vite、Capacitor、Gradle、签名、包名/权限与 bundle 一致性通过。APK 反查确认本机午餐回答、月牙渐变、`uni-moon-aurora` 动画、`drop-shadow` 柔光、`prefers-reduced-motion` 降级，以及玻璃圈的 `backdrop-filter`、`uni-moon-glass-ring`、36px/62px 两档尺寸均存在；月亮标签不存在，按钮本体仍为透明背景、无边框、无按钮阴影，并保留 `uni-moon-expanded`、`toolbox-expanded`、`moonFab` 与全窗口拖动说明。最终产物 6.70 MiB，SHA-256 `8A450E7BEE6B57FCDEB07E732F036590E160FE3FF0E7DFCD1816237E4A8FEFEA`。
+
+未验证：Android 真机上的拖动手感、系统手势边缘冲突、不同厂商 WebView 的缩放动画与横竖屏恢复。完成标准见 AC-109~AC-112。
 
 ---
 
@@ -4210,6 +4286,10 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| v2.64 | 2026-09-29 | **校园工具基础版**：在「北化通」增加校园工具入口；接入离线校园示意图、MOTION 公开场馆目录/状态、本机体测评分、教务空闲教室结果读取、只读课程目录、选课目标本机保存/二次确认删除和学校选课页手动跳转。真实选课 POST 由 `courseSelectionPost=false` 强制关闭；不读取或保存教务密码、Cookie 值或登录表单。THEIA v0.7.7 的地图数据/评分表按 MIT License 改写，源码与 APK 独立版权资产均保留许可。MOTION 当前公开页实测识别 14 个入口及 13 个时段；完整构建、签名和新字符串包内反查通过。教务登录采集与整套页面真机点击待验证。 |
+| v2.63 | 2026-09-27 | **悬浮入口缩放与全窗口拖动**：月亮与工具箱改为小尺寸待机、首次点击放大、再次点击执行，4.2 秒自动缩小；月亮按钮保持透明、无文字，月牙带 Gemini 风格渐变流光、柔光和呼吸效果，外层增加同步缩放的透明玻璃圈；拖动阈值防误触，相对锚点保存位置，允许覆盖底栏但始终夹在窗口内；常见用餐问题补本机快速回答。完整 26 套件 1012 条全绿，APK 静态完整性与包内反查通过；真机手感待验。 |
+| v2.62 | 2026-09-27 | **Uni 快速回答与记事确认**：`LocalRulePlanner` 在在线 Provider 前处理高频本机意图，减少问候和明确命令的等待；自然待办与显式记事统一先询问，明确肯定后才写入一次，取消或重放不写入；新增独立 `VITE_AGENT_API_BASE`，不影响账号/备份的 `VITE_SYNC_API_BASE`。完整 26 套件 1002 条全绿，APK 签名、bundle 一致性及新旧字符串反查通过；真机与公网 Agent 地址待验。 |
+| v2.61 | 2026-09-26 | **Uni 轻量双模式 Agent**：保留现有 Uni 与月亮入口；新增 Agent Core、Online/Offline Planner、独立 Tool Layer、`StudentAgentPort` 和可替换 Voice 接口。Online 经自有 Worker 调 DeepSeek Function Calling，Offline 用本机规则输出同一种结构化 Tool Call；断网/网关失败降级，网络恢复后下一次请求自动重试在线。Tool 不让模型碰数据库，高风险动作统一 `db.confirm()`；不引入本地大模型、多 Agent 或向量库。完整 25 套件 991 条全绿，APK 静态完整性通过；服务端部署、真实 DeepSeek 和真机交互待验。 |
 | v2.60 | 2026-09-26 | **Uni 本机助手接入 Android**：独立第 3 个底部页签；复用 P5 `LocalRulesAdapter` 与 `FixtureScheduleReader`；支持下一节、今日/明日、本周统计、空档、冲突、简报和需二次确认的记事草稿；线上 n8n/LLM 保持关闭。新增 `test:uni` 17 条，完整 24 套件 966 条全绿；APK 6.69 MiB，SHA `95348995…`，静态完整性与包内反查通过，真机待验。 |
 | v2.59 | 2026-09-25 | **校园数据 API 路线**（规划，无代码改动）：新增 M16 校园数据 API、M17 学业数据中心、M18 选课哨兵；空闲教室与成绩/GPA 均为只读能力，学校官方 GPA 与本机估算分栏；选课采用“精确目标 + 时间窗 + 单并发 + 限速 + 可停止 + journal”的受限模式，POST 超时/认证失败/结果未知绝不自动重放。新增 11.67 与 AC-82~AC-91；Q20 未关闭前真实选课 POST 保持关闭。参考 THEIA v0.7.7，若复用实质代码须保留其 MIT License。 |
 | v2.58 | 2026-09-25 | **联网增强、离线不断档**（规划，无代码改动）：公网成为正常工作模式，但首屏先读本机；按域记录 `lastSuccessAt`/`lastRunAt`/完整性/错误；失败保留上次有效结果，只有带来源证据的确认空可以覆盖旧集合；离线写入进入幂等待同步队列。新增 11.66 与 AC-75~AC-81，并明确参考 THEIA v0.7.7 的数据质量语义而不照搬桌面 loopback 或第三方凭据保管。 |

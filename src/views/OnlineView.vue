@@ -9,11 +9,13 @@ import { JwWebView, isNativeWebView } from '../services/jwwebview.ts';
 import ExamPanel from './ExamPanel.vue';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import type { CampusApp } from '../types.ts';
+import CampusToolsView from './CampusToolsView.vue';
 
 const db = useDb();
 const status = ref('');
 const p = () => db.profile!;
 const showIcons = ref(false);
+const showCampusTools = ref(false);
 
 /** 内置条目被长按改过的，用 appEdits 覆盖显示；自定义条目直接改本体。 */
 function merged(a: CampusApp): CampusApp {
@@ -294,6 +296,12 @@ async function probeAll(): Promise<void> {
       <div class="small">把{{ p().shortName }}要用的东西收在一页里。<b>长按并拖动</b>可换位置，拖到上方改信息、拖到下方删除。</div>
     </div>
 
+    <button class="campus-tools-entry" @click="showCampusTools = true">
+      <span class="campus-tools-entry-icon">◈</span>
+      <span class="grow"><b>校园工具</b><small>地图 · 场馆状态 · 体测评分 · 空闲教室 · 选课工具</small></span>
+      <span>›</span>
+    </button>
+
     <div class="secrow">
       <span class="seclabel">校园服务（{{ apps.length }}）</span>
       <div class="row" style="gap: 6px">
@@ -401,6 +409,7 @@ async function probeAll(): Promise<void> {
   </div>
 
   <ExamPanel v-if="showExam" :start-url="examUrl" @close="showExam = false" />
+  <CampusToolsView v-if="showCampusTools" @close="showCampusTools = false" />
 </template>
 
 <style scoped>
@@ -413,6 +422,9 @@ async function probeAll(): Promise<void> {
 .app.drop { outline: 2px solid var(--brand); outline-offset: -2px; }
 
 .grid { position: relative; }
+.campus-tools-entry { width: 100%; margin-top: 12px; padding: 13px 14px; border-radius: 15px; background: var(--card); color: var(--ink); box-shadow: var(--shadow); display: flex; align-items: center; gap: 11px; text-align: left; }
+.campus-tools-entry-icon { width: 38px; height: 38px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #fff; background: linear-gradient(135deg, var(--brand), #7257c8); font-size: 21px; }
+.campus-tools-entry b { display: block; font-size: 14px; }.campus-tools-entry small { display: block; color: var(--muted); font-size: 10.5px; margin-top: 3px; }
 .hero { background: linear-gradient(140deg, #2E5AAC, #3E6FBF); color: #fff; }
 .hero .title { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
 .hero .small { color: rgba(255, 255, 255, .82); font-size: 12.5px; line-height: 1.6; }

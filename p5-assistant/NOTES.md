@@ -272,6 +272,30 @@ Android 嵌入与 APK 静态出包已于 2026-09-26 由主工程完成；线上 
 - `test:uni` 17/17；主工程完整 24 套件 966/966；APK 6.69 MiB，SHA-256 `95348995651173C6A5A5C9D2C69466549414280EFEBE9B10D5F757F70DF2DE8D`。
 - APK 内反查到 `Uni 本机助手`、`离线可用`、`这周有几节课`、`当前版本不连接大模型`。**未做真机安装与点击验证。**
 
+### 2026-09-26 v2.61 主工程双模式 Agent 接线结果
+
+- 主工程在 v2.60 本机规则外新增 `AgentCore`、`AgentPlanner`、独立 Tool Layer、`StudentAgentPort` 和 Voice seam，没有复制或替换本目录的规则核心。
+- Online：Android → 现有 Cloudflare Worker → DeepSeek Function Calling → Android Tool；模型不访问数据库，Key 只放 Worker secret。
+- Offline：断网或网关失败时由 `LocalRulePlanner` 生成同一种结构化 Tool Call；网络恢复后的下一次请求重试在线。
+- 当前 Tool：课表、记事查询/新增、提醒、天气缓存、页面跳转；高风险框架统一接 `db.confirm()`，当前不暴露删除 Tool。
+- `test:agent` 23/23、`test:uni` 19/19；主工程完整 25 套件 991/991；Vite、Capacitor、Gradle、签名与 bundle 一致性已验证。
+- **仍未验证**：Worker/Pages 重新部署、真实 DeepSeek 请求、Android 真机网络切换、月亮短按/长按、ASR/TTS 和 Tool 写入端到端交互。
+
+### 2026-09-26 DeepSeek 蒸馏小模型临时服务器原型
+
+- 新增 [`local-server-prototype/`](local-server-prototype/README.md)，明确标记 `PROTOTYPE ONLY`，不属于生产服务。
+- 网关只用 Node 内置模块，无新增依赖、无持久化、无数据库访问；兼容主工程 `/v1/agent/chat` 的 `message` / `tool_call` 契约。
+- 已用内置 mock 模式验证：`/health`、普通聊天、结构化 `getSchedule`、APK 来源 CORS、非白名单来源 403；运行进程已停止。
+- 已取得产品负责人对约 1.12 GB 模型和官方 llama.cpp 运行包的明确下载同意；所有可控写入均在 F 盘。
+- 已下载并校验 `unsloth` 对 DeepSeek 官方 `DeepSeek-R1-Distill-Qwen-1.5B` 的 Q4_K_M GGUF：`1,117,321,312` 字节，SHA-256 `f3bdf9cf31dee4b57ae4e455a1cb0d01b5c2c1b50d72d3112141c195506c2840`，与 ModelScope `X-Linked-ETag` 一致。它是第三方量化，不能写成 DeepSeek 官方 GGUF。
+- 已下载并解压 ggml-org 官方 llama.cpp v0.5.0 配套构建 `b11146` Windows x64 CPU 包；ZIP `18,560,055` 字节，SHA-256 `14cf1303ca9ac3abd94816850532f9f9a69ac66fbaca3776fc6f9061c2fac1d1`。
+- 真实 CPU 推理已验证：模型约 1.6 秒加载；普通聊天约 6.1 秒，三轮上下文约 8.8 秒，日志约 27–39 token/s。
+- 纯 1.5B LLM Tool Calling **不通过**：出现 tomorrow→today、addNote→openFeature、`arguments` 字符串化、未授权名称等错误；白名单/参数校验均能拒绝危险结果，未为追求通过而放宽校验。
+- 默认调整为诚实可用的 `hybrid`：明确的课表/记事/天气/页面命令由服务器轻量规则生成结构化 Tool Call，其他内容由蒸馏模型聊天。最终四个虚构 Tool 场景的结果均正确，规则路径约 1 ms；不提供 Tool 白名单时不会返回 Tool Call。细节见 [`local-server-prototype/RESULTS.md`](local-server-prototype/RESULTS.md)。
+- `cloudflared 2026.9.3` 已从官方 GitHub Release 下载到 F 盘并校验；Quick Tunnel 创建接口连续两次超时，未取得公网 URL。已增加不持久化的局域网聊天页并验证本机/LAN 地址 HTTP 200 与同源 Tool Call；Android 真机、手机实际访问、语音与真实 Tool 端到端仍未验证。
+- 当时的主工程配合项（2026-09-26 尚未完成）：新增独立 `VITE_AGENT_API_BASE` 给 `HttpAIProvider`，不要把临时模型地址写进 `VITE_SYNC_API_BASE`，否则会同时破坏账号与备份 API。依照 P5 工位红线，当轮未直接修改 `src/`。
+- 模型和运行时保留在 `F:\A_LIU_Astrspire\A_downloads\UnimateUL\` 与 `F:\A_LIU_Astrspire\A_runtime\UnimateUL\`，没有擅自清理；任何删除仍需二次确认。
+
 ### 隔离目录
 
 现在有 **9 个**，**全部保留**（`unimate-n8n-iso-p11-runtime-20260925` 是**破损态证据**，别删）：
@@ -347,3 +371,14 @@ G1 门禁判据里有一条是「`prompts/data-boundary.md` 与实现一致」�
 - rollup / 日报未实现；`agent_log` 表未部署；故障注入未做。
 - `latency_ms` / `input_length` 在本机网关**取不到，恒为 `null`**（不是 bug，是数据边界的结果；补法记账在 `observability.md` §4.3）。
 - **延迟 / 命中率 / 成本一个数字都没有**——没有真实流量，不填。
+
+## 接手记录（2026-09-27，本地模型快速路由 + 记事确认）
+
+- `local-server-prototype/server.mjs` 已把问候、致谢、能力询问和待办确认前移到 `hybrid` 本地规则；这些路径不调用模型。
+- 待办流程改为两轮：先问“是否加入记事本”，用户肯定后才返回 `addNote` Tool Call，否定则取消；原型服务仍不直接写数据库。
+- 本机 8787 实测：问候 36.4 ms、待办询问 3.6 ms、确认 Tool Call 5.5 ms。开放式模型回答仍受 CPU 推理限制，约 6～13 秒。
+- `--reasoning off --reasoning-budget 0` 对当前蒸馏模型无有效提速；现有 CPU 包 `--list-devices` 为 `(none)`，未下载或冒充 GPU 后端。
+- 主工程已把同一确认状态机移植到 `src/services/uniTools.ts` 的 `LocalRulePlanner`：“帮我记一下”和带时间的待办先询问，明确肯定后才生成 `addNote` / `createReminder` Tool Call；取消、重复确认均不写入。
+- 主工程已新增独立 `VITE_AGENT_API_BASE`，且 `VITE_SYNC_API_BASE` 继续只用于账号与备份；`UniView` 把本机 Planner 作为快速优先路径交给 `AgentCore`。
+- 完整接入步骤：`local-server-prototype/APK_INTEGRATION.md`。
+- 已验证：原型网关逻辑和本机 HTTP、主工程移植、`test:agent` 31/31、完整 26 套件 1002/1002、Vite/Capacitor/Gradle/签名/bundle 一致性与 APK 字符串反查；产物 6.70 MiB，SHA-256 `842DCFB6355B2872BC0EF394B8E8DE4D53F251EA2A2681EA6972F90C8190B1A4`。未验证：HTTPS 公网地址与 Android 真机交互。

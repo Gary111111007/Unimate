@@ -2,6 +2,17 @@
 
 Worker 有两组能力（v2.43 起）：
 
+### Uni 在线 Agent（DeepSeek Tool Calling）
+
+`POST /v1/agent/chat` 只接收用户主动发送的对话文本；课表、教师、教室与记事不会由客户端自动附带。Worker 让 DeepSeek 在固定 Tool 白名单中做 Function Calling，Android 再校验 JSON 参数并在本机执行。APK 只访问 Unimate Worker，不包含模型密钥。
+
+部署前设置两个 Worker Secret（模型名独立配置，后续换模型无需重新构建 APK）：
+
+- `npx wrangler secret put DEEPSEEK_API_KEY`
+- `npx wrangler secret put DEEPSEEK_MODEL`
+
+修改 Secret 后不需要重新构建 APK；首次增加本路由仍需重新部署 Worker 与 Pages 目录。网络不可用或网关失败时，Android 会自动退到 Offline Mode，本机课表和记事仍可用。
+
 1. **端到端加密同步**：只为单个密文对象签发 15 分钟的 R2 `GET` / `PUT` URL。同步口令、恢复码和数据明文都不会到 Worker。
 2. **账号登录（服务器托管，v2.43 新增）**：账号体系 + 备份正文直接存在 R2。
    - `POST /v1/signup` / `POST /v1/login`：账号名归一化后只以 `HMAC(SYNC_OBJECT_PEPPER, 账号)` 出现在对象名里；

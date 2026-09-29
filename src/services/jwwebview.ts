@@ -13,12 +13,13 @@ export interface CookieProbe { present: boolean; count: number }
 
 export interface JwWebViewPlugin {
   open(options: {
-    url: string; startUrl?: string; title: string; scrapeSelector?: string; allowExternal?: boolean;
+    url: string; startUrl?: string; title: string; scrapeSelector?: string; allowExternal?: boolean; actionLabel?: string;
     /**
      * 'timetable'（默认）：抓课表，圆钮只在教务域名下出现；
      * 'exam'：抓考试，按钮**常驻**并显示「识别考试」。
+     * 'campus'：校园数据只读采集，按钮常驻，只读取调用方给出的结果容器。
      */
-    mode?: 'timetable' | 'exam';
+    mode?: 'timetable' | 'exam' | 'campus';
   }): Promise<WebViewOpenResult>;
   /** 只问"有没有、几条"，原生侧不返回 Cookie 内容 */
   cookieProbe(options: { url: string }): Promise<CookieProbe>;

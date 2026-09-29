@@ -16,3 +16,4 @@ simple = { limit = 20, period = 60 }
 
 # 部署前不要把密钥写进本文件。按 README 执行四次 wrangler secret put：
 # R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / SYNC_OBJECT_PEPPER
+# 在线 Agent：DEEPSEEK_API_KEY / DEEPSEEK_MODEL（均用 wrangler secret put，禁止写入本文件）

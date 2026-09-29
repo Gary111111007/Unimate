@@ -6,4 +6,9 @@
       "default": true
     }
   ]
+  {
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "stm32cube-ide-clangd.enable": true,
+  "stm32cube-ide-clangd.enableLinting": true
+  }
 }

@@ -12,6 +12,9 @@ import {
   BUILTIN_ADAPTER_VERSIONS, TIMETABLE_DEFAULTS, EXAM_DEFAULTS, validateRulePack,
   setActiveRulePacks, timetableRules, examRules, activeRulePacks, compile, type RulePack
 } from '../src/services/parser/rules.ts';
+import { calculateFitness } from '../src/services/fitnessScore.ts';
+import { resolveCampusLandmark } from '../src/services/campusMap.ts';
+import { campusCapabilities, parseCourseCatalog, parseFreeClassrooms } from '../src/services/campusData.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p: string) => readFileSync(join(root, p), 'utf8');
@@ -158,6 +161,43 @@ console.log('\n--- 结构断言 ---');
   const pack = read('scripts/make-school-pack.mjs');
   ok('下发工具会把规则包一起签名（同一份 index）', /adapters: adapters\.map/.test(pack), '');
   ok('下发工具挡掉夹带可执行代码的规则', /只允许声明式规则/.test(pack), '');
+}
+
+// ---------------- F. 校园工具：本机算法、解析与安全边界 ----------------
+console.log('\n--- 校园工具 ---');
+{
+  const score = calculateFitness({
+    gender: 'male', grade: '12', heightCm: 170, weightKg: 65, vitality: 5040,
+    run50: 6.7, flex: 24.9, jump: 273, strength: 19, enduranceSeconds: 197
+  });
+  ok('体测标准满分样本得到 100 分', score?.standard === 100 && score.total === 100, JSON.stringify(score));
+  ok('体测缺少耐力项目时不生成误导结果', calculateFitness({
+    gender: 'female', grade: '34', heightCm: 165, weightKg: 50, vitality: 3000,
+    run50: 8, flex: 18, jump: 180, strength: 40, enduranceSeconds: 0
+  }) === null);
+  ok('教室文字可定位到离线建筑示意图', resolveCampusLandmark('二教 D-302')?.shortName === '二教');
+
+  const caps = campusCapabilities('buct');
+  ok('北化校园工具已适配但真实选课 POST 强制关闭',
+    caps.map && caps.venues && caps.fitness && caps.freeClassrooms && caps.courseCatalog && !caps.courseSelectionPost);
+  ok('未适配高校不会误报可用', Object.values(campusCapabilities('other')).every((value) => value === false));
+
+  const roomHtml = '<table><tr><th>教室</th><th>校区</th><th>教学楼</th><th>类型</th><th>容量</th></tr>'
+    + '<tr><td>一教 A-203</td><td>昌平校区</td><td>第一教学楼</td><td>多媒体</td><td>80</td></tr></table>';
+  const parsedRooms = parseFreeClassrooms(roomHtml);
+  ok('空闲教室结果表可解析', parsedRooms.length === 1 && parsedRooms[0].room === '一教 A-203' && parsedRooms[0].capacity === '80', JSON.stringify(parsedRooms));
+
+  const courseHtml = '<table><tr><th>课程名称</th><th>课程号</th><th>教学班</th><th>教师</th><th>学分</th><th>上课时间</th><th>教室</th><th>状态</th></tr>'
+    + '<tr><td>高等数学（A）</td><td>MATH1001</td><td>教学班 01</td><td>教师A</td><td>5</td><td>周一 1-2节</td><td>一教 A-203</td><td>有余量</td></tr></table>';
+  const parsedCourses = parseCourseCatalog(courseHtml);
+  ok('只读课程目录可解析', parsedCourses.length === 1 && parsedCourses[0].courseCode === 'MATH1001' && parsedCourses[0].teacher === '教师A', JSON.stringify(parsedCourses));
+
+  const campusView = read('src/views/CampusToolsView.vue');
+  const venueService = read('src/services/motionVenue.ts');
+  ok('删除选课目标统一走 db.confirm 二次确认', /removeTarget[\s\S]{0,400}db\.confirm\(/.test(campusView));
+  ok('选课界面明确阻断自动提交', /真实自动提交暂未开放/.test(campusView) && /不会点击提交/.test(campusView));
+  ok('场馆请求限定 HTTPS 域名与路径白名单', /url\.origin !== new URL\(BASE\)\.origin/.test(venueService) && /allowedPaths/.test(venueService));
+  ok('校园数据采集不读取 Cookie 值和密码字段', !/getCookies|document\.cookie|type\s*=\s*["']password/i.test(campusView + venueService));
 }
 
 console.log('\n结果：' + pass + ' 通过 / ' + fails.length + ' 失败');

@@ -4,6 +4,8 @@
 //   ② v2.15 第一版忘了把 CSS zoom 换算掉，算出来的坐标被再放大一次，按钮直接出屏幕。
 // 这条测试把边界逐条钉死，防止第三次。
 import { toolBox, clampToBox, anchorFromPos, posFromAnchor, anchorFromLegacy } from '../src/services/toolbox.ts';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 let pass = 0;
 const fails: string[] = [];
@@ -100,6 +102,20 @@ console.log('\n--- 退化输入（防止 NaN/0 把按钮算没）---');
   ok('退化输入下位置仍是有限数', Number.isFinite(p.x) && Number.isFinite(p.y), JSON.stringify(p));
   const a2 = anchorFromPos({ x: 10, y: 10 }, { minX: 5, maxX: 5, minY: 5, maxY: 5 });
   ok('零宽区域时不产生 NaN 锚点', Number.isFinite(a2.fx) && Number.isFinite(a2.fy), JSON.stringify(a2));
+}
+
+console.log('\n--- v2.63：小尺寸待机、点击放大、全窗口移动 ---');
+{
+  const full = toolBox({ viewW: 360, viewH: 800, zoom: 1, barH: 0, size: SIZE, pad: PAD });
+  ok('barH=0 时允许移动到整个窗口底部', full.maxY === 740, String(full.maxY));
+  const small = toolBox({ viewW: 360, viewH: 800, zoom: 1, barH: 0, size: 38, pad: PAD });
+  const large = toolBox({ viewW: 360, viewH: 800, zoom: 1, barH: 0, size: 64, pad: PAD });
+  ok('按钮放大后边界会按新尺寸重新计算', small.maxX - large.maxX === 26 && small.maxY - large.maxY === 26);
+
+  const view = readFileSync(join(process.cwd(), 'src/views/TimetableView.vue'), 'utf8');
+  ok('工具箱具备小尺寸与展开状态', view.includes('toolExpanded') && view.includes('toolbox-expanded'));
+  ok('工具箱第一次点击只放大', view.includes('if (!toolExpanded.value) { expandTool(); return; }'));
+  ok('工具箱位置按全窗口计算', view.includes('barH: 0, size: toolSize.value'));
 }
 
 console.log('\n结果：' + pass + ' 通过 / ' + fails.length + ' 失败');

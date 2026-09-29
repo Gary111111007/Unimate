@@ -12,6 +12,7 @@ import { buildShareUrl, encodeShare, shareHost } from '../services/share.ts';
 import { canEncodeQr, qrSvg } from '../services/qr.ts';
 import { agoText, weatherText, weatherTip } from '../services/weather.ts';
 import { fixReminderSetting, refreshReminderRisk, reminderRisk } from '../services/notify.ts';
+import { guard } from '../services/guard.ts';
 import ImportPanel from './ImportPanel.vue';
 import SettingsPanel from '../components/SettingsPanel.vue';
 
@@ -444,26 +445,30 @@ async function dropTimetable(id: string): Promise<void> {
 /**
  * 课表工具箱：把「导入课表」和原来那个 ⋯ 合成一个悬浮按钮（需求 2）。
  *
- * 【可拖动，但只能在"允许区域"内（v2.15 第二次修订）】
+ * 【可拖动，v2.63 起允许在整个可视窗口内移动】
  * 产品负责人要求：必须能拖（不然周日晚上有课的人，右下角那块正好被按钮压住），
  * 但必须"框定一个范围，让它不能超出这个范围"。所以：
- *   1) 允许区域 = 可视区去掉底部导航栏（底栏高度**实时量**，不写死），左右各留 8px；
+ *   1) 允许区域 = 整个可视窗口，四边各留 8px；允许覆盖底栏，但不会拖出屏幕；
  *   2) 拖动过程中实时夹取，松手再夹一次，永远出不去；
  *   3) 存下来的是**相对锚点** fx / fy（0~1 的比例），不是像素坐标 ——
  *      字号变大、底栏长高、横竖屏切换后按新尺寸换算位置，不可能像旧版那样
  *      "拖到右下角、改大字号就找不到"（旧版存像素，换尺寸后那个坐标落到了屏幕外/底栏底下）；
  *   4) 每次按下之前、窗口尺寸变化、页面重新可见时都重新换算一次，老数据也会被夹回范围内。
  */
-const TOOL_SIZE = 52;
+const TOOL_SMALL_SIZE = 38;
+const TOOL_LARGE_SIZE = 64;
 const TOOL_PAD = 8;
 const toolPos = ref({ x: 0, y: 0 });
 const toolDragging = ref(false);
+const toolExpanded = ref(false);
+const toolSize = computed(() => toolExpanded.value ? TOOL_LARGE_SIZE : TOOL_SMALL_SIZE);
 /** 位置用"相对锚点"（0~1 的比例）持久化，避免存像素坐标导致的换尺寸即丢失 */
-const toolAnchor = ref({ fx: 1, fy: 1 });
+const toolAnchor = ref({ fx: 1, fy: .91 });
 const toolStyle = computed(() => ({
   transform: 'translate3d(' + toolPos.value.x + 'px, ' + toolPos.value.y + 'px, 0)'
 }));
 let toolDrag: { id: number; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null = null;
+let toolCollapseTimer = 0;
 
 /**
  * 当前页面缩放系数。
@@ -481,12 +486,32 @@ function zoomFactor(): number {
 
 /** 工具箱允许出现的矩形区域（单位：布局像素，与 translate3d 同一坐标系） */
 function toolBounds() {
-  const bar = document.querySelector('.tabbar') as HTMLElement | null;
-  const barH = bar && bar.getBoundingClientRect ? bar.getBoundingClientRect().height : 0;
   return toolBox({
     viewW: window.innerWidth, viewH: window.innerHeight, zoom: zoomFactor(),
-    barH, size: TOOL_SIZE, pad: TOOL_PAD
+    barH: 0, size: toolSize.value, pad: TOOL_PAD
   });
+}
+
+function scheduleToolCollapse(): void {
+  clearTimeout(toolCollapseTimer);
+  toolCollapseTimer = setTimeout(() => {
+    if (!toolDragging.value && !showMenu.value) {
+      toolExpanded.value = false;
+      placeTool();
+    }
+  }, 4200) as unknown as number;
+}
+
+function expandTool(): void {
+  toolExpanded.value = true;
+  placeTool();
+  scheduleToolCollapse();
+}
+
+function collapseTool(): void {
+  clearTimeout(toolCollapseTimer);
+  toolExpanded.value = false;
+  placeTool();
 }
 
 /** 相对锚点 → 当前尺寸下的像素位置 */
@@ -511,6 +536,7 @@ function loadToolPos(): void {
 }
 
 function toolDown(e: PointerEvent): void {
+  clearTimeout(toolCollapseTimer);
   placeTool();                     // 先按当前尺寸摆回允许区域内（字号可能刚变过）
   const el = e.currentTarget as HTMLElement;
   toolDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: toolPos.value.x, oy: toolPos.value.y, moved: false };
@@ -532,10 +558,23 @@ function toolUp(): void {
   toolDrag = null;
   toolDragging.value = false;
   if (!d) return;
-  if (!d.moved) { showMenu.value = !showMenu.value; return; }   // 点一下 = 开菜单
+  if (!d.moved) {
+    if (!toolExpanded.value) { expandTool(); return; }
+    showMenu.value = !showMenu.value;
+    collapseTool();
+    return;
+  }
   anchorToolFromPos();                                         // 拖动超过 8px = 移动
   db.settings.toolFab = { fx: toolAnchor.value.fx, fy: toolAnchor.value.fy };
-  void db.saveData();
+  void guard('保存工具箱位置', db.saveData().then(() => true), 8000, false);
+  if (toolExpanded.value) scheduleToolCollapse();
+}
+
+function toolCancel(): void {
+  clearTimeout(toolCollapseTimer);
+  toolDrag = null;
+  toolDragging.value = false;
+  if (toolExpanded.value) scheduleToolCollapse();
 }
 
 /** 视口尺寸变化 / 页面重新可见时重新贴合（横竖屏、分屏、系统字体变化都走这里） */
@@ -546,6 +585,7 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onToolViewport);
 });
 onUnmounted(() => {
+  clearTimeout(toolCollapseTimer);
   window.removeEventListener('resize', onToolViewport);
   document.removeEventListener('visibilitychange', onToolViewport);
 });
@@ -745,16 +785,16 @@ function toggleWeek(w: number): void {
     </transition>
   </div>
 
-      <!-- 可拖动，但只能在脚本算出的"允许区域"内（详见脚本里 v2.15 的说明） -->
+      <!-- 小尺寸待机；首次点击放大，再次点击开菜单；可在整个窗口内拖动 -->
       <button
         class="toolbox"
-        :class="{ dragging: toolDragging }"
+        :class="{ dragging: toolDragging, 'toolbox-expanded': toolExpanded }"
         :style="toolStyle"
-        aria-label="课表工具箱（可拖动，不会拖出屏幕）"
+        aria-label="课表工具箱；点击放大后打开，可在全窗口拖动"
         @pointerdown="toolDown"
         @pointermove="toolMove"
         @pointerup="toolUp"
-        @pointercancel="toolUp"
+        @pointercancel="toolCancel"
       ><span class="tico">🧰</span><span class="tlabel">工具箱</span></button>
 
   <div v-if="showMenu" class="mask" @click.self="showMenu = false">
@@ -1002,14 +1042,18 @@ function toggleWeek(w: number): void {
    - touch-action: none 是拖动的前提，否则浏览器会把手势当成滚动手势。 */
 .toolbox {
   position: fixed; left: 0; top: 0;
-  width: 52px; height: 52px; border-radius: 17px; border: none;
+  width: 38px; height: 38px; border-radius: 13px; border: none;
   background: var(--brand); color: #fff; box-shadow: 0 6px 16px rgba(20, 32, 60, .30);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
   z-index: 56; touch-action: none; user-select: none; -webkit-user-select: none; will-change: transform;
+  transition: width .16s ease, height .16s ease, border-radius .16s ease, box-shadow .16s ease;
 }
+.toolbox-expanded { width: 64px; height: 64px; border-radius: 21px; }
 .toolbox.dragging { opacity: .82; box-shadow: 0 10px 22px rgba(20, 32, 60, .38); }
-.tico { font-size: 19px; line-height: 1; }
-.tlabel { font-size: 9.5px; line-height: 1; opacity: .9; }
+.tico { font-size: 17px; line-height: 1; transition: font-size .16s ease; }
+.toolbox-expanded .tico { font-size: 23px; }
+.tlabel { display: none; font-size: 10px; line-height: 1; opacity: .9; }
+.toolbox-expanded .tlabel { display: inline; }
 .ico2 { width: 24px; text-align: center; }
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
 .kv span { color: var(--muted); flex: none; }

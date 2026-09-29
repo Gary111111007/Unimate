@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import TimetableView from '../views/TimetableView.vue';
 import NotesView from '../views/NotesView.vue';
@@ -7,8 +7,12 @@ import SecondClassView from '../views/SecondClassView.vue';
 import OnlineView from '../views/OnlineView.vue';
 import MeView from '../views/MeView.vue';
 import UniView from '../views/UniView.vue';
+import MoonAgentButton from '../components/MoonAgentButton.vue';
 
 const db = useDb();
+const agentActionToken = ref(0);
+const agentActionKind = ref<'text' | 'voice'>('text');
+const agentNetworkMode = ref<'online' | 'offline'>(typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'online');
 /**
  * 第 2、4 项显示名都由高校档案决定：
  *  - 第 2 项：有二课的学校显示 "第二课堂"；没有二课的学校（如北二外）显示 "活动材料"
@@ -25,7 +29,7 @@ const TABS = computed(() => [
 const titles = computed(() => {
   if (db.activeTab === 0) return (db.profile?.shortName || '') + ' · 课表';
   if (db.activeTab === 1) return db.profile?.secondClass.label || '第二课堂';
-  if (db.activeTab === 2) return 'Uni · 本机助手';
+  if (db.activeTab === 2) return 'Uni';
   if (db.activeTab === 3) return db.profile?.tabs.online || '校园在线';
   return '我的';
 });
@@ -37,10 +41,27 @@ const subline = computed(() => {
 
 function sheetName(key: 'sheet1' | 'sheet2'): string { return key === 'sheet1' ? '课表' : '记事本'; }
 
+function openAgent(kind: 'text' | 'voice'): void {
+  agentActionKind.value = kind;
+  agentActionToken.value += 1;
+  db.activeTab = 2;
+}
+
+function refreshAgentNetworkMode(): void {
+  agentNetworkMode.value = navigator.onLine === false ? 'offline' : 'online';
+}
+function setAgentNetworkMode(value: 'online' | 'offline'): void { agentNetworkMode.value = value; }
+
 onMounted(() => {
+  window.addEventListener('online', refreshAgentNetworkMode);
+  window.addEventListener('offline', refreshAgentNetworkMode);
   (window as any).__unimateBack = () => {
     if (db.activeTab !== 0) db.activeTab = 0;
   };
+});
+onUnmounted(() => {
+  window.removeEventListener('online', refreshAgentNetworkMode);
+  window.removeEventListener('offline', refreshAgentNetworkMode);
 });
 </script>
 
@@ -62,9 +83,11 @@ onMounted(() => {
     <TimetableView v-if="db.activeTab === 0 && db.activeSheet === 'sheet1'" />
     <NotesView v-else-if="db.activeTab === 0 && db.activeSheet === 'sheet2'" />
     <SecondClassView v-else-if="db.activeTab === 1" />
-    <UniView v-else-if="db.activeTab === 2" />
+    <UniView v-else-if="db.activeTab === 2" :action-token="agentActionToken" :action-kind="agentActionKind" @mode="setAgentNetworkMode" />
     <OnlineView v-else-if="db.activeTab === 3" />
     <MeView v-else />
+
+    <MoonAgentButton :mode="agentNetworkMode" @text="openAgent('text')" @voice="openAgent('voice')" />
 
     <nav class="tabbar">
       <button v-for="(t, i) in TABS" :key="t.label" class="tab" :class="{ on: db.activeTab === i }" @click="db.activeTab = i">

@@ -1,5 +1,5 @@
 /**
- * 课表工具箱（右下角那颗 🧰）的位置几何：可拖动，但只能在"允许区域"内。
+ * 悬浮按钮的位置几何：可拖动，但始终夹在调用方指定的可视区域内。
  *
  * 为什么单独抽成一个模块：这类事故已经出过两次 ——
  *   v2.13 按像素存坐标：字号变大、底栏长高之后，那个坐标落到屏幕外 / 底栏底下，按钮就此消失；
@@ -21,7 +21,7 @@ export interface ToolBoxInput {
   viewH: number;
   /** 页面缩放系数（getComputedStyle(html).zoom；设备上用原生 textZoom 时为 1） */
   zoom: number;
-  /** 底部导航栏高度（视觉像素，getBoundingClientRect().height） */
+  /** 需要避让的底部区域高度；传 0 表示允许在整个窗口移动 */
   barH: number;
   /** 按钮边长（布局像素） */
   size: number;
@@ -31,13 +31,15 @@ export interface ToolBoxInput {
 
 /**
  * 算出按钮允许出现的矩形（左上、右下都闭合），单位与 translate3d 一致。
- * 下边界把底部导航栏整个让出去：只留 8px 的话，字号一大底栏长高就会把按钮盖住。
+ * 下边界可按需避让底部区域；v2.63 的月亮和工具箱传 0，允许全窗口移动。
  */
 export function toolBox(i: ToolBoxInput): ToolBox {
   const z = i.zoom > 0 ? i.zoom : 1;
   const viewW = i.viewW / z;
   const viewH = i.viewH / z;
-  const barH = (i.barH > 0 ? i.barH : 58) / z;
+  // barH=0 是显式的“全窗口移动”模式；不能再偷偷回退成 58，
+  // 否则调用方永远无法把悬浮按钮拖到窗口底部。
+  const barH = (Number.isFinite(i.barH) ? Math.max(0, i.barH) : 0) / z;
   const minX = i.pad;
   const minY = i.pad;
   const maxX = Math.max(minX, viewW - i.size - i.pad);
