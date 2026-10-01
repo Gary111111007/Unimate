@@ -11,7 +11,7 @@ export interface VoiceInput {
   listen(locale?: string): Promise<VoiceTranscript>;
 }
 
-/** TTS seam：不认识 DeepSeek，也不认识 Tool。 */
+/** TTS seam：不认识在线模型，也不认识 Tool。 */
 export interface VoiceOutput {
   available(): boolean;
   speak(text: string, locale?: string): Promise<void>;

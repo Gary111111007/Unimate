@@ -153,11 +153,11 @@ function runCard(card: ActionCard): void {
   <div class="scroll uni-chat-page">
     <section class="card uni-chat-head">
       <div class="uni-chat-mark">☾</div>
-      <div class="grow"><div class="bold">Uni 学生 Agent</div><div class="small muted">DeepSeek 规划 + 本机 Tool 执行</div></div>
+      <div class="grow"><div class="bold">Uni 学生 Agent</div><div class="small muted">Workers AI 在线 + 本机离线兜底</div></div>
       <span class="pill" :class="mode === 'online' ? 'live' : 'uni-chat-mode-offline'">{{ mode === 'online' ? 'Online' : 'Offline' }}</span>
     </section>
     <div class="uni-chat-boundary small">
-      Online Mode 只把你主动发送的文字交给 Unimate 服务器上的 DeepSeek 选择 Tool；课表、记事和天气数据由手机本机 Tool 读取或修改，不会自动发给模型。断网会自动切到 Offline Mode。请勿输入教务密码、Cookie 或验证码。
+      Online Mode 只把你主动发送的文字交给 Unimate 的 Workers AI 选择 Tool；课表、记事和天气数据由手机本机 Tool 读取或修改，不会自动发给模型。免费额度用完、网络异常或断网时会自动切到 Offline Mode。请勿输入教务密码、Cookie 或验证码。
     </div>
     <div class="chips uni-chat-examples">
       <button v-for="item in examples" :key="item" class="chip sm" :disabled="loading" @click="send(item)">{{ item }}</button>
@@ -167,7 +167,7 @@ function runCard(card: ActionCard): void {
       <article v-for="message in messages" :key="message.id" class="uni-chat-message" :class="'uni-chat-' + message.role">
         <div class="uni-chat-bubble">
           <div class="uni-chat-content">{{ message.content }}</div>
-          <span v-if="message.source" class="uni-chat-source">{{ message.source === 'ai' ? 'DeepSeek' : '本机 Tool' }}</span>
+          <span v-if="message.source" class="uni-chat-source">{{ message.source === 'ai' ? 'Workers AI' : '本机 Tool' }}</span>
           <div v-if="message.cards.length" class="uni-chat-cards">
             <button v-for="(card, index) in message.cards" :key="card.type + index" class="uni-chat-action" :disabled="card.operation === 'none'" @click="runCard(card)">
               <span class="grow"><b>{{ card.title }}</b><small v-if="cardTime(card)">{{ cardTime(card) }}</small></span><span v-if="card.operation !== 'none'">执行 →</span>

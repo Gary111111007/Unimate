@@ -1,6 +1,6 @@
 # Unimate 产品需求文档 PRD
 
-> 版本 v2.64 ｜ 日期 2026-09-29 ｜ 状态：**北化「校园工具」基础版已进入 APK**：离线校园示意图、MOTION 公开场馆状态、本机体测评分、登录教务后读取空闲教室/全校课表、保存选课目标和手动跳转均已接入；真实选课 POST 仍按 Q20 强制关闭。成绩/GPA、完整缓存语义、自动选课哨兵仍未实现。自动化构建与包内反查已通过，教务登录采集和整套页面真机点击仍待验证。
+> 版本 v2.66 ｜ 日期 2026-10-01 ｜ 状态：**在线 AI 已部署并接入 APK 默认配置**：AI 走独立 `https://unimate3-ai-pages.pages.dev`，经 Cloudflare 内部服务绑定调用 GLM-4.7-Flash；真实普通对话、结构化课表工具选择及 APK 来源 CORS 已通过。原账号/备份地址保持 `https://unimate3.pages.dev`。免费额度、网络或网关异常时自动回落本机规则；真机安装点击仍待验证。
 > 联网口径：账号登录与云端同步为默认主路线；高校档案/解析规则更新、天气和 Uni/n8n 属在线增强；端到端加密同步仍是可选高级模式。账号模式的服务端持密钥可读，Cloudflare 境外节点的数据出境限制继续成立（见 11.51 与 AGENTS.md）。
 > 签名算法是 `Net.md` 原定的 **Ed25519**；但客户端**用纯 JS 验签、不依赖平台 WebCrypto**（真机逼出来的一次返工，见 11.35 A 节）。
 > 范围：App 大部分场景允许并预期连接公网，但网络不得成为启动和读取已有数据的前置条件；本机始终保留完整工作副本，在线刷新/同步失败时按域保留上一次有效结果。
@@ -15,6 +15,9 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
+| v2.66 AI 独立入口 | 已部署账号 `609744642@qq.com` 下的 `unimate3-ai-pages` Pages，绑定 `unimate-sync` Worker；健康 200、真实回答 200、`getSchedule(query=tomorrow)` 工具调用 200、APK 预检 204。`src/services/aiProvider.ts` 默认使用此入口。原同步 Pages 仍转发原账号 Worker，避免新 AI 账号缺失 R2 Secrets 影响登录/备份。未执行付费升级；账单计划查询权限为 403，不能仅凭部署成功声称已独立核验 Free 计划。 |
+| v2.66 APK 交付 | `artifacts/android/unimate-v2.66-online-ai.apk`，7,041,125 字节；SHA-256 `BD3CBE8DA3F9763AEFE8E04697E4949C3B74E04E488F11DD1451D7EF21958C22`。正式六步构建、26 套件 1036 条、原签名一致、包内新 AI 地址与原同步地址共存、无模型 Key/旧 DeepSeek API/直连 workers.dev 全部通过；真机安装和点击未验证。详见 `docs/ai-apk-v2.66-delivery.md`。 |
+| v2.65 Workers AI + 本机离线兜底 | Worker 通过 Cloudflare `AI` binding 调 `@cf/zai-org/glm-4.7-flash`，不再依赖第三方模型 Key；Tool 仍只在 Android 本机执行。免费额度用完、网络或网关异常时，命中本机规则的课表/记事/天气/页面命令继续执行，开放问题返回明确离线能力提示而非红色连接错误。26 套件 1029 条断言、正式 APK 构建、签名、bundle 一致性与包内正反向取证已通过；APK SHA-256 `3C166782…`，Pages v2.65 目录已生成。Worker/Pages 部署和真机请求仍待验证。 |
 | v2.63 悬浮入口缩放与全窗口拖动 | 月亮与课表工具箱平时只显示小图标；第一次点击放大，第二次执行原功能；4.2 秒不操作自动缩小。月亮按钮本体保持透明、无实体边框及“Uni/离线”文字；月牙带蓝紫粉青渐变流光、柔光和轻微呼吸，外层新增 36px→62px 同步缩放的 Gemini 渐变透明玻璃圈，包含背景模糊、内高光与柔和外晕；系统要求减少动态效果时停止动画。拖动超过 8px 不触发点击，位置以全窗口相对锚点保存，横竖屏和字号变化后仍夹在屏内；“我中午吃什么呢”等常见用餐问题优先本机快速回答。26 套件 1012 条全绿，APK 6.70 MiB，签名与包内反查通过。**真机拖动手感和不同系统缩放仍待验证。** |
 | v2.64 校园工具基础版 | **已实现基础闭环**：北化离线示意图；MOTION 公开场馆目录/状态；本机体测评分；用户主动登录教务并查询后读取空闲教室或课程目录；选课目标本机保存/二次确认删除；只打开学校选课页。`courseSelectionPost=false`，不自动提交、不读取或保存教务密码/Cookie 值/登录表单。**未实现**成绩/GPA、完整缓存语义与自动选课哨兵；教务采集和页面交互待真机验证。 |
 | v2.58 联网增强、离线不断档 | **已写入 PRD，尚未实现**：先读本机、后台按域刷新；区分最近成功与最近尝试；失败保留旧值；确认空才可覆盖为空；离线写入进入待同步状态；验收见 AC-75~AC-81。参考 THEIA v0.7.7 的数据质量语义，但不照搬第三方密码保管与桌面 loopback API。 |
@@ -1207,6 +1210,15 @@
 | AC-110 | 放大后再次点击 | 月亮进入文字助手，工具箱打开原菜单；月亮长按语音入口继续保留 |
 | AC-111 | 将两个入口拖向窗口四边与底栏区域 | 可在整个可视窗口移动，四边保留 8px；拖动超过 8px 不触发点击或菜单；松手保存相对位置 |
 | AC-112 | 改字号、旋转/分屏后重开 App | 按新窗口尺寸恢复相对位置，不出屏；完整构建、签名、bundle 一致性与包内新类名反查通过 |
+
+### 10.18 第六十一轮新增验收项（v2.65，AC-113 ~ AC-116，Workers AI 免费在线 + 本机离线兜底）
+
+| 编号 | 操作 | 预期 |
+| --- | --- | --- |
+| AC-113 | 审查 Worker 配置和源码 | `wrangler.toml` 声明 `[ai] binding = "AI"`；默认模型为支持中文和 Function Calling 的 `@cf/zai-org/glm-4.7-flash`；源码与 APK 不含 DeepSeek API 地址或 Key |
+| AC-114 | 在线发送普通问题和“查明天课表” | Worker 通过 `env.AI.run()` 返回普通消息或白名单 Tool Call；Android 二次校验 Tool 名与参数并在本机执行，课表等 Tool 结果不自动回传模型 |
+| AC-115 | 断网、模拟 Workers AI 免费额度耗尽或网关失败 | 当前请求自动进入 Offline Mode；课表、记事、天气和页面跳转继续可用；开放问题显示离线能力提示，不出现阻断式连接错误 |
+| AC-116 | 部署与交付 | 重新部署 Worker，再把 v2.65 Pages 目录上传 Production；`/health` 显示 `agent=workers-ai`、`agentReady=true`；正式 APK 构建、签名、bundle 一致性与新旧字符串反查通过，真实在线对话另做真机验证 |
 
 ---
 
@@ -3970,6 +3982,20 @@ Offline Mode 使用 `LocalRulePlanner` 生成与 DeepSeek 相同的结构化 Too
 
 ---
 
+### 11.72 第六十一轮（v2.65，2026-09-29）：Workers AI 免费在线 + 本机离线兜底
+
+在线 Provider 从 DeepSeek 改为 Cloudflare Workers AI：`cloudflare/sync-worker/wrangler.toml` 新增 `AI` binding，默认模型为 `@cf/zai-org/glm-4.7-flash`。该模型由 Cloudflare 托管，支持多语言与 Function Calling；Worker 直接调用 `env.AI.run()`，因此不再配置或保存 `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL`，APK 也不含任何模型 Key。Cloudflare Free 计划每天提供免费 Neurons，但不是无限额度；免费额度用完后在线请求会失败，账户若主动升级 Paid 则超额按 Cloudflare 当期价格计费。
+
+隐私与执行边界不变：只把用户主动输入和必要对话文本发给 Workers AI；课表、教师、教室、记事、天气与 Tool 执行结果不会自动上传。Workers AI 只能从固定白名单选择 Tool，Android 仍会二次校验并在本机执行。高风险动作仍统一走 `db.confirm()`，当前不向在线模型暴露删除 Tool。
+
+离线降级进一步收口：网关失败、免费额度耗尽或设备断网时，`NetworkAwarePlanner` 先尝试 `LocalRulePlanner`；课表、记事、天气、页面跳转等命令继续执行。若开放问题无法由本机规则回答，则返回“已切换到本机离线模式”的能力提示，不再抛出阻断式红色连接错误。网络恢复后的下一次请求仍会自动重试 Online Mode。
+
+已验证：`test:agent` 42/42（含真实调用 Worker handler 的 AI binding、白名单 Tool Call 与 `/health` 打桩测试）、完整 26 套件 1029/1029；Vite、Capacitor、Gradle `assembleDebug`、`apksigner verify`、包名/SDK/权限、APK bundle 与 `dist` 一致性全部通过。APK 6.71 MB，SHA-256 `3C166782C0640EE9949601B8B6DB4A3D98E4C018B7B7008A8E7252180D923905`。包内反查确认新 Workers AI/离线兜底文案存在，旧 DeepSeek 标题、配置错误、API 地址和 Key 均不存在。Pages v2.65 上传目录已生成（15 文件 / 0.8 MB，根目录含 `_worker.js`）。
+
+未验证：Cloudflare Worker/Pages 实际部署、线上 `/health` 新字段、真实 Workers AI 回答与免费额度消耗、Android 真机 Online/Offline 切换。上述项目不得用本地打桩或构建成功替代。
+
+---
+
 ### 11.4 已安装的 Codex Skill（需求第 8 项，已完成)
 
 | Skill | 位置 | 用途 | 状态 |
@@ -4035,7 +4061,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 | P2.5 | 解析适配器热更新（声明式规则包，教务改版不用发版） | 同上 | 0 元 |
 | P3 | 跨机同步（端到端加密密文 + 对象存储 + 短时预签名 URL） | 对象存储 + Serverless | 0~10 元/月 |
 | P4 | 智能解析（自训模型）——**建议推迟**，先用声明式适配器 | 端侧推理 | 视方案 |
-| P5 | AI 助手（Key 只在服务端代理，含配额与合规评估） | Serverless 代理 + 模型 API | 10~100 元/月 |
+| P5 | AI 助手（Workers AI binding，含配额与合规评估） | Cloudflare Worker + Workers AI | 免费额度内 0 元；主动启用 Paid 后超额按量计费 |
 
 ### 13.3 三条硬约束（写进验收）
 
@@ -4286,6 +4312,7 @@ Unimate 的核心链路依赖 `jwglxt.buct.edu.cn` 等**校园网内网**，因�
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| v2.65 | 2026-09-29 | **Workers AI 免费在线 + 本机离线兜底**：在线 Provider 改为 Cloudflare `AI` binding + `@cf/zai-org/glm-4.7-flash` Function Calling，不再需要 DeepSeek Key；免费额度、网络或网关失败时落回本机规则，开放问题也返回离线能力提示而非红色连接错误。Tool、数据与高风险确认边界不变。完整 26 套件 1029 条断言、正式构建、签名、bundle 一致性和包内正反向取证通过；APK SHA-256 `3C166782…`，Pages v2.65 目录 15 文件 / 0.8 MB。线上部署与真机验证仍待完成。 |
 | v2.64 | 2026-09-29 | **校园工具基础版**：在「北化通」增加校园工具入口；接入离线校园示意图、MOTION 公开场馆目录/状态、本机体测评分、教务空闲教室结果读取、只读课程目录、选课目标本机保存/二次确认删除和学校选课页手动跳转。真实选课 POST 由 `courseSelectionPost=false` 强制关闭；不读取或保存教务密码、Cookie 值或登录表单。THEIA v0.7.7 的地图数据/评分表按 MIT License 改写，源码与 APK 独立版权资产均保留许可。MOTION 当前公开页实测识别 14 个入口及 13 个时段；完整构建、签名和新字符串包内反查通过。教务登录采集与整套页面真机点击待验证。 |
 | v2.63 | 2026-09-27 | **悬浮入口缩放与全窗口拖动**：月亮与工具箱改为小尺寸待机、首次点击放大、再次点击执行，4.2 秒自动缩小；月亮按钮保持透明、无文字，月牙带 Gemini 风格渐变流光、柔光和呼吸效果，外层增加同步缩放的透明玻璃圈；拖动阈值防误触，相对锚点保存位置，允许覆盖底栏但始终夹在窗口内；常见用餐问题补本机快速回答。完整 26 套件 1012 条全绿，APK 静态完整性与包内反查通过；真机手感待验。 |
 | v2.62 | 2026-09-27 | **Uni 快速回答与记事确认**：`LocalRulePlanner` 在在线 Provider 前处理高频本机意图，减少问候和明确命令的等待；自然待办与显式记事统一先询问，明确肯定后才写入一次，取消或重放不写入；新增独立 `VITE_AGENT_API_BASE`，不影响账号/备份的 `VITE_SYNC_API_BASE`。完整 26 套件 1002 条全绿，APK 签名、bundle 一致性及新旧字符串反查通过；真机与公网 Agent 地址待验。 |

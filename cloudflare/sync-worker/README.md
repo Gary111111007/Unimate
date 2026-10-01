@@ -2,16 +2,18 @@
 
 Worker 有两组能力（v2.43 起）：
 
-### Uni 在线 Agent（DeepSeek Tool Calling）
+### Uni 在线 Agent（Cloudflare Workers AI Tool Calling）
 
-`POST /v1/agent/chat` 只接收用户主动发送的对话文本；课表、教师、教室与记事不会由客户端自动附带。Worker 让 DeepSeek 在固定 Tool 白名单中做 Function Calling，Android 再校验 JSON 参数并在本机执行。APK 只访问 Unimate Worker，不包含模型密钥。
+`POST /v1/agent/chat` 只接收用户主动发送的对话文本；课表、教师、教室与记事不会由客户端自动附带。Worker 通过 `AI` binding 调用 Cloudflare Workers AI，在固定 Tool 白名单中做 Function Calling；Android 再校验 JSON 参数并在本机执行。APK 只访问 Unimate Worker，不包含模型密钥。
 
-部署前设置两个 Worker Secret（模型名独立配置，后续换模型无需重新构建 APK）：
+`wrangler.toml` 已声明：
 
-- `npx wrangler secret put DEEPSEEK_API_KEY`
-- `npx wrangler secret put DEEPSEEK_MODEL`
+- `[ai] binding = "AI"`
+- `WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash"`
 
-修改 Secret 后不需要重新构建 APK；首次增加本路由仍需重新部署 Worker 与 Pages 目录。网络不可用或网关失败时，Android 会自动退到 Offline Mode，本机课表和记事仍可用。
+不需要 DeepSeek Key 或其他第三方模型 Key。Cloudflare Workers AI Free 计划每天包含免费 Neurons，用完后在线请求会失败；App 会自动退到 Offline Mode，本机课表、记事、天气与页面跳转仍可用。免费额度不是无限额度，若以后开启 Workers Paid，超出免费额度的部分会按 Cloudflare 当期价格计费。
+
+修改模型变量后不需要重新构建 APK，但必须重新部署 Worker。2026-10-01 起 APK 的 AI 默认入口为 `https://unimate3-ai-pages.pages.dev`，经 `../agent-pages/` 的服务绑定调用当前账号 `unimate-sync`；普通对话与 Tool Calling 已真实验证。账号/备份继续使用原 `unimate3.pages.dev`，不能把其上游整体切到未配置 R2 Secrets 的 AI Worker。详见 [`../agent-pages/README.md`](../agent-pages/README.md)。
 
 1. **端到端加密同步**：只为单个密文对象签发 15 分钟的 R2 `GET` / `PUT` URL。同步口令、恢复码和数据明文都不会到 Worker。
 2. **账号登录（服务器托管，v2.43 新增）**：账号体系 + 备份正文直接存在 R2。
@@ -47,10 +49,11 @@ Worker 有两组能力（v2.43 起）：
 5b. **（v2.50 新增）** `npx wrangler secret put ADMIN_KEY` —— 管理员密钥，用来打开「忘记密码 → 管理员重置」页面。
    不设的话管理员接口一律返回 503（其它功能不受影响）。管理员页面地址：`https://unimate3.pages.dev/admin`（电脑、手机都能开）。
    **管理员能力被刻意收窄**：只列账号名单 + 重置密码，**不能下载用户数据**；重置后旧设备的会话令牌立即失效。
-6. 执行 `npm run deploy`，确认地址为 `https://unimate-sync.2025040140.workers.dev`。
+6. 确认 `wrangler.toml` 中存在 `[ai] binding = "AI"`，执行 `npm run deploy`，确认地址为 `https://unimate-sync.2025040140.workers.dev`。
 7. **（v2.43 起）改过 Worker 代码后必须重新 deploy**：账号 API 是新增路由，不 deploy 的话 App 会提示"服务器上的账号接口还没部署"。
-8. 打开 `/health`，应返回 `{"ok":true,"service":"unimate-sync","atRest":<bool>,"accounts":true}`。
+8. 打开 `/health`，应返回 `{"ok":true,"service":"unimate-sync","atRest":<bool>,"accounts":true,"agent":"workers-ai","agentReady":true,"agentModel":"@cf/zai-org/glm-4.7-flash"}`。
    - `atRest:true` = `DATA_KEY` 已设；`accounts:true` = 这一版已含账号 API（App 用这一位判断要不要提示"接口还没部署"）。
+   - `agentReady:true` = Worker 已拿到 Workers AI binding；这里只验证绑定存在，真实模型调用仍要请求 `/v1/agent/chat`。
 
 ## 自检（真机之前先跑这个）
 

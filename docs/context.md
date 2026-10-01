@@ -18,7 +18,7 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 先读哪 | 云端与 P3 的最新状态看 **`PRD.md` 开头的「当前接续摘要」** 与 **`Net.md` 的「当前云端接续摘要」**（本节只保留工程侧的通用交接） |
 | 未提交（本轮） | 无 —— v2.57 一起提交 |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages）；**线上 = v2.39**（`assets/index-DroQga0f.js`，`catalog/` 三件套 200、`_worker.js` 生效） |
-| 最新 APK | `artifacts\android\unimate-debug.apk`（v2.63，SHA `8A450E7B…FEFEA`，6.70 MiB；月牙带 Gemini 风格渐变流光、柔光和呼吸效果，外层有同步缩放的透明玻璃圈，整体可点击放大并全窗口拖动；常见用餐问题本机快速回答；**静态出包已验证，真机待验**） |
+| 最新 APK | `artifacts/android/unimate-v2.66-online-ai.apk`（2026-10-01，SHA `BD3CBE8D…958C22`，6.71 MiB）。在线 AI 默认走 `https://unimate3-ai-pages.pages.dev`，真实普通对话、Tool Call 和 APK CORS 已通过；26 套件 1036 条、正式六步构建、签名和包内反查全通过。真机安装点击仍待验，详见 `docs/ai-apk-v2.66-delivery.md`。 |
 | 提醒（v2.57 收尾） | ① **补位闹钟**：每条提醒再多排一个 +2 分钟的闹钟（独立请求码 `id + 500000`；投递时 `cancelBackupAlarm` 一起撤，不会重复弹），冻结场景下的第二道保险；② **心跳走 `setAlarmClock`**（被 ROM 拦则落回 allowWhileIdle），醒来就把刚过期的提醒投出去；③ 自检报告显示"另有 K 条 2 分钟补位闹钟"；④ 界面如实写明：不开「允许后台运行」→ 提醒可能晚几分钟到十几分钟，想准点只有**开那一项**或**打开系统日历兜底** |
 | 提醒的边界（写死，别再重复劳动） | 产品负责人**既不开"允许后台运行"也不开厂商自启动**。App 侧能做的已到极限（精确闹钟自动授予、闹钟确实在系统里、渠道 HIGH+声音、前台守护在跑、补位闹钟 + 心跳 + 选择性系统日历兜底）。**除非他改变主意去开那两个系统开关，否则不再为 ColorOS 冻结改 App 代码** —— 见 PRD 11.65 D 节的搁置口径 |
 | 系统日历兜底（v2.56） | 产品负责人明确"**我不想允许在后台运行**"，而 v2.55 真机报告只剩 `电池优化豁免：未豁免` 这一项。于是做**选择性写系统日历**：闹钟由**系统日历 App 持有**（系统应用不受冻结影响）。三条纪律：**默认关**（`localStorage 'unimate_calendar_sync'`）；每条事件带 `Events.CUSTOM_APP_PACKAGE` 标记，**只删自己写的**；关开关或点「清空已写入的日程」（二次确认）会全部清掉。原生方法：`calendarRequest/calendarStatus/calendarSync/calendarClear`；清单加 `READ_CALENDAR`/`WRITE_CALENDAR`（只在打开开关时才申请）。前端：`calendarSyncEnabled/setCalendarSync/syncCalendarNow/clearCalendarEvents/calendarEventsFromSchedule` + 纯函数 `calendarEventsFor`（`test:calendar` 8 条）。**接线在 `rescheduleAll()` 末尾**：开关打开时把同一批提醒写进日历 |
@@ -27,8 +27,8 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 | 头像（v2.54） | `components/AvatarCropper.vue`：固定 1:1 取景框 + **拖动图片** + 滑杆放大（1~4 倍）→ `cropToAvatar()` 裁 256×256 data URL。裁剪数学是纯函数 `cropRectFor()`（`services/avatar.ts`），配 `tests/avatar.test.ts` 12 条（含"拖过头不能露黑边"） |
 | 新增测试套件登记 | `test:avatar` 已同时登记进 `package.json` 与 `scripts/build-apk.ps1`（后者用 node 按字节插入，**必须保住 1 个 UTF-8 BOM**；本次踩过"BOM 叠成 3 个"，已修） |
 | 提醒渠道（v2.53） | Android 8+ 的**横幅与声音由渠道 importance 决定**，而**应用级通知权限 granted 不代表渠道没被静音**（渠道创建后不可改）。原生 `notifyChannelStatus` 读 `importance/sound/blocked` + Doze `isDeviceIdleMode`；自检报告多两行；「我的 → 通知设置」新增「**重建通知渠道**」（tag 存 localStorage，点一下换 `class-<新tag>`/`todo-<新tag>` 建 HIGH+铃声新渠道、删旧渠道、**随后必须 `rescheduleAll()` 把排期搬过去**，否则旧排期引用已删渠道会被系统静默丢弃） |
-| Pages 交付 | **只有目录**：`node scripts\make-pages-package.mjs v2.52` → `artifacts\cloudflare\unimate-cloudflare-v2.52-upload`（15 文件 / 0.7 MB，根目录含 `_worker.js`）。**v2.52 起不再压 ZIP**（历史 ZIP 留档仍在 `artifacts/`） |
-| P4 / P5 工位 | [`p4-parser/`](../p4-parser/README.md) 仍不参与构建；v2.62 已将 P5 的本机快速规则、记事确认状态机和独立 `VITE_AGENT_API_BASE` 整合进主工程，并继续复用 [`p5-assistant/n8n/core/`](../p5-assistant/n8n/core/) 的本机规则。Worker/Pages 重新部署、真实 DeepSeek 和真机行为仍待验证；架构与运行见 [`docs/agent-architecture.md`](agent-architecture.md) |
+| Pages 交付 | **只有目录**：`node scripts\make-pages-package.mjs v2.65` → `artifacts\cloudflare\unimate-cloudflare-v2.65-upload`（15 文件 / 0.8 MB，根目录含 `_worker.js`）。**v2.52 起不再压 ZIP**（历史 ZIP 留档仍在 `artifacts/`） |
+| P4 / P5 工位 | [`p4-parser/`](../p4-parser/README.md) 仍不参与构建；在线 Provider 使用 Cloudflare Workers AI（GLM-4.7-Flash），继续复用 [`p5-assistant/n8n/core/`](../p5-assistant/n8n/core/) 的本机规则。v2.66 独立 AI Pages 与真实对话已验证；免费额度/断网/网关失败时落回本机，真机行为仍待验证。架构与运行见 [`docs/agent-architecture.md`](agent-architecture.md)。 |
 | 提醒口径 | 地平线 7 天；只清"过期 90 秒以上 + 账本里没有的"排期（`notify/plan.json`）；**错过的提醒不补发**；排期读取走**原生直读**（`scheduled()` 在安卓上没实现） |
 | 提醒兜底 | 心跳（有近期排期 10 分钟/否则 60 分钟）+ **提醒守护前台服务（v2.34 默认开）**：一条最低优先级静音常驻通知防 ROM 冻结；开机广播清场（过期/20 秒内要响的丢弃，不补发） |
 | 演示站状态 | **v2.45 已上传并核对通过**（2026-09-23）：`/health` 回 `atRest:true, accounts:true`；七条接口预检全 204；非白名单 403；线上前端 = `assets/index-BrCScQRS.js`（与 v2.45 APK 同一份代码）；`catalog/` 三件套 200 且 `bisu.json` 与本地同哈希 |

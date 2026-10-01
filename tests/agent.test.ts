@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentCore, type AgentTool } from '../src/services/agentCore.ts';
-import { NetworkAwarePlanner, type AgentDecision, type AgentPlanRequest, type AgentPlanner } from '../src/services/aiProvider.ts';
+import { AGENT_API_BASE, HttpAIProvider, NetworkAwarePlanner, type AgentDecision, type AgentPlanRequest, type AgentPlanner } from '../src/services/aiProvider.ts';
 import { createStudentTools, LocalRulePlanner, type StudentAgentPort } from '../src/services/uniTools.ts';
 import { VoiceAgent, type VoiceInput, type VoiceOutput } from '../src/services/voiceAI.ts';
 
@@ -129,13 +129,36 @@ const pages = readFileSync(join(process.cwd(), 'cloudflare/pages/_worker.js'), '
 const view = readFileSync(join(process.cwd(), 'src/views/UniView.vue'), 'utf8');
 const main = readFileSync(join(process.cwd(), 'src/screens/Main.vue'), 'utf8');
 const moon = readFileSync(join(process.cwd(), 'src/components/MoonAgentButton.vue'), 'utf8');
+const syncWorker = (await import('../cloudflare/sync-worker/src/index.js')).default;
+let capturedModel = '';
+let capturedInput: any = null;
+const workerResponse = await syncWorker.fetch(new Request('https://worker.example/v1/agent/chat', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ messages: [{ role: 'user', content: '查明天课表' }], toolNames: ['getSchedule'] })
+}), {
+  AI: {
+    async run(model: string, input: any) {
+      capturedModel = model;
+      capturedInput = input;
+      return { choices: [{ message: { tool_calls: [{ id: 'cf-call-1', type: 'function', function: { name: 'getSchedule', arguments: '{"query":"tomorrow"}' } }] } }] };
+    }
+  }
+});
+const workerDecision: any = await workerResponse.json();
+const healthResponse = await syncWorker.fetch(new Request('https://worker.example/health'), { AI: { run: async () => ({}) } });
+const healthBody: any = await healthResponse.json();
 ok('APK 不包含模型 API Key', !/sk-[A-Za-z0-9_-]{12,}/.test(client));
 ok('Planner 不 import 数据库或 Pinia store', !/stores\/db|useDb|indexedDB/.test(client));
 ok('Agent 使用独立 VITE_AGENT_API_BASE', client.includes('VITE_AGENT_API_BASE') && client.includes("AGENT_API_BASE + '/v1/agent/chat'"));
 ok('网络恢复后下一次请求会重新尝试 Online', client.includes("navigator.onLine !== false") && client.includes("this.active = 'online'"));
-ok('Worker 使用 DeepSeek 官方 Chat Completions', worker.includes('https://api.deepseek.com/chat/completions'));
-ok('DeepSeek Key 只从 Worker secret 读取', worker.includes('env.DEEPSEEK_API_KEY') && !worker.includes('SILICONFLOW_API_KEY'));
+ok('Worker 使用 Cloudflare Workers AI 绑定', worker.includes('env.AI.run(model') && worker.includes("DEFAULT_WORKERS_AI_MODEL = '@cf/zai-org/glm-4.7-flash'"));
+ok('Worker 不再依赖第三方模型 Key', !worker.includes('DEEPSEEK_API_KEY') && !worker.includes('api.deepseek.com') && !worker.includes('SILICONFLOW_API_KEY'));
 ok('Worker 使用 Function Calling', worker.includes('AGENT_TOOLS') && worker.includes("tool_choice: 'auto'") && worker.includes('message?.tool_calls'));
+ok('Workers AI 默认模型与 Tool 白名单真实传入 binding', capturedModel === '@cf/zai-org/glm-4.7-flash' && capturedInput?.tools?.length === 1 && capturedInput.tools[0]?.function?.name === 'getSchedule');
+ok('Workers AI Tool Call 被校验并转换成 App 协议', workerResponse.status === 200 && workerDecision?.provider === 'workers-ai' && workerDecision?.call?.arguments?.query === 'tomorrow');
+ok('健康检查公开 Agent 绑定状态', healthBody?.agent === 'workers-ai' && healthBody?.agentReady === true && healthBody?.agentModel === '@cf/zai-org/glm-4.7-flash');
+ok('免费额度或网关失败会回落本机提示', client.includes('return offlineNotice()') && client.includes('已切换到本机离线模式'));
+ok('Uni 页面如实显示 Workers AI 在线与本机兜底', view.includes('Workers AI 在线 + 本机离线兜底') && view.includes('免费额度用完'));
 ok('Pages 转发 Agent API', pages.includes("'/v1/agent/chat'"));
 ok('长对话直接定位最后回复或错误卡片', view.includes("target?.scrollIntoView({ block: 'center', behavior: 'smooth' })") && view.includes('errorText.value ? errorBox.value'));
 ok('高风险确认统一走 db.confirm', view.includes('await db.confirm({') && view.includes('agent.confirm(confirmation.id'));
@@ -148,6 +171,37 @@ ok('月亮外层使用四向收尖的 Gemini 玻璃星芒并随展开同步放�
 ok('月牙通过尺寸和描边加粗', moon.includes('-webkit-text-stroke: 1px') && moon.includes('font-size: 29px') && moon.includes('font-size: 49px'));
 ok('月亮入口接入主界面', main.includes('<MoonAgentButton') && main.includes("openAgent('voice')"));
 ok('顶部标题保持简洁的 Uni', main.includes("return 'Uni'"));
+
+// 模拟 APK → 独立 Pages → Worker 的 HTTP 契约，账号请求不能流入 AI 服务。
+const relay = (await import('../cloudflare/agent-pages/public/_worker.js')).default;
+const originalFetch = globalThis.fetch;
+let relayRequests = 0;
+let forwardedOrigin: string | null = null;
+let forwardedBody: any;
+const relayEnv = { UNIMATE_AI: { async fetch(url: string, init: RequestInit) {
+  relayRequests++;
+  forwardedOrigin = new Headers(init.headers).get('Origin');
+  forwardedBody = JSON.parse(new TextDecoder().decode(init.body as Uint8Array));
+  if (init.redirect !== 'manual') throw new Error('Cloudflare 只允许 manual/follow');
+  return Response.json({ type: 'message', content: '在线接入正常', provider: 'workers-ai' });
+} } };
+try {
+  globalThis.fetch = async (input: any, init?: RequestInit) => relay.fetch(new Request(input, {
+    ...init, headers: { ...init?.headers, Origin: 'https://localhost' }
+  }), relayEnv);
+  const answer = await new HttpAIProvider().plan({ messages: [{ role: 'user', content: '解释牛顿第二定律' }], tools: [] });
+  ok('APK 默认 Agent 使用独立 Pages 地址', AGENT_API_BASE === 'https://unimate3-ai-pages.pages.dev');
+  ok('APK Provider 经 Pages 服务绑定取得在线回答', answer.type === 'message' && answer.content === '在线接入正常' && relayRequests === 1);
+  ok('中转剥离 Origin 且保留用户输入', forwardedOrigin === null && forwardedBody.messages[0].content === '解释牛顿第二定律');
+  const preflight = await relay.fetch(new Request(AGENT_API_BASE + '/v1/agent/chat', { method: 'OPTIONS', headers: { Origin: 'https://localhost' } }), relayEnv);
+  ok('APK 的 AI 预检得到正确 CORS', preflight.status === 204 && preflight.headers.get('Access-Control-Allow-Origin') === 'https://localhost');
+  const rejected = await relay.fetch(new Request(AGENT_API_BASE + '/v1/agent/chat', { method: 'POST', headers: { Origin: 'https://evil.example' }, body: '{}' }), relayEnv);
+  ok('AI 中转拒绝非白名单来源且不调用 Worker', rejected.status === 403 && relayRequests === 1);
+  const account = await relay.fetch(new Request(AGENT_API_BASE + '/v1/login', { method: 'POST', body: '{}' }), relayEnv);
+  ok('AI 中转不接管账号登录和备份', account.status === 404 && relayRequests === 1);
+  const large = await relay.fetch(new Request(AGENT_API_BASE + '/v1/agent/chat', { method: 'POST', body: 'a'.repeat(65537) }), relayEnv);
+  ok('AI 中转按实际请求体字节限制大小', large.status === 413 && relayRequests === 1);
+} finally { globalThis.fetch = originalFetch; }
 
 console.log(`\nAgent Test: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

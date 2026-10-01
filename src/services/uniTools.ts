@@ -28,7 +28,7 @@ export interface StudentNoteInput {
 
 /**
  * Tool Layer 面向 App 的唯一端口。具体 Pinia store、文件落盘和页面跳转都留在 Adapter 中，
- * Agent Core、DeepSeek 与 Voice 模块不会 import 数据库或 Android UI。
+ * Agent Core、Workers AI 与 Voice 模块不会 import 数据库或 Android UI。
  */
 export interface StudentAgentPort {
   scheduleSnapshot(): UniLocalSnapshot;
@@ -155,7 +155,7 @@ export function createStudentTools(port: StudentAgentPort): AgentTool[] {
   ];
 }
 
-/** Offline Mode：只做确定性意图识别，输出与 DeepSeek 完全相同的结构化 Tool Call。 */
+/** Offline Mode：只做确定性意图识别，输出与 Workers AI 完全相同的结构化 Tool Call。 */
 export class LocalRulePlanner implements AgentPlanner {
   async plan(request: AgentPlanRequest): Promise<AgentDecision | null> {
     const message = request.messages.at(-1)?.content.trim() || '';

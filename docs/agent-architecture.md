@@ -16,7 +16,7 @@
         │           │
  Unimate Worker   本机规则解析
         │           │
- DeepSeek Function Calling
+ Workers AI Function Calling
         └─────┬─────┘
               ▼
        同一套结构化 Tool Call
@@ -30,11 +30,11 @@
 
 关键边界：
 
-- DeepSeek 只理解用户主动发送的文字并选择 Tool，不连接数据库，也不执行 Tool。
+- Workers AI 只理解用户主动发送的文字并选择 Tool，不连接数据库，也不执行 Tool。
 - Worker 固定 Tool 白名单和 JSON Schema；Android 再按本机 Tool 定义校验参数，拒绝未知 Tool。
-- Tool 结果只留在手机端对话记录，不回传给 DeepSeek；当前实现不会自动附带课表、教师、教室、记事或天气数据。
+- Tool 结果只留在手机端对话记录，不回传给 Workers AI；当前实现不会自动附带课表、教师、教室、记事或天气数据。
 - 问候、致谢、能力询问、页面打开和明确的课表/记事指令先由 `LocalRulePlanner` 处理；只有本机规则无法处理的开放式问题才请求在线模型，减少首字等待时间。
-- Offline Planner 与 DeepSeek 输出同一种 `AgentDecision`，因此 Tool Layer 不需要知道当前是否联网。
+- Offline Planner 与 Workers AI 输出同一种 `AgentDecision`，因此 Tool Layer 不需要知道当前是否联网。
 - 断网或网关失败时，当前请求自动尝试本机规则；网络恢复后的下一次请求重新尝试 Online Mode，无需重启 App。
 
 ## 2. 模块职责
@@ -47,8 +47,8 @@
 | 本机规则与 Tool | `src/services/uniTools.ts` | Offline 意图解析；课表、记事、天气、页面跳转 Tool |
 | App 适配器 | `src/views/UniView.vue` | 实现 `StudentAgentPort`，把 Tool 接到现有 store/UI；Agent Core 不 import Pinia |
 | Voice seam | `src/services/voiceAI.ts` | `VoiceInput` / `VoiceOutput` / `VoiceAgent`，固定 ASR → Agent → Tool → TTS |
-| 自有服务端 | `cloudflare/sync-worker/src/index.js` | 调 DeepSeek Chat Completions + Function Calling；校验返回 JSON；不执行本机 Tool |
-| Pages 中转 | `cloudflare/pages/_worker.js` | 将 `/v1/agent/chat` 转给现有 Worker，复用 App 已在使用的 `pages.dev` 域名 |
+| 自有服务端 | `cloudflare/sync-worker/src/index.js` | 通过 `AI` binding 调 Workers AI Function Calling；校验返回 JSON；不执行本机 Tool |
+| AI Pages 中转 | `cloudflare/agent-pages/public/_worker.js` | `unimate3-ai-pages.pages.dev` 经 `UNIMATE_AI` 服务绑定调用新账号 Worker；只允许健康检查与 Agent 路由 |
 
 当前 Tool：
 
@@ -59,27 +59,34 @@
 - `getWeather`：读取缓存；仅在用户已有天气开关允许时按现有节流刷新。
 - `openFeature`：打开课表、记事本、第二课堂、校园在线或“我的”入口。
 
-新增记事和提醒虽然不是破坏性操作，也必须先完成一轮自然语言确认，用户明确肯定后才执行一次；这是产品交互要求，不替代高风险确认。删除、批量修改、覆盖等 Tool 必须声明 `risk: 'high'`，由 Agent Core 生成 5 分钟有效的一次性确认 token，并统一交给 `db.confirm()`；未确认、取消、过期或重放都不会执行。当前没有向 DeepSeek 暴露删除 Tool。
+新增记事和提醒虽然不是破坏性操作，也必须先完成一轮自然语言确认，用户明确肯定后才执行一次；这是产品交互要求，不替代高风险确认。删除、批量修改、覆盖等 Tool 必须声明 `risk: 'high'`，由 Agent Core 生成 5 分钟有效的一次性确认 token，并统一交给 `db.confirm()`；未确认、取消、过期或重放都不会执行。当前没有向 Workers AI 暴露删除 Tool。
 
 ## 3. Online Mode 部署
 
-APK 不放 DeepSeek Key，只请求现有 Unimate 网关。部署服务端前，在 `cloudflare/sync-worker` 设置：
+APK 不放模型 Key，只请求现有 Unimate 网关。`cloudflare/sync-worker/wrangler.toml` 已配置 Workers AI binding 与默认模型：
+
+```toml
+[vars]
+WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash"
+
+[ai]
+binding = "AI"
+```
+
+该模型由 Cloudflare 托管，支持中文与 Function Calling，不需要设置第三方模型 Secret。Workers AI Free 计划每天有免费 Neurons；免费额度用完、网络中断或网关异常时，当前请求回落到本机离线规划器。免费额度不是无限额度，若 Cloudflare 账户升级为 Paid，超额部分按当期价格计费。
+
+部署 Worker 后更新独立 AI Pages 中转（项目已创建）：
 
 ```powershell
-npx wrangler secret put DEEPSEEK_API_KEY
-npx wrangler secret put DEEPSEEK_MODEL
+cd cloudflare\sync-worker
 npm run deploy
+cd ..\agent-pages
+..\sync-worker\node_modules\.bin\wrangler.cmd pages deploy --project-name unimate3-ai-pages --branch main --commit-dirty=true
 ```
 
-`DEEPSEEK_MODEL` 可填当前账号可用且支持 Function Calling 的模型，例如 `deepseek-chat`。随后重新生成 Pages 拖放目录，使 `_worker.js` 转发 Agent 路由：
+APK 默认 AI 地址为 `https://unimate3-ai-pages.pages.dev`，仍支持 `VITE_AGENT_API_BASE` 构建覆盖。`VITE_SYNC_API_BASE` 默认仍为 `https://unimate3.pages.dev`，账号/备份由原账号服务承载；当前 AI 账号未配置 R2 Secrets，不能替换同步上游。部署缓存和临时目录应放 F 盘，详见 `cloudflare/agent-pages/README.md`。
 
-```powershell
-node scripts\make-pages-package.mjs v2.61
-```
-
-把 `artifacts/cloudflare/unimate-cloudflare-v2.61-upload/` 目录本身拖到 Cloudflare Pages Production。若 Agent 网关地址不是项目默认地址，构建 APK 前设置独立的 `VITE_AGENT_API_BASE`，再运行正式构建脚本。`VITE_SYNC_API_BASE` 继续只负责账号与备份接口，不得改成临时模型地址。
-
-服务端采用 DeepSeek 官方 Chat Completions 的 `tools` / `tool_choice: auto` 格式；`function.arguments` 只作为待校验 JSON，不能当作可信输入。
+服务端通过 `env.AI.run()` 采用 Workers AI 的 `tools` / `tool_choice: auto` 格式；`function.arguments` 只作为待校验 JSON，不能当作可信输入。
 
 ## 4. Offline Mode 与恢复
 
@@ -100,7 +107,7 @@ Offline Mode 不加载本地大模型，不新增模型文件、向量数据库�
 VoiceInput.transcribe() → AgentCore.ask() → Tool → VoiceOutput.speak()
 ```
 
-默认适配器只尝试 WebView 提供的 Web Speech API，不增加原生 SDK、模型体积或模型 Key。当前 APK 没有新增录音权限，因此长按入口、超时保护、ASR/TTS 接口和降级提示已接好，但 Android 真机语音识别不能标记为已可用。后续接小智 AI、Whisper.cpp、Sherpa-ONNX 或服务端 ASR/TTS 时，只需替换 `VoiceInput` / `VoiceOutput`，不用改 DeepSeek Provider、Agent Core 或 Tool。
+默认适配器只尝试 WebView 提供的 Web Speech API，不增加原生 SDK、模型体积或模型 Key。当前 APK 没有新增录音权限，因此长按入口、超时保护、ASR/TTS 接口和降级提示已接好，但 Android 真机语音识别不能标记为已可用。后续接小智 AI、Whisper.cpp、Sherpa-ONNX 或服务端 ASR/TTS 时，只需替换 `VoiceInput` / `VoiceOutput`，不用改在线 Provider、Agent Core 或 Tool。
 
 ## 6. 构建与验证
 
@@ -110,6 +117,8 @@ VoiceInput.transcribe() → AgentCore.ask() → Tool → VoiceOutput.speak()
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1
 ```
 
-本轮已验证：26 个测试套件、1012 条断言；Vite 生产构建；Capacitor 同步；Gradle `assembleDebug`；`apksigner verify`；包名/SDK/权限；APK 内 bundle 与 `dist` 一致；新增询问/确认/快速问候、常见用餐本机回答及悬浮入口缩放类名存在；月亮标签不存在，按钮本体透明、无边框、无按钮阴影，月牙渐变流光、柔光、呼吸动画、透明玻璃圈及减少动态效果降级均在包内；旧“当前版本不连接大模型”文案不存在。APK 6.70 MiB，SHA-256 `8A450E7BEE6B57FCDEB07E732F036590E160FE3FF0E7DFCD1816237E4A8FEFEA`。
+本轮已验证：26 个测试套件、1029 条断言；`test:agent` 42/42（含直接调用 Worker handler 的 AI binding、白名单 Tool Call 与 `/health` 打桩）；Vite 生产构建；Capacitor 同步；Gradle `assembleDebug`；`apksigner verify`；包名/SDK/权限；APK 内 bundle 与 `dist` 一致。包内反查确认“Workers AI 在线 + 本机离线兜底”和离线能力提示存在，旧 DeepSeek 标题、配置错误、API 地址和 Key 均不存在。APK 6.71 MiB，SHA-256 `3C166782C0640EE9949601B8B6DB4A3D98E4C018B7B7008A8E7252180D923905`。
 
-本轮未验证：Worker/Pages 实际重新部署、真实 DeepSeek 在线请求与计费、真机网络切换、真机月亮手势、ASR/TTS、Tool 写入和提醒的端到端点击。上线前必须按这些项目逐项复验，不能用静态构建结果代替。
+2026-10-01 补充验证：独立 AI Pages 已上线，生产 `/health` 200 且 `agentReady:true`；真实模型返回“在线测试成功”，查询明天课表返回 `getSchedule` 结构化调用，APK Origin 预检 204。Agent 测试 49/49，包含 Provider 经中转返回在线回答、CORS、路由隔离和请求体上限。本次未开启付费计划；账单计划 API 无权限，免费额度消耗未核验。
+
+仍未验证：真机网络切换、真机月亮手势、ASR/TTS、Tool 写入和提醒的端到端点击。不能用静态构建或桌面 HTTP 结果代替真机结果。
