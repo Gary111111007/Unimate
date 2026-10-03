@@ -716,16 +716,6 @@ function toggleWeek(w: number): void {
         <button class="btn sm" @click="fixRisk()">去开启</button>
         <button class="rke" aria-label="本次不再提示" @click="riskDismissed = true">×</button>
       </div>
-      <!-- 真机反馈：这块原来是三行大卡片，把课表整个顶到屏幕外。压成一条，点整条看详情。 -->
-      <div v-if="nextClass" class="nextbar" @click="detail = nextClass">
-        <span class="ndot" :style="{ background: colorOf(nextClass) }"></span>
-        <div class="ngrow">
-          <div class="n1"><b>{{ nextClass.name }}</b><span class="nu">{{ untilText(nextClass.minutesUntil) }}</span></div>
-          <div class="n2">{{ nextClass.dayLabel }} · 第 {{ nextClass.startPeriod }}-{{ nextClass.endPeriod }} 节 {{ nextClass.timeLabel }}<span v-if="nextClass.rooms.length"> · {{ roomsText(nextClass.rooms) }}</span></div>
-        </div>
-        <span class="ncv">详情 ›</span>
-      </div>
-
     <!-- 新账号 / 新建课表后就是这一屏：导入入口必须摆在明面上，不能只藏在悬浮工具箱里。
          同一份课表一旦有课，这个入口就收进「工具箱」（需求原话的"已导入则放进工具箱"）。 -->
     <div v-if="!ttHasCourses" class="empty">
@@ -766,7 +756,16 @@ function toggleWeek(w: number): void {
     </div>
     </transition>
 
-    <!-- 周次切换放在课表内容之后：顶部优先留给提醒、天气和下一节课。 -->
+    <!-- 下一节课与周次切换都放在课表内容之后，顶部只保留提醒和天气。 -->
+    <div v-if="nextClass" class="nextbar" @click="detail = nextClass">
+      <span class="ndot" :style="{ background: colorOf(nextClass) }"></span>
+      <div class="ngrow">
+        <div class="n1"><b>{{ nextClass.name }}</b><span class="nu">{{ untilText(nextClass.minutesUntil) }}</span></div>
+        <div class="n2">{{ nextClass.dayLabel }} · 第 {{ nextClass.startPeriod }}-{{ nextClass.endPeriod }} 节 {{ nextClass.timeLabel }}<span v-if="nextClass.rooms.length"> · {{ roomsText(nextClass.rooms) }}</span></div>
+      </div>
+      <span class="ncv">详情 ›</span>
+    </div>
+
     <div v-if="db.activeTimetable" class="card weeknav">
       <button class="nav" @click="shift(-1)" :disabled="week <= 1">‹</button>
       <div class="cur" @click="showWeekPicker = true">
@@ -992,7 +991,8 @@ function toggleWeek(w: number): void {
 .rkico { color: var(--warn); flex: none; }
 .rktxt { flex: 1; min-width: 0; font-size: 13px; color: var(--text); line-height: 1.4; }
 .rke { flex: none; width: 22px; height: 22px; border-radius: 50%; color: var(--muted); font-size: 14px; line-height: 1; }
-.nextbar { display: flex; align-items: center; gap: 9px; background: var(--card); border-radius: 11px; padding: 7px 10px; margin: 0 0 7px; box-shadow: var(--shadow); }
+.nextbar { display: flex; align-items: center; gap: 9px; background: var(--card); border-radius: 11px; padding: 7px 10px; margin: 16px 0 0; box-shadow: var(--shadow); }
+.nextbar + .weeknav { margin-top: 8px; }
 /* v2.51：已登录云端账号时，主页那行"账号与找回"入口（很小、和周次提示同一行） */
 .hintrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px; }
 .minilink { font-size: 11px; color: var(--muted); padding: 2px 0; }

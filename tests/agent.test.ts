@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentCore, type AgentTool } from '../src/services/agentCore.ts';
+import { normalizeAssistantText } from '../src/services/assistantText.ts';
 import { AGENT_API_BASE, HttpAIProvider, NetworkAwarePlanner, type AgentDecision, type AgentPlanRequest, type AgentPlanner } from '../src/services/aiProvider.ts';
 import { createStudentTools, LocalRulePlanner, type StudentAgentPort } from '../src/services/uniTools.ts';
 import { VoiceAgent, type VoiceInput, type VoiceOutput } from '../src/services/voiceAI.ts';
@@ -37,6 +38,17 @@ await agent.ask('你好');
 await agent.ask('继续说');
 ok('普通交流调用在线 Planner', provider.calls.length === 2);
 ok('第二轮携带基本多轮上下文', provider.calls[1]?.messages.length === 3);
+
+const restoredProvider = new QueuePlanner([{ type: 'message', content: '恢复后的回答' }]);
+const restoredAgent = new AgentCore({ planner: restoredProvider });
+restoredAgent.restore(agent.messages());
+await restoredAgent.ask('恢复后继续');
+ok('本机历史记录可恢复且继续用于在线多轮上下文', restoredAgent.messages().length === 6 && restoredProvider.calls[0]?.messages.length === 5);
+
+ok('Uni 回复移除列表开头的彩色 Emoji 并保留正文内容', normalizeAssistantText('- 📅 查看课表\n- 📝 查看记事\n正文里的 ☀️ 保留') === '- 查看课表\n- 查看记事\n正文里的 ☀️ 保留');
+const emojiHistoryAgent = new AgentCore({ planner: new QueuePlanner([]) });
+emojiHistoryAgent.restore([{ role: 'assistant', content: '- ⚙️ 打开设置', source: 'ai', createdAt: Date.now() }]);
+ok('已有历史记录中的彩色列表图标也会在恢复时清理', emojiHistoryAgent.messages()[0]?.content === '- 打开设置');
 
 await agent.ask('下一节课是什么');
 ok('LLM 只选择结构化 Tool，由本机 Tool 回答', provider.calls.length === 3 && agent.messages().at(-1)?.source === 'tool');
@@ -129,6 +141,8 @@ const pages = readFileSync(join(process.cwd(), 'cloudflare/pages/_worker.js'), '
 const view = readFileSync(join(process.cwd(), 'src/views/UniView.vue'), 'utf8');
 const main = readFileSync(join(process.cwd(), 'src/screens/Main.vue'), 'utf8');
 const moon = readFileSync(join(process.cwd(), 'src/components/MoonAgentButton.vue'), 'utf8');
+const voiceService = readFileSync(join(process.cwd(), 'src/services/voiceAI.ts'), 'utf8');
+const nativePlugin = readFileSync(join(process.cwd(), 'android/app/src/main/java/com/unimate/app/JwWebViewPlugin.java'), 'utf8');
 const syncWorker = (await import('../cloudflare/sync-worker/src/index.js')).default;
 let capturedModel = '';
 let capturedInput: any = null;
@@ -154,6 +168,7 @@ ok('网络恢复后下一次请求会重新尝试 Online', client.includes("navi
 ok('Worker 使用 Cloudflare Workers AI 绑定', worker.includes('env.AI.run(model') && worker.includes("DEFAULT_WORKERS_AI_MODEL = '@cf/zai-org/glm-4.7-flash'"));
 ok('Worker 不再依赖第三方模型 Key', !worker.includes('DEEPSEEK_API_KEY') && !worker.includes('api.deepseek.com') && !worker.includes('SILICONFLOW_API_KEY'));
 ok('Worker 使用 Function Calling', worker.includes('AGENT_TOOLS') && worker.includes("tool_choice: 'auto'") && worker.includes('message?.tool_calls'));
+ok('Worker 要求 Uni 使用与 App 一致的无 Emoji 文本列表', worker.includes('不要使用 Emoji、彩色图标或 Markdown 图标'));
 ok('Workers AI 默认模型与 Tool 白名单真实传入 binding', capturedModel === '@cf/zai-org/glm-4.7-flash' && capturedInput?.tools?.length === 1 && capturedInput.tools[0]?.function?.name === 'getSchedule');
 ok('Workers AI Tool Call 被校验并转换成 App 协议', workerResponse.status === 200 && workerDecision?.provider === 'workers-ai' && workerDecision?.call?.arguments?.query === 'tomorrow');
 ok('健康检查公开 Agent 绑定状态', healthBody?.agent === 'workers-ai' && healthBody?.agentReady === true && healthBody?.agentModel === '@cf/zai-org/glm-4.7-flash');
@@ -161,6 +176,13 @@ ok('免费额度或网关失败会回落本机提示', client.includes('return o
 ok('Uni 页面不再显示连接状态卡与模式说明', !view.includes('Workers AI 在线 + 本机离线兜底') && !view.includes('Online Mode 只把你主动发送'));
 ok('Pages 转发 Agent API', pages.includes("'/v1/agent/chat'"));
 ok('长对话直接定位最后回复或错误卡片', view.includes("target?.scrollIntoView({ block: 'center', behavior: 'smooth' })") && view.includes('errorText.value ? errorBox.value'));
+ok('Uni 历史按学校和账号保存在本机并在进页时恢复', view.includes("'/agent/history.json'") && view.includes('readJson<unknown[]>') && view.includes('writeJson(historyPath()') && view.includes('历史记录'));
+ok('Uni 输入区有语音按钮且原生调用受 guard 超时保护', view.includes('aria-label="语音输入"') && view.includes('name="microphone"') && voiceService.includes("guard(\n        'Uni 系统语音识别'") && voiceService.includes('JwWebView.speechToText'));
+ok('Android 原生语音桥调用系统 RecognizerIntent 并只返回文字', nativePlugin.includes('public void speechToText') && nativePlugin.includes('RecognizerIntent.ACTION_RECOGNIZE_SPEECH') && nativePlugin.includes('handleSpeechResult') && nativePlugin.includes('EXTRA_RESULTS'));
+ok('系统语音弹窗不存在时回退 SpeechRecognizer 并按需申请麦克风权限', nativePlugin.includes('startSpeechRecognizerFallback(call)') && nativePlugin.includes('SpeechRecognizer.createSpeechRecognizer') && nativePlugin.includes('RecognitionListener') && nativePlugin.includes('requestPermissionForAlias("microphone"'));
+ok('系统识别服务仍不可用时可唤起系统输入法', nativePlugin.includes('public void showKeyboard') && nativePlugin.includes('InputMethodManager.SHOW_IMPLICIT') && voiceService.includes('class BrowserSpeechInput'));
+const androidManifest = readFileSync(join(process.cwd(), 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+ok('SpeechRecognizer 后备声明录音权限', androidManifest.includes('android.permission.RECORD_AUDIO'));
 ok('高风险确认统一走 db.confirm', view.includes('await db.confirm({') && view.includes('agent.confirm(confirmation.id'));
 ok('本机快速规则先于在线 Provider', view.includes('const localPlanner = new LocalRulePlanner()') && view.includes('localPlanner, tools: createStudentTools(port)'));
 ok('月亮短按文字、长按语音', moon.includes("emit('text')") && moon.includes("emit('voice')") && moon.includes('560'));

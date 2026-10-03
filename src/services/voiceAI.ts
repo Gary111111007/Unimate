@@ -1,4 +1,6 @@
 import type { AgentCore, AgentReply } from './agentCore.ts';
+import { guard } from './guard.ts';
+import { isNativeWebView, JwWebView } from './jwwebview.ts';
 
 export interface VoiceTranscript {
   text: string;
@@ -54,14 +56,25 @@ export class VoiceAgent {
 /** 零依赖默认 Adapter：WebView 支持 Web Speech API 时直接可用，不支持时明确降级。 */
 export class BrowserSpeechInput implements VoiceInput {
   available(): boolean {
+    if (isNativeWebView()) return true;
     const scope = typeof window === 'undefined' ? null : window as any;
     return !!(scope?.SpeechRecognition || scope?.webkitSpeechRecognition);
   }
 
-  listen(locale = 'zh-CN'): Promise<VoiceTranscript> {
+  async listen(locale = 'zh-CN'): Promise<VoiceTranscript> {
+    if (isNativeWebView()) {
+      const result = await guard(
+        'Uni 系统语音识别',
+        JwWebView.speechToText({ locale }),
+        30_000,
+        { ok: false, text: '', error: '语音识别超时，请重试' }
+      );
+      if (!result.ok || !result.text.trim()) throw new Error(result.error || '没有识别到语音内容');
+      return { text: result.text.trim() };
+    }
     const scope = typeof window === 'undefined' ? null : window as any;
     const Recognition = scope?.SpeechRecognition || scope?.webkitSpeechRecognition;
-    if (!Recognition) return Promise.reject(new Error('当前 WebView 不支持语音识别'));
+    if (!Recognition) throw new Error('当前浏览器不支持语音识别');
     return new Promise<VoiceTranscript>((resolve, reject) => {
       const recognition = new Recognition();
       let settled = false;

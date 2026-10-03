@@ -1,4 +1,5 @@
 import { uuid } from './id.ts';
+import { normalizeAssistantText } from './assistantText.ts';
 import type { ActionCard } from '../../p5-assistant/n8n/core/types.ts';
 import type {
   AgentDecision,
@@ -109,6 +110,49 @@ export class AgentCore {
     return this.transcript.map((m) => ({ ...m, cards: [...m.cards], explain: [...m.explain] }));
   }
 
+  /**
+   * 恢复本机保存的聊天记录。历史记录只恢复纯文本与时间，不恢复旧操作卡或确认 token，
+   * 避免用户重启 App 后误触一张已经过期的写操作卡。
+   */
+  restore(raw: unknown): void {
+    this.transcript.splice(0);
+    this.pending.clear();
+    this.providerHistory = [];
+    if (!Array.isArray(raw)) return;
+
+    const restored = raw.slice(-MAX_TRANSCRIPT);
+    for (const item of restored) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as Record<string, unknown>;
+      if (row.role !== 'user' && row.role !== 'assistant') continue;
+      const rawContent = String(row.content || '').trim().slice(0, 4000);
+      const content = row.role === 'assistant' ? normalizeAssistantText(rawContent) : rawContent;
+      if (!content) continue;
+      const source = row.source === 'local_rule' || row.source === 'tool' || row.source === 'ai'
+        ? row.source as AgentSource : undefined;
+      const createdAt = Number(row.createdAt);
+      this.transcript.push({
+        id: uuid(), role: row.role, content, source, cards: [], explain: [],
+        createdAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : this.now()
+      });
+    }
+
+    // 只把真正的在线 AI 问答恢复为模型上下文；本机 Tool/规则结果仍不发给在线模型。
+    const context: AIChatMessage[] = [];
+    let pendingUser: AIChatMessage | null = null;
+    for (const message of this.transcript) {
+      if (message.role === 'user') {
+        pendingUser = { role: 'user', content: message.content };
+      } else {
+        if (pendingUser && message.source === 'ai') {
+          context.push(pendingUser, { role: 'assistant', content: message.content });
+        }
+        pendingUser = null;
+      }
+    }
+    this.providerHistory = this.trimContext(context);
+  }
+
   aiContext(): readonly AIChatMessage[] {
     return this.providerHistory.map((m) => ({ ...m }));
   }
@@ -154,7 +198,7 @@ export class AgentCore {
 
   private async applyDecision(decision: AgentDecision, requestHistory: readonly AIChatMessage[]): Promise<AgentReply> {
     if (decision.type === 'message') {
-      const content = String(decision.content || '').trim().slice(0, 4000);
+      const content = normalizeAssistantText(String(decision.content || '').trim().slice(0, 4000));
       if (!content) throw new Error('AI 没有返回有效内容');
       this.providerHistory = this.trimContext([...requestHistory, { role: 'assistant', content }]);
       return this.recordReply({ content, source: decision.source === 'local_rule' ? 'local_rule' : 'ai', cards: [], explain: [] });
@@ -190,8 +234,9 @@ export class AgentCore {
   }
 
   private recordReply(reply: AgentReply): AgentReply {
-    this.push('assistant', reply.content, reply.source, reply.cards, reply.explain);
-    return reply;
+    const normalized = { ...reply, content: normalizeAssistantText(reply.content) };
+    this.push('assistant', normalized.content, normalized.source, normalized.cards, normalized.explain);
+    return normalized;
   }
 
   private push(

@@ -2,6 +2,7 @@ package com.unimate.app;
 
 import android.content.Context;
 import android.content.Intent;
+import android.app.Activity;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -10,7 +11,14 @@ import android.content.ContentUris;
 import android.content.ContentValues;
 import android.database.Cursor;
 import android.provider.CalendarContract;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSObject;
@@ -22,6 +30,7 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.capacitorjs.plugins.localnotifications.LocalNotification;
 import com.capacitorjs.plugins.localnotifications.NotificationStorage;
+import java.util.ArrayList;
 
 /**
  * 内嵌教务/在线平台 WebView。
@@ -31,7 +40,9 @@ import com.capacitorjs.plugins.localnotifications.NotificationStorage;
 @CapacitorPlugin(name = "JwWebView", permissions = {
         // v2.56：**选择性**把提醒写进系统日历才需要这两个权限；默认关，用户点开关时才申请。
         @com.getcapacitor.annotation.Permission(alias = "calendar", strings = {
-                android.Manifest.permission.READ_CALENDAR, android.Manifest.permission.WRITE_CALENDAR })
+                android.Manifest.permission.READ_CALENDAR, android.Manifest.permission.WRITE_CALENDAR }),
+        @com.getcapacitor.annotation.Permission(alias = "microphone", strings = {
+                android.Manifest.permission.RECORD_AUDIO })
 })
 public class JwWebViewPlugin extends Plugin {
 
@@ -47,6 +58,10 @@ public class JwWebViewPlugin extends Plugin {
     public static final String RES_REASON = "reason";
 
     private PluginCall pending;
+    private SpeechRecognizer activeSpeechRecognizer;
+    private PluginCall activeSpeechCall;
+    private Runnable activeSpeechTimeout;
+    private final Handler speechHandler = new Handler(Looper.getMainLooper());
 
     @PluginMethod
     public void open(PluginCall call) {
@@ -64,6 +79,148 @@ public class JwWebViewPlugin extends Plugin {
         intent.putExtra(EXTRA_ACTION_LABEL, call.getString("actionLabel", "读取当前结果"));
         intent.putExtra(EXTRA_ALLOW_EXTERNAL, Boolean.TRUE.equals(call.getBoolean("allowExternal", false)));
         startActivityForResult(call, intent, "handleOpenResult");
+    }
+
+    /**
+     * 调用 Android 系统语音识别界面。录音和识别由系统服务处理，App 不保存音频，
+     * 只接收用户确认后的识别文字；设备没有语音服务时返回可读错误。
+     */
+    @PluginMethod
+    public void speechToText(PluginCall call) {
+        try {
+            startActivityForResult(call, speechIntent(call), "handleSpeechResult");
+        } catch (android.content.ActivityNotFoundException e) {
+            startSpeechRecognizerFallback(call);
+        } catch (Exception e) {
+            JSObject ret = new JSObject();
+            ret.put("ok", false);
+            ret.put("text", "");
+            ret.put("error", e.getMessage() == null ? "无法启动语音识别" : e.getMessage());
+            call.resolve(ret);
+        }
+    }
+
+    /**
+     * 厂商没有向第三方开放 RecognitionService 时，仍可使用系统输入法自己的语音按钮。
+     * JS 会先聚焦真正的输入框，这里只负责要求 Android 显示当前系统输入法。
+     */
+    @PluginMethod
+    public void showKeyboard(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            JSObject ret = new JSObject();
+            try {
+                android.webkit.WebView webView = getBridge().getWebView();
+                webView.requestFocus();
+                InputMethodManager input = (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                boolean shown = input != null && input.showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT);
+                ret.put("ok", shown);
+                ret.put("error", shown ? "" : "系统键盘未能打开，请点一下输入框");
+            } catch (Exception e) {
+                ret.put("ok", false);
+                ret.put("error", e.getMessage() == null ? "无法打开系统键盘" : e.getMessage());
+            }
+            call.resolve(ret);
+        });
+    }
+
+    private Intent speechIntent(PluginCall call) {
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, call.getString("locale", "zh-CN"));
+        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "请说出要发送给 Uni 的内容");
+        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        return intent;
+    }
+
+    private void startSpeechRecognizerFallback(PluginCall call) {
+        if (getPermissionState("microphone") != com.getcapacitor.PermissionState.GRANTED) {
+            requestPermissionForAlias("microphone", call, "microphonePermCallback");
+            return;
+        }
+        getActivity().runOnUiThread(() -> startSpeechRecognizerOnMain(call));
+    }
+
+    @com.getcapacitor.annotation.PermissionCallback
+    private void microphonePermCallback(PluginCall call) {
+        if (getPermissionState("microphone") != com.getcapacitor.PermissionState.GRANTED) {
+            resolveSpeech(call, false, "", "需要麦克风权限才能使用语音输入");
+            return;
+        }
+        getActivity().runOnUiThread(() -> startSpeechRecognizerOnMain(call));
+    }
+
+    private void startSpeechRecognizerOnMain(PluginCall call) {
+        if (activeSpeechCall != null) {
+            resolveSpeech(call, false, "", "语音识别正在进行，请稍候");
+            return;
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
+            resolveSpeech(call, false, "", "系统没有可用的语音识别服务，请安装或启用系统语音服务");
+            return;
+        }
+        try {
+            activeSpeechCall = call;
+            activeSpeechRecognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+            activeSpeechRecognizer.setRecognitionListener(new RecognitionListener() {
+                @Override public void onReadyForSpeech(Bundle params) {}
+                @Override public void onBeginningOfSpeech() {}
+                @Override public void onRmsChanged(float rmsdB) {}
+                @Override public void onBufferReceived(byte[] buffer) {}
+                @Override public void onEndOfSpeech() {}
+                @Override public void onPartialResults(Bundle partialResults) {}
+                @Override public void onEvent(int eventType, Bundle params) {}
+
+                @Override public void onError(int error) {
+                    finishSpeechRecognizer(false, "", speechRecognizerError(error));
+                }
+
+                @Override public void onResults(Bundle results) {
+                    ArrayList<String> matches = results == null ? null
+                            : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    String text = matches == null || matches.isEmpty() ? "" : matches.get(0);
+                    finishSpeechRecognizer(!text.trim().isEmpty(), text,
+                            text.trim().isEmpty() ? "没有识别到语音内容" : "");
+                }
+            });
+            activeSpeechTimeout = () -> finishSpeechRecognizer(false, "", "语音识别超时，请重试");
+            speechHandler.postDelayed(activeSpeechTimeout, 25_000);
+            activeSpeechRecognizer.startListening(speechIntent(call));
+        } catch (Exception e) {
+            finishSpeechRecognizer(false, "", e.getMessage() == null ? "无法启动语音识别" : e.getMessage());
+        }
+    }
+
+    private void finishSpeechRecognizer(boolean ok, String text, String error) {
+        PluginCall call = activeSpeechCall;
+        activeSpeechCall = null;
+        if (activeSpeechTimeout != null) speechHandler.removeCallbacks(activeSpeechTimeout);
+        activeSpeechTimeout = null;
+        if (activeSpeechRecognizer != null) {
+            activeSpeechRecognizer.cancel();
+            activeSpeechRecognizer.destroy();
+            activeSpeechRecognizer = null;
+        }
+        if (call != null) resolveSpeech(call, ok, text, error);
+    }
+
+    private void resolveSpeech(PluginCall call, boolean ok, String text, String error) {
+        JSObject ret = new JSObject();
+        ret.put("ok", ok);
+        ret.put("text", text == null ? "" : text);
+        ret.put("error", error == null ? "" : error);
+        call.resolve(ret);
+    }
+
+    private String speechRecognizerError(int error) {
+        if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+            return "没有听清，请重试";
+        }
+        if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) return "没有麦克风权限";
+        if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT) {
+            return "系统语音服务网络不可用";
+        }
+        if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) return "系统语音服务正忙，请稍后重试";
+        return "系统语音识别失败（" + error + "）";
     }
 
 /**
@@ -669,6 +826,25 @@ public class JwWebViewPlugin extends Plugin {
         }
         call.resolve(ret);
     }
+    @ActivityCallback
+    private void handleSpeechResult(PluginCall call, ActivityResult result) {
+        JSObject ret = new JSObject();
+        Intent data = result.getData();
+        if (result.getResultCode() != Activity.RESULT_OK || data == null) {
+            ret.put("ok", false);
+            ret.put("text", "");
+            ret.put("error", "已取消语音输入");
+            call.resolve(ret);
+            return;
+        }
+        ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+        String text = matches == null || matches.isEmpty() ? "" : matches.get(0);
+        ret.put("ok", !text.trim().isEmpty());
+        ret.put("text", text);
+        ret.put("error", text.trim().isEmpty() ? "没有识别到语音内容" : "");
+        call.resolve(ret);
+    }
+
     @ActivityCallback
     private void handleOpenResult(PluginCall activityCall, ActivityResult result) {
         PluginCall call = pending;

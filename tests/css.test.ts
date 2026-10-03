@@ -211,7 +211,9 @@ const onlineUi = readFileSync(join(root, 'views', 'OnlineView.vue'), 'utf8');
 const secondClassUi = readFileSync(join(root, 'views', 'SecondClassView.vue'), 'utf8');
 ok('提醒风险条使用线性图标而不是彩色闹钟', timetableUi.includes('name="alarm"') && !timetableUi.includes('<span class="rkico">⏰</span>'));
 ok('周次切换卡片位于课表内容之后', timetableUi.indexOf('class="card weeknav"') > timetableUi.indexOf('</transition>'));
+ok('下一节课卡片位于课表内容之后且在周次切换之前', timetableUi.indexOf('class="nextbar"') > timetableUi.indexOf('</transition>') && timetableUi.indexOf('class="nextbar"') < timetableUi.indexOf('class="card weeknav"'));
 ok('校园服务宫格使用统一线性图标', onlineUi.includes(':name="campusIconName(a)"') && !onlineUi.includes('<span v-else class="ico">{{ a.icon }}</span>'));
+ok('校园服务卡片与操作按钮使用紧凑尺寸', /\.app\s*\{[^}]*min-height:\s*108px/.test(onlineUi) && /:size="24"/.test(onlineUi) && /\.secrow \.btn\.sm\s*\{[^}]*min-height:\s*30px/.test(onlineUi));
 ok('二课分类使用线性图标与 aria-pressed', secondClassUi.includes('<AppleIcon') && (secondClassUi.match(/:aria-pressed="sheet ===/g) || []).length === 3 && !secondClassUi.includes('>🏅 二课填报') && !secondClassUi.includes('>🤝 志愿时长') && !secondClassUi.includes('>🧹 劳育时长'));
 
 console.log('');

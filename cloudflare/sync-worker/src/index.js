@@ -217,7 +217,7 @@ async function agentChat(request, env, origin) {
   }
   const requested = new Set(Array.isArray(body?.toolNames) ? body.toolNames.filter((name) => typeof name === 'string') : []);
   const tools = AGENT_TOOLS.filter((item) => requested.size === 0 || requested.has(item.function.name));
-  const system = '你是 Uni，高校学生的任务型助手。使用简体中文。需要课表、记事、天气或页面跳转时必须选择提供的 Tool，并只输出结构化 Tool Call；不要声称已经读取数据或执行成功，Android 会在本机校验和执行。不要索取教务密码、Cookie、验证码。普通学习生活交流可以直接回答。一次只选择一个最合适的 Tool。';
+  const system = '你是 Uni，高校学生的任务型助手。使用简体中文。需要课表、记事、天气或页面跳转时必须选择提供的 Tool，并只输出结构化 Tool Call；不要声称已经读取数据或执行成功，Android 会在本机校验和执行。不要索取教务密码、Cookie、验证码。普通学习生活交流可以直接回答。不要使用 Emoji、彩色图标或 Markdown 图标，列表只使用短横线或数字。一次只选择一个最合适的 Tool。';
   const model = String(env.WORKERS_AI_MODEL || DEFAULT_WORKERS_AI_MODEL);
   let timer;
   let result;

@@ -352,7 +352,7 @@ async function probeAll(): Promise<void> {
         <span v-if="customKeys.has(a.key)" class="tag-mine">我的</span>
         <span v-else-if="(db.settings.appEdits || {})[a.key]" class="tag-edited">已改</span>
         <img v-if="a.iconData" :src="a.iconData" class="icoimg" alt="" />
-        <AppleIcon v-else class="ico" :name="campusIconName(a)" :size="28" />
+        <AppleIcon v-else class="ico" :name="campusIconName(a)" :size="24" />
         <div class="an">{{ a.name }}</div>
         <div class="ad">{{ a.desc }}</div>
         <div v-if="cookieMap[a.key]" class="ck" :class="{ has: cookieMap[a.key] !== '无' }">Cookie {{ cookieMap[a.key] }}</div>
@@ -438,8 +438,9 @@ async function probeAll(): Promise<void> {
 .hero { background: linear-gradient(140deg, #2E5AAC, #3E6FBF); color: #fff; }
 .hero .title { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
 .hero .small { color: rgba(255, 255, 255, .82); font-size: 12.5px; line-height: 1.6; }
-.secrow { display: flex; align-items: center; justify-content: space-between; margin: 14px 2px 8px; }
-.seclabel { font-size: 13px; font-weight: 700; color: var(--ink); }
+.secrow { display: flex; align-items: center; justify-content: space-between; margin: 10px 2px 6px; }
+.seclabel { font-size: 12px; font-weight: 600; color: var(--text); }
+.secrow .btn.sm { min-height: 30px; padding: 0 9px; border-radius: 9px; font-size: 12px; }
 .addbox { padding: 12px; }
 .addbox .field { margin-bottom: 10px; }
 .addbox label, .sheet label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
@@ -448,13 +449,13 @@ async function probeAll(): Promise<void> {
 .tag-edited, .tag-mine { position: absolute; top: 5px; left: 6px; font-size: 9px; border-radius: 5px; padding: 1px 4px; }
 .tag-edited { color: #7A6A1F; background: #FFF3C4; }
 .tag-mine { color: #fff; background: #8A93A3; left: auto; right: 24px; }
-.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.app { min-height: 142px; position: relative; background: var(--card); border-radius: 16px; padding: 18px 10px 14px; text-align: center; box-shadow: var(--shadow); user-select: none; -webkit-touch-callout: none; -webkit-user-select: none; transition: transform .1s ease, background-color .18s ease; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.app { min-height: 108px; position: relative; background: var(--card); border-radius: 14px; padding: 11px 7px 9px; text-align: center; box-shadow: var(--shadow); user-select: none; -webkit-touch-callout: none; -webkit-user-select: none; transition: transform .1s ease, background-color .18s ease; }
 .app:active { transform: scale(.98); background: color-mix(in srgb, var(--card) 94%, var(--text)); }
 .app.mine { border: 1px dashed #B9C9E8; }
 .ico { margin: 0 auto; color: var(--brand); }
-.an { font-size: 16px; line-height: 21px; font-weight: 500; margin-top: 10px; color: var(--text); }
-.ad { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 17px; }
+.an { font-size: 14px; line-height: 18px; font-weight: 500; margin-top: 7px; color: var(--text); }
+.ad { font-size: 10.5px; color: var(--muted); margin-top: 3px; line-height: 14px; }
 .ck { font-size: 9.5px; margin-top: 4px; color: #B0433B; }
 .ck.has { color: #2FA35C; }
 .del { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%; border: none; background: var(--soft); color: var(--muted); font-size: 14px; line-height: 1; }

@@ -69,6 +69,10 @@ ok('本机桥接没有网络调用', !/\bfetch\s*\(|XMLHttpRequest|axios\b/.test
 ok('界面不再显示 Online 与 Offline 状态说明', !view.includes('Online Mode') && !view.includes('Offline Mode'));
 ok('界面不再显示模型数据边界说明卡', !view.includes('课表、记事和天气数据由手机本机 Tool') && !view.includes('不会自动发给模型'));
 ok('界面包含消息列表、加载和错误状态', view.includes('uni-chat-list') && view.includes('Uni 正在处理') && view.includes('role="alert"'));
+ok('界面显示并持久化本机历史记录', view.includes('历史记录') && view.includes('persistHistory') && view.includes('loadHistory'));
+ok('历史记录具有可点击入口与独立查看面板', view.includes('aria-haspopup="dialog"') && view.includes('aria-label="Uni 历史记录"') && view.includes('showHistory'));
+ok('界面提供语音输入按钮', view.includes('aria-label="语音输入"') && view.includes('listenVoice') && view.includes('name="microphone"'));
+ok('无系统识别服务时聚焦输入框并提示使用键盘语音', view.includes('ref="composerInput"') && view.includes('JwWebView.showKeyboard()') && view.includes('请点击键盘上的麦克风'));
 ok('Uni 已成为独立底部页签并使用单星图标', main.includes("{ label: 'Uni', icon: 'star' }") && main.includes('<UniView v-else-if="db.activeTab === 2"'));
 ok('高风险操作使用统一确认框', view.includes('await db.confirm({') && view.includes('confirmation.confirmText'));
 
