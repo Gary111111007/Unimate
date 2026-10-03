@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/response.schema.json",
+  "title": "UniWireResponse",
+  "description": "Layer B：n8n 线上响应契约。**v1.1**，对应主规划 v2.3.2 §6.2。\n\n【v1.1 变更】`schemaVersion` 由 1.0 升为 1.1（与请求同步）。\n\n【不变量】成功、参数错、上游挂、内部异常、n8n 自己崩——任何路径都必须返回这个形状。Android 端只解析这 8 个字段，不做自然语言判断（§6.2、源文档 Phase 3 完成标准）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "success",
+    "intent",
+    "data",
+    "errorCode",
+    "retryable",
+    "messageForUser"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "string", "enum": ["1.1"] },
+    "requestId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "原样回传请求的 requestId。"
+    },
+    "success": { "type": "boolean" },
+    "intent": {
+      "type": ["string", "null"],
+      "enum": [
+        "schedule.today", "schedule.tomorrow", "schedule.week", "schedule.date",
+        "weather.today", "weather.tomorrow", "weather.date",
+        "notes.create", "notes.query", "notes.update", "notes.delete",
+        "records.summary", "smalltalk", "unsupported",
+        null
+      ],
+      "description": "封闭枚举，与 intent.schema.json 的同名字段必须完全一致（由 tests 的 D-1 断言锁定）。null 仅用于网关在进入 router 之前就失败的路径。"
+    },
+    "data": {
+      "type": "object",
+      "description": "按 intent 分化。已知形状见 §6.3 的四个响应实例；成功路径的 data 形状由对应 Tool 的响应侧定义。允许空对象。"
+    },
+    "errorCode": {
+      "type": ["string", "null"],
+      "enum": [
+        "E_SCHEMA", "E_AUTH", "E_FORBIDDEN", "E_NOT_FOUND", "E_AMBIGUOUS",
+        "E_CONFLICT", "E_CONFIRM_REQUIRED", "E_CONFIRM_INVALID",
+        "E_IDEMPOTENT_REPLAY", "E_RATE_LIMITED", "E_VERSION_UNSUPPORTED",
+        "E_UNSUPPORTED", "E_LLM_UNAVAILABLE", "E_UPSTREAM_TIMEOUT", "E_INTERNAL",
+        null
+      ],
+      "description": "与 error.schema.json 的枚举必须完全一致（由 tests 的 D-2 断言锁定）。"
+    },
+    "retryable": { "type": "boolean" },
+    "messageForUser": {
+      "type": ["string", "null"],
+      "maxLength": 200,
+      "description": "已脱敏的用户可见文案。绝不包含 SQL、堆栈、表名、密钥或个人信息。"
+    }
+  }
+}

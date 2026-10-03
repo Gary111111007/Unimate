@@ -12,8 +12,10 @@ import { buildShareUrl, encodeShare, shareHost } from '../services/share.ts';
 import { canEncodeQr, qrSvg } from '../services/qr.ts';
 import { agoText, weatherText, weatherTip } from '../services/weather.ts';
 import { fixReminderSetting, refreshReminderRisk, reminderRisk } from '../services/notify.ts';
+import { guard } from '../services/guard.ts';
 import ImportPanel from './ImportPanel.vue';
 import SettingsPanel from '../components/SettingsPanel.vue';
+import AppleIcon from '../components/AppleIcon.vue';
 
 const db = useDb();
 const week = ref(db.currentWeek);
@@ -444,26 +446,30 @@ async function dropTimetable(id: string): Promise<void> {
 /**
  * 课表工具箱：把「导入课表」和原来那个 ⋯ 合成一个悬浮按钮（需求 2）。
  *
- * 【可拖动，但只能在"允许区域"内（v2.15 第二次修订）】
+ * 【可拖动，v2.63 起允许在整个可视窗口内移动】
  * 产品负责人要求：必须能拖（不然周日晚上有课的人，右下角那块正好被按钮压住），
  * 但必须"框定一个范围，让它不能超出这个范围"。所以：
- *   1) 允许区域 = 可视区去掉底部导航栏（底栏高度**实时量**，不写死），左右各留 8px；
+ *   1) 允许区域 = 整个可视窗口，四边各留 8px；允许覆盖底栏，但不会拖出屏幕；
  *   2) 拖动过程中实时夹取，松手再夹一次，永远出不去；
  *   3) 存下来的是**相对锚点** fx / fy（0~1 的比例），不是像素坐标 ——
  *      字号变大、底栏长高、横竖屏切换后按新尺寸换算位置，不可能像旧版那样
  *      "拖到右下角、改大字号就找不到"（旧版存像素，换尺寸后那个坐标落到了屏幕外/底栏底下）；
  *   4) 每次按下之前、窗口尺寸变化、页面重新可见时都重新换算一次，老数据也会被夹回范围内。
  */
-const TOOL_SIZE = 52;
+const TOOL_SMALL_SIZE = 38;
+const TOOL_LARGE_SIZE = 64;
 const TOOL_PAD = 8;
 const toolPos = ref({ x: 0, y: 0 });
 const toolDragging = ref(false);
+const toolExpanded = ref(false);
+const toolSize = computed(() => toolExpanded.value ? TOOL_LARGE_SIZE : TOOL_SMALL_SIZE);
 /** 位置用"相对锚点"（0~1 的比例）持久化，避免存像素坐标导致的换尺寸即丢失 */
-const toolAnchor = ref({ fx: 1, fy: 1 });
+const toolAnchor = ref({ fx: 1, fy: .91 });
 const toolStyle = computed(() => ({
   transform: 'translate3d(' + toolPos.value.x + 'px, ' + toolPos.value.y + 'px, 0)'
 }));
 let toolDrag: { id: number; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null = null;
+let toolCollapseTimer = 0;
 
 /**
  * 当前页面缩放系数。
@@ -481,12 +487,32 @@ function zoomFactor(): number {
 
 /** 工具箱允许出现的矩形区域（单位：布局像素，与 translate3d 同一坐标系） */
 function toolBounds() {
-  const bar = document.querySelector('.tabbar') as HTMLElement | null;
-  const barH = bar && bar.getBoundingClientRect ? bar.getBoundingClientRect().height : 0;
   return toolBox({
     viewW: window.innerWidth, viewH: window.innerHeight, zoom: zoomFactor(),
-    barH, size: TOOL_SIZE, pad: TOOL_PAD
+    barH: 0, size: toolSize.value, pad: TOOL_PAD
   });
+}
+
+function scheduleToolCollapse(): void {
+  clearTimeout(toolCollapseTimer);
+  toolCollapseTimer = setTimeout(() => {
+    if (!toolDragging.value && !showMenu.value) {
+      toolExpanded.value = false;
+      placeTool();
+    }
+  }, 4200) as unknown as number;
+}
+
+function expandTool(): void {
+  toolExpanded.value = true;
+  placeTool();
+  scheduleToolCollapse();
+}
+
+function collapseTool(): void {
+  clearTimeout(toolCollapseTimer);
+  toolExpanded.value = false;
+  placeTool();
 }
 
 /** 相对锚点 → 当前尺寸下的像素位置 */
@@ -511,6 +537,7 @@ function loadToolPos(): void {
 }
 
 function toolDown(e: PointerEvent): void {
+  clearTimeout(toolCollapseTimer);
   placeTool();                     // 先按当前尺寸摆回允许区域内（字号可能刚变过）
   const el = e.currentTarget as HTMLElement;
   toolDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: toolPos.value.x, oy: toolPos.value.y, moved: false };
@@ -532,10 +559,23 @@ function toolUp(): void {
   toolDrag = null;
   toolDragging.value = false;
   if (!d) return;
-  if (!d.moved) { showMenu.value = !showMenu.value; return; }   // 点一下 = 开菜单
+  if (!d.moved) {
+    if (!toolExpanded.value) { expandTool(); return; }
+    showMenu.value = !showMenu.value;
+    collapseTool();
+    return;
+  }
   anchorToolFromPos();                                         // 拖动超过 8px = 移动
   db.settings.toolFab = { fx: toolAnchor.value.fx, fy: toolAnchor.value.fy };
-  void db.saveData();
+  void guard('保存工具箱位置', db.saveData().then(() => true), 8000, false);
+  if (toolExpanded.value) scheduleToolCollapse();
+}
+
+function toolCancel(): void {
+  clearTimeout(toolCollapseTimer);
+  toolDrag = null;
+  toolDragging.value = false;
+  if (toolExpanded.value) scheduleToolCollapse();
 }
 
 /** 视口尺寸变化 / 页面重新可见时重新贴合（横竖屏、分屏、系统字体变化都走这里） */
@@ -546,6 +586,7 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onToolViewport);
 });
 onUnmounted(() => {
+  clearTimeout(toolCollapseTimer);
   window.removeEventListener('resize', onToolViewport);
   document.removeEventListener('visibilitychange', onToolViewport);
 });
@@ -660,25 +701,6 @@ function toggleWeek(w: number): void {
 
 <template>
   <div class="scroll" @touchstart="onTouchStart" @touchend="onTouchEnd">
-    <!-- 还没有课表时不显示周次条：否则空账号会看到"第 1 周 · 共 0 周"这种自相矛盾的抬头 -->
-    <div v-if="db.activeTimetable" class="card weeknav">
-      <button class="nav" @click="shift(-1)" :disabled="week <= 1">‹</button>
-      <div class="cur" @click="showWeekPicker = true">
-        <div class="bold">第 {{ week }} 周 <span class="wr">{{ weekRange }}</span></div>
-        <div class="small muted">{{ db.activeTimetable?.name || '还没有课表' }} · 共 {{ db.activeTimetable?.totalWeeks || 0 }} 周</div>
-      </div>
-      <button class="nav" @click="shift(1)" :disabled="week >= (db.activeTimetable?.totalWeeks || 18)">›</button>
-      <button v-if="week !== db.currentWeek" class="btn sm ghost today" @click="goToday">回本周</button>
-    </div>
-    <!--
-      v2.48：找回入口在登录页（没登录时用得上）。
-      v2.51：**已登录**时主页也留一行小字 —— 管理员重置密码或令牌过期后，用户要"只重新登录、不取回数据"，
-      那时他已经在 App 里，进不去登录页。只在真的登录了云端账号时才出现，不占版面。
-    -->
-    <div v-if="db.activeTimetable" class="hintrow">
-      <span class="swipe-hint">左右滑动可切换周次</span>
-      <button v-if="db.settings.cloudAccount" class="minilink" @click="db.openRecovery()">账号与找回 ›</button>
-    </div>
       <!-- 天气（Net.md P0）：默认关闭。关着、或还没拿到数据时这里一行都不渲染，
            不会给课表页顶出多余的空白；点一下 = 更新（同样受 30 分钟限制）。 -->
       <div v-if="wxNow" class="wxbar" @click="refreshWeather()" aria-label="天气，点一下更新">
@@ -689,21 +711,11 @@ function toggleWeek(w: number): void {
       </div>
       <!-- 提醒可用性（v2.28）：只在精确闹钟/电池优化真的没就绪时出现；点一下才去系统设置，不自动跳 -->
       <div v-if="risk && risk.canFix && !riskDismissed" class="riskbar">
-        <span class="rkico">⏰</span>
+        <AppleIcon class="rkico" name="alarm" :size="20" />
         <span class="rktxt">{{ riskText }}</span>
         <button class="btn sm" @click="fixRisk()">去开启</button>
         <button class="rke" aria-label="本次不再提示" @click="riskDismissed = true">×</button>
       </div>
-      <!-- 真机反馈：这块原来是三行大卡片，把课表整个顶到屏幕外。压成一条，点整条看详情。 -->
-      <div v-if="nextClass" class="nextbar" @click="detail = nextClass">
-        <span class="ndot" :style="{ background: colorOf(nextClass) }"></span>
-        <div class="ngrow">
-          <div class="n1"><b>{{ nextClass.name }}</b><span class="nu">{{ untilText(nextClass.minutesUntil) }}</span></div>
-          <div class="n2">{{ nextClass.dayLabel }} · 第 {{ nextClass.startPeriod }}-{{ nextClass.endPeriod }} 节 {{ nextClass.timeLabel }}<span v-if="nextClass.rooms.length"> · {{ roomsText(nextClass.rooms) }}</span></div>
-        </div>
-        <span class="ncv">详情 ›</span>
-      </div>
-
     <!-- 新账号 / 新建课表后就是这一屏：导入入口必须摆在明面上，不能只藏在悬浮工具箱里。
          同一份课表一旦有课，这个入口就收进「工具箱」（需求原话的"已导入则放进工具箱"）。 -->
     <div v-if="!ttHasCourses" class="empty">
@@ -743,18 +755,42 @@ function toggleWeek(w: number): void {
       </div>
     </div>
     </transition>
+
+    <!-- 下一节课与周次切换都放在课表内容之后，顶部只保留提醒和天气。 -->
+    <div v-if="nextClass" class="nextbar" @click="detail = nextClass">
+      <span class="ndot" :style="{ background: colorOf(nextClass) }"></span>
+      <div class="ngrow">
+        <div class="n1"><b>{{ nextClass.name }}</b><span class="nu">{{ untilText(nextClass.minutesUntil) }}</span></div>
+        <div class="n2">{{ nextClass.dayLabel }} · 第 {{ nextClass.startPeriod }}-{{ nextClass.endPeriod }} 节 {{ nextClass.timeLabel }}<span v-if="nextClass.rooms.length"> · {{ roomsText(nextClass.rooms) }}</span></div>
+      </div>
+      <span class="ncv">详情 ›</span>
+    </div>
+
+    <div v-if="db.activeTimetable" class="card weeknav">
+      <button class="nav" @click="shift(-1)" :disabled="week <= 1">‹</button>
+      <div class="cur" @click="showWeekPicker = true">
+        <div class="bold">第 {{ week }} 周 <span class="wr">{{ weekRange }}</span></div>
+        <div class="small muted">{{ db.activeTimetable?.name || '还没有课表' }} · 共 {{ db.activeTimetable?.totalWeeks || 0 }} 周</div>
+      </div>
+      <button class="nav" @click="shift(1)" :disabled="week >= (db.activeTimetable?.totalWeeks || 18)">›</button>
+      <button v-if="week !== db.currentWeek" class="btn sm ghost today" @click="goToday">回本周</button>
+    </div>
+    <div v-if="db.activeTimetable" class="hintrow">
+      <span class="swipe-hint">左右滑动可切换周次</span>
+      <button v-if="db.settings.cloudAccount" class="minilink" @click="db.openRecovery()">账号与找回 ›</button>
+    </div>
   </div>
 
-      <!-- 可拖动，但只能在脚本算出的"允许区域"内（详见脚本里 v2.15 的说明） -->
+      <!-- 小尺寸待机；首次点击放大，再次点击开菜单；可在整个窗口内拖动 -->
       <button
         class="toolbox"
-        :class="{ dragging: toolDragging }"
+        :class="{ dragging: toolDragging, 'toolbox-expanded': toolExpanded }"
         :style="toolStyle"
-        aria-label="课表工具箱（可拖动，不会拖出屏幕）"
+        aria-label="课表工具箱；点击放大后打开，可在全窗口拖动"
         @pointerdown="toolDown"
         @pointermove="toolMove"
         @pointerup="toolUp"
-        @pointercancel="toolUp"
+        @pointercancel="toolCancel"
       ><span class="tico">🧰</span><span class="tlabel">工具箱</span></button>
 
   <div v-if="showMenu" class="mask" @click.self="showMenu = false">
@@ -931,7 +967,7 @@ function toggleWeek(w: number): void {
 /* 工具箱固定在右下角（bottom 88px + 高 52px），滚动区底部要留够余量，
    否则滚到底时课表最后一行永远压在按钮底下点不到。 */
 .scroll { padding-bottom: calc(152px + var(--safe-b)); }
-.weeknav { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
+.weeknav { display: flex; align-items: center; gap: 6px; margin-top: 16px; padding: 8px 10px; }
 .nav { width: 34px; height: 34px; border-radius: 10px; background: var(--soft-2); color: var(--brand); font-size: 20px; line-height: 1; flex: none; }
 .nav:disabled { opacity: .35; }
 .cur { flex: 1; text-align: center; }
@@ -951,11 +987,12 @@ function toggleWeek(w: number): void {
 .wxtip { color: var(--warn); flex: none; }
 .wxr { margin-left: auto; font-size: 12px; color: var(--muted); flex: none; }
 /* 提醒可用性提示条：只在与"提醒会不会准"有关的问题上出现（精确闹钟/电池优化未就绪） */
-.riskbar { display: flex; align-items: center; gap: 8px; margin: 0 0 7px; padding: 6px 10px; border-radius: 11px; background: var(--tint); border: 1px solid var(--brand); }
-.rkico { font-size: 14px; flex: none; }
-.rktxt { flex: 1; min-width: 0; font-size: 12px; color: var(--strong); line-height: 1.35; }
+.riskbar { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; padding: 9px 10px 9px 12px; border-radius: 12px; background: var(--card); border: .5px solid var(--line); box-shadow: var(--shadow); }
+.rkico { color: var(--warn); flex: none; }
+.rktxt { flex: 1; min-width: 0; font-size: 13px; color: var(--text); line-height: 1.4; }
 .rke { flex: none; width: 22px; height: 22px; border-radius: 50%; color: var(--muted); font-size: 14px; line-height: 1; }
-.nextbar { display: flex; align-items: center; gap: 9px; background: var(--card); border-radius: 11px; padding: 7px 10px; margin: 0 0 7px; box-shadow: var(--shadow); }
+.nextbar { display: flex; align-items: center; gap: 9px; background: var(--card); border-radius: 11px; padding: 7px 10px; margin: 16px 0 0; box-shadow: var(--shadow); }
+.nextbar + .weeknav { margin-top: 8px; }
 /* v2.51：已登录云端账号时，主页那行"账号与找回"入口（很小、和周次提示同一行） */
 .hintrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px; }
 .minilink { font-size: 11px; color: var(--muted); padding: 2px 0; }
@@ -1002,14 +1039,18 @@ function toggleWeek(w: number): void {
    - touch-action: none 是拖动的前提，否则浏览器会把手势当成滚动手势。 */
 .toolbox {
   position: fixed; left: 0; top: 0;
-  width: 52px; height: 52px; border-radius: 17px; border: none;
+  width: 38px; height: 38px; border-radius: 13px; border: none;
   background: var(--brand); color: #fff; box-shadow: 0 6px 16px rgba(20, 32, 60, .30);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
   z-index: 56; touch-action: none; user-select: none; -webkit-user-select: none; will-change: transform;
+  transition: width .16s ease, height .16s ease, border-radius .16s ease, box-shadow .16s ease;
 }
+.toolbox-expanded { width: 64px; height: 64px; border-radius: 21px; }
 .toolbox.dragging { opacity: .82; box-shadow: 0 10px 22px rgba(20, 32, 60, .38); }
-.tico { font-size: 19px; line-height: 1; }
-.tlabel { font-size: 9.5px; line-height: 1; opacity: .9; }
+.tico { font-size: 17px; line-height: 1; transition: font-size .16s ease; }
+.toolbox-expanded .tico { font-size: 23px; }
+.tlabel { display: none; font-size: 10px; line-height: 1; opacity: .9; }
+.toolbox-expanded .tlabel { display: inline; }
 .ico2 { width: 24px; text-align: center; }
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
 .kv span { color: var(--muted); flex: none; }

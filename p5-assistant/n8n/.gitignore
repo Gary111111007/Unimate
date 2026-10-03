@@ -1,0 +1,40 @@
+# n8n 工位局部忽略规则
+#
+# 目的只有一个：**别把运行时产物或凭据带进仓库**。
+# 交付物本体（core/ workflows/ schemas/ tests/ tools/ docs/ ops/ fixtures/ prompts/）
+# **一律不忽略** —— 它们就是这次要交的东西。
+#
+# ⚠️ 改这个文件后跑 `git status --short --untracked-files=all` 复核一遍：
+#    该进来的（workflows/、schemas/、tests/、docs/、ops/*-evidence/）必须在列表里。
+
+# ── 依赖与实例目录 ──────────────────────────────────────────
+node_modules/
+.n8n/
+
+# ── 数据库（隔离实例或本机实例留下的，都不是交付物）─────────
+*.sqlite
+*.sqlite-*
+*.db
+
+# ── 运行时产物 ──────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+
+# ── 环境变量与秘密 ──────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── 凭据目录：只放说明，永不放值 ────────────────────────────
+# 注意顺序：先忽略该目录下的一切，再把占位文件放回来。
+# 少了 `!credentials/.gitkeep` 这一行，Git 会因为"目录下全被忽略"而**丢掉整个目录**。
+credentials/*
+!credentials/.gitkeep
+
+# ── 明确**不要**忽略的（写出来是为了让人别顺手加）───────────
+# workflows/          6 个 Workflow JSON 是交付物
+# schemas/            14 个 schema 是交付物
+# tests/              四套测试是交付物，也是"能独立执行"的证明
+# docs/               设计与运维文档是交付物
+# ops/*-evidence/     运行证据（p09-evidence/、p11-evidence/）是交付物，**不是**运行时日志

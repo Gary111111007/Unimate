@@ -4,6 +4,7 @@ compatibility_date = "2026-09-22"
 
 [vars]
 R2_BUCKET_NAME = "unimate-sync"
+WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash"
 # 注意：APK 里页面源是 https://localhost（Capacitor androidScheme=https），桌面调试是 http://localhost。
 # 真机目前走 pages.dev 上的 _worker.js 转发（那边剥掉 Origin，按服务端到服务端放行），
 # 所以这一行**改了要 wrangler deploy 才生效**，且不影响真机链路 —— 留着是为了将来直接用 Worker 域名时不再踩坑。
@@ -14,5 +15,9 @@ name = "SYNC_RATE_LIMITER"
 namespace_id = "203601"
 simple = { limit = 20, period = 60 }
 
+[ai]
+binding = "AI"
+
 # 部署前不要把密钥写进本文件。按 README 执行四次 wrangler secret put：
 # R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / SYNC_OBJECT_PEPPER
+# 在线 Agent 使用 Workers AI 绑定，不需要第三方模型 Key。

@@ -5,6 +5,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
+import { themeRevealGeometry } from '../src/services/theme.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 const files: string[] = [];
@@ -178,6 +179,42 @@ ok('补偿系数来自 display 服务，且做过范围夹取',
 for (const key of ['--bg', '--card', '--text', '--muted', '--line', '--soft', '--soft-2', '--field', '--tint', '--strong']) {
   ok('暗色块里定义了 ' + key, new RegExp('\\[data-theme=.dark.\\][\\s\\S]*?' + key.replace(/-/g, '\\-') + '\\s*:').test(files.map((f) => readFileSync(f, 'utf8')).join('\n')));
 }
+
+// 主题切换从触发点覆盖到最远角；不能只按短边算，否则横屏/角落会露出旧主题。
+const revealCorner = themeRevealGeometry({ x: 0, y: 0 }, 360, 800);
+ok('圆形主题切换覆盖最远视口角', Math.abs(revealCorner.radius - Math.hypot(360, 800)) < 0.001, String(revealCorner.radius));
+const revealClamped = themeRevealGeometry({ x: -20, y: 900 }, 360, 800);
+ok('主题动效触发点会夹取在视口内', revealClamped.x === 0 && revealClamped.y === 800, JSON.stringify(revealClamped));
+const meView = readFileSync(join(root, 'views', 'MeView.vue'), 'utf8');
+ok('三个主题按钮都暴露 aria-pressed', (meView.match(/:aria-pressed="db\.settings\.theme/g) || []).length === 3);
+ok('主题按钮把真实触发位置交给圆形揭示', (meView.match(/setTheme\('[^']+', \$event\)/g) || []).length === 3);
+ok('主题动效对 reduced-motion 有即时降级', /prefers-reduced-motion:\s*reduce/.test(readFileSync(join(root, 'services', 'theme.ts'), 'utf8')));
+
+// Apple 风格回归：底栏保持等宽、安静，只用系统蓝和轻微反馈表达选中态。
+const mainView = readFileSync(join(root, 'screens', 'Main.vue'), 'utf8');
+const mainScopedStyle = (mainView.match(/<style scoped>([\s\S]*?)<\/style>/) || [, ''])[1];
+const activeTabRule = (mainScopedStyle.match(/\.tab\.on\s*\{([^}]*)\}/) || [, ''])[1];
+const baseTabRule = (mainScopedStyle.match(/\.tab\s*\{([^}]*)\}/) || [, ''])[1];
+ok('底栏保持等宽且不再使用展开胶囊', !/flex-grow\s*:\s*1\.28/.test(mainScopedStyle) && !/background\s*:/.test(activeTabRule), activeTabRule.trim());
+ok('底栏状态变化有过渡且尊重 reduced-motion', /transition\s*:/.test(baseTabRule) && /prefers-reduced-motion:\s*reduce/.test(mainScopedStyle), baseTabRule.trim());
+
+// Inset Grouped 与线性图标是本轮视觉语言的可执行契约，防止又退回彩色 Emoji + 重阴影。
+const globalStyles = readFileSync(join(root, 'styles.css'), 'utf8');
+ok('浅色主题使用 Apple 系统灰与系统蓝', /--brand:\s*#007AFF/i.test(globalStyles) && /--bg:\s*#F2F2F7/i.test(globalStyles));
+ok('深色主题使用纯黑背景与深灰卡片', /\[data-theme=.dark.\][\s\S]*--bg:\s*#000000/i.test(globalStyles) && /--card:\s*#1C1C1E/i.test(globalStyles));
+ok('功能列表达到 52px 触控高度并使用内缩分隔线', /\.li\s*\{[^}]*min-height:\s*52px/.test(globalStyles) && /\.li:not\(:last-child\)::after\s*\{[^}]*left:\s*52px/.test(globalStyles));
+ok('我的页入口使用统一 SVG 线性图标且不含彩色 Emoji', meView.includes('<AppleIcon') && !/[🔔🌗💧🌤💾🏫ℹ]/u.test(meView));
+ok('主导航使用统一 SVG 线性图标', mainView.includes('<AppleIcon') && !/[🗓🏅📌📚👤]/u.test(mainView));
+
+const timetableUi = readFileSync(join(root, 'views', 'TimetableView.vue'), 'utf8');
+const onlineUi = readFileSync(join(root, 'views', 'OnlineView.vue'), 'utf8');
+const secondClassUi = readFileSync(join(root, 'views', 'SecondClassView.vue'), 'utf8');
+ok('提醒风险条使用线性图标而不是彩色闹钟', timetableUi.includes('name="alarm"') && !timetableUi.includes('<span class="rkico">⏰</span>'));
+ok('周次切换卡片位于课表内容之后', timetableUi.indexOf('class="card weeknav"') > timetableUi.indexOf('</transition>'));
+ok('下一节课卡片位于课表内容之后且在周次切换之前', timetableUi.indexOf('class="nextbar"') > timetableUi.indexOf('</transition>') && timetableUi.indexOf('class="nextbar"') < timetableUi.indexOf('class="card weeknav"'));
+ok('校园服务宫格使用统一线性图标', onlineUi.includes(':name="campusIconName(a)"') && !onlineUi.includes('<span v-else class="ico">{{ a.icon }}</span>'));
+ok('校园服务卡片与操作按钮使用紧凑尺寸', /\.app\s*\{[^}]*min-height:\s*108px/.test(onlineUi) && /:size="24"/.test(onlineUi) && /\.secrow \.btn\.sm\s*\{[^}]*min-height:\s*30px/.test(onlineUi));
+ok('二课分类使用线性图标与 aria-pressed', secondClassUi.includes('<AppleIcon') && (secondClassUi.match(/:aria-pressed="sheet ===/g) || []).length === 3 && !secondClassUi.includes('>🏅 二课填报') && !secondClassUi.includes('>🤝 志愿时长') && !secondClassUi.includes('>🧹 劳育时长'));
 
 console.log('');
 console.log('CSS Test: ' + passed + ' passed, ' + failed + ' failed');

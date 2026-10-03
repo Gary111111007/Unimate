@@ -1,0 +1,526 @@
+{
+  "id": "unimate-agent-intent-router",
+  "name": "agent_intent_router",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "requestId"
+            },
+            {
+              "name": "text"
+            },
+            {
+              "name": "now"
+            },
+            {
+              "name": "timezone"
+            },
+            {
+              "name": "context"
+            }
+          ]
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000009",
+      "name": "Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Rule Intent（由 tools/gen-workflows.mjs 从 core/uni-core.ts 生成，勿手改）──\n// 规则表与 UniCore 同源；改了 UniCore 的 RULES 必须重跑生成器。\nconst INTENTS = [\"schedule.today\",\"schedule.tomorrow\",\"schedule.week\",\"schedule.date\",\"weather.today\",\"weather.tomorrow\",\"weather.date\",\"notes.create\",\"notes.query\",\"notes.update\",\"notes.delete\",\"records.summary\",\"smalltalk\",\"unsupported\"];\nconst UNSUPPORTED = [\"weather.today\",\"weather.tomorrow\",\"weather.date\",\"records.summary\",\"notes.update\",\"notes.delete\"];\nconst RULES = [\n  { intent: 'notes.create', prio: 20, re: new RegExp('(记一下|记下|帮我记|帮我写|加个记事|新建记事|提醒我)', '') },\n  { intent: 'notes.create', prio: 18, re: new RegExp('(今晚|今天|明天|后天|周[一二三四五六日天]|星期[一二三四五六日天]).{0,12}(\\\\d{1,2}\\\\s*点|\\\\d{1,2}\\\\s*[:：]\\\\s*\\\\d{2}).{0,24}(交|写|做|买|去|开|报|发|提交|复习|打卡|取|面|聊)', '') },\n  { intent: 'notes.delete', prio: 20, re: new RegExp('(删掉|删除|去掉).{0,6}(记事|笔记|那条|记录)', '') },\n  { intent: 'notes.update', prio: 20, re: new RegExp('(改一下|修改|改成).{0,6}(记事|笔记|那条)', '') },\n  { intent: 'schedule.today', prio: 16, re: new RegExp('(下一节|下节课|接下来.{0,4}(上什么|什么课|的课))', '') },\n  { intent: 'schedule.tomorrow', prio: 15, re: new RegExp('(明天|明日).{0,10}(几点|什么课|哪些课|有课|上课|课程|课表|安排|简报)', '') },\n  { intent: 'schedule.today', prio: 15, re: new RegExp('(今天|今日).{0,10}(几点|什么课|哪些课|有课|上课|课程|课表|安排|简报|总结|还有什么|剩什么|剩下)', '') },\n  { intent: 'schedule.week', prio: 15, re: new RegExp('(这周|本周|这个星期|这一周).{0,8}(几节课|多少节课|几节|几次课|几门课|几门|课程安排|课表|有课)', '') },\n  { intent: 'schedule.date', prio: 14, re: new RegExp('(有空|空闲|空档|有时间|冲突|撞(?:课|了)?)', '') },\n  { intent: 'schedule.date', prio: 12, re: new RegExp('(\\\\d{1,2}\\\\s*月\\\\s*\\\\d{1,2}\\\\s*[日号]|\\\\d{4}-\\\\d{1,2}-\\\\d{1,2}|周[一二三四五六日天]|星期[一二三四五六日天]).{0,8}(几点|什么课|有课|上课|课表|有空|空闲|冲突)', '') },\n  { intent: 'records.summary', prio: 15, re: new RegExp('(二课|第二课堂|第二学分).{0,8}(还差|差多少|多少分|够不够|进度|修满)', '') },\n  { intent: 'weather.tomorrow', prio: 15, re: new RegExp('(明天|明日).{0,8}(天气|下雨|下雪|气温|多少度|冷不冷|热不热|带伞)', '') },\n  { intent: 'weather.today', prio: 15, re: new RegExp('(今天|今日).{0,8}(天气|下雨|下雪|气温|多少度|冷不冷|热不热|带伞)', '') },\n  { intent: 'weather.date', prio: 12, re: new RegExp('(\\\\d{1,2}\\\\s*月\\\\s*\\\\d{1,2}\\\\s*[日号]).{0,8}(天气|下雨|气温|多少度)', '') },\n  { intent: 'notes.query', prio: 12, re: new RegExp('(我的记事|有哪些记事|记事里|笔记里|找一下.{0,6}(记事|笔记)|我记过什么|待办)', '') },\n  { intent: 'smalltalk', prio: 5, re: new RegExp('^\\\\s*(你好|您好|hi|hello|在吗|你是谁|你能干什么|你能做什么)\\\\s*[!！?？。.,，]*\\\\s*$', 'i') },\n];\n\nconst item = $input.first().json;\n\n// 文本归一化：NFKC 全角→半角、去零宽字符、折叠空白（与 UniCore 一致）\nconst text = String(item.text ?? '')\n  .normalize('NFKC')\n  .replace(/[\\u200B-\\u200D\\uFEFF\\u2060]/g, '')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nif (text.length === 0 || text.length > 500) {\n  return [{ json: { ...item, text, intent: 'unsupported', matchPrio: null, reason: 'E_SCHEMA' } }];\n}\n\n// 按 prio 降序取第一个命中\nlet intent = 'unsupported';\nlet matchPrio = null;\nfor (const r of RULES.slice().sort((a, b) => b.prio - a.prio)) {\n  if (r.re.test(text)) { intent = r.intent; matchPrio = r.prio; break; }\n}\n\n// 比赛 MVP 明确不覆盖的意图：保留 intent 以便观测，但标记为不支持\nconst unsupported = intent === 'unsupported' || UNSUPPORTED.indexOf(intent) >= 0;\n\nreturn [{ json: {\n  ...item,\n  text,\n  intent,\n  matchPrio,\n  unsupported,\n  llmUsed: false,          // 比赛 MVP：规则链路，零模型调用\n  cacheMode: 'disabled',   // 比赛 MVP：不建 cache_manager\n} }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000010",
+      "name": "Rule Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Build Canonical Args（主规划 §4.2.6 节点 11）───────────────\n// 从 intent + **客户端时间戳**推导规范化的日期槽位，交给 Tool。\n// 只用客户端时区（§4.2.2）——服务器时区在这条链路上不出现。\n// 【硬约束】不访问网络、不读 $env / process.env。\nconst d = $input.first().json;\nconst tz = d.timezone || 'Asia/Shanghai';\nconst ymd = (x) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(x);\nconst shift = (iso, n) => { const t = new Date(iso + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };\nconst wd = (iso) => { const w = new Date(iso + 'T12:00:00Z').getUTCDay(); return w === 0 ? 7 : w; };\nconst parsed = new Date(d.timestamp);\nconst today = isNaN(parsed.getTime()) ? ymd(new Date()) : ymd(parsed);\n\nconst out = { ...d, timezone: tz, now: d.timestamp ?? null };\nif (d.intent === 'schedule.week') {\n  const k = wd(today);\n  out.dateRange = { from: shift(today, 1 - k), to: shift(today, 7 - k) };\n} else if (d.intent === 'schedule.tomorrow' || d.intent === 'weather.tomorrow') {\n  out.date = shift(today, 1);\n} else {\n  out.date = today;\n}\nreturn [{ json: out }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000011",
+      "name": "Build Canonical Args",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        110,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "notes.create",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "notes_create"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "notes.query",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "notes_query"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "schedule.today",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "schedule_today"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "schedule.tomorrow",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "schedule_tomorrow"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "schedule.date",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "schedule_date"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "schedule.week",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "schedule_week"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "unsupported"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000012",
+      "name": "Route By Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "unimate-notes-create",
+          "mode": "list"
+        },
+        "workflowInputs": {
+          "mode": "passthrough"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000013",
+      "name": "Call notes_create",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        -180
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "unimate-notes-query",
+          "mode": "list"
+        },
+        "workflowInputs": {
+          "mode": "passthrough"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000014",
+      "name": "Call notes_query",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        -60
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "unimate-schedule-query",
+          "mode": "list"
+        },
+        "workflowInputs": {
+          "mode": "passthrough"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000015",
+      "name": "Call schedule_query (today)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        60
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "unimate-schedule-query",
+          "mode": "list"
+        },
+        "workflowInputs": {
+          "mode": "passthrough"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000016",
+      "name": "Call schedule_query (tomorrow)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        180
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "unimate-schedule-query",
+          "mode": "list"
+        },
+        "workflowInputs": {
+          "mode": "passthrough"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000017",
+      "name": "Call schedule_query (date)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "unimate-schedule-query",
+          "mode": "list"
+        },
+        "workflowInputs": {
+          "mode": "passthrough"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000018",
+      "name": "Call schedule_query (week)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        420
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Mark Unsupported ───────────────────────────────────────\n// 兜底分支与各 Tool 调用**失败支路**的共同落点。\n// 它存在的意义是**让落到这里的请求也有结构化输出**——\n// 没有落点的兜底分支会让 §4.1「任何路径都经过 Shape Response」失效，\n// 症状是 webhook 返回 HTTP 200 + 空响应体（P11 真实运行时实测到过）。\n// 【硬约束】不访问网络、不读 $env / process.env。\nconst d = $input.first().json;\n// 上游失败：n8n 会在条目上挂 error 字段，不外泄细节\nif (d.error) {\n  return [{ json: { ...d, success: false, errorCode: 'E_INTERNAL', retryable: true, llmUsed: false, data: {} } }];\n}\nreturn [{ json: { ...d, success: true, errorCode: 'E_UNSUPPORTED', retryable: false, llmUsed: false, data: {} } }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000019",
+      "name": "Mark Unsupported",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        540
+      ]
+    }
+  ],
+  "connections": {
+    "Input": {
+      "main": [
+        [
+          {
+            "node": "Rule Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rule Intent": {
+      "main": [
+        [
+          {
+            "node": "Build Canonical Args",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Canonical Args": {
+      "main": [
+        [
+          {
+            "node": "Route By Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route By Intent": {
+      "main": [
+        [
+          {
+            "node": "Call notes_create",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call notes_query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call schedule_query (today)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call schedule_query (tomorrow)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call schedule_query (date)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call schedule_query (week)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Unsupported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call notes_create": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Mark Unsupported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call notes_query": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Mark Unsupported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call schedule_query (today)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Mark Unsupported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call schedule_query (tomorrow)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Mark Unsupported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call schedule_query (date)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Mark Unsupported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call schedule_query (week)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Mark Unsupported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

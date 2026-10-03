@@ -1,0 +1,258 @@
+{
+  "id": "unimate-agent-gateway",
+  "name": "agent_gateway",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "v1/agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000001",
+      "name": "Agent Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        0
+      ],
+      "webhookId": "unimate-agent-gateway"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Precheck Payload ──────────────────────────────────────\n// 只做结构与长度的硬校验；业务意图判断一律不在这里。\n//\n// ★ P08 加固（§13.6 #4 参数污染 / 威胁#1 数据胶囊越界）：\n//   ① 所有可选字符串字段都要**先查类型**——数组/对象/null 传进来必须被拒，\n//      而不是带着它们进 router（\"进了 router 就已经晚了\"）。\n//   ② 胶囊做**逐层**封闭校验：顶层白名单不够，busySlots 的每一项也只许有 startAt/endAt。\n//      这一层是数据边界的**运行期**防线，与 schema 校验互为冗余（不是二选一）。\n//\n// 【硬约束】不访问网络、不读 $env / process.env、不碰教务页面。\n//\n// ★ P11 真实运行修的两处（都只有让 n8n 真跑才会暴露）：\n//   ① **webhook 的请求体在 body 字段下面**。原先直接读 `$input.first().json`，\n//      拿到的是 `{headers, params, query, body, webhookUrl, executionMode}`，\n//      于是 schemaVersion / requestId / message… **七个字段全部判为缺失**，\n//      每个请求都走 E_SCHEMA。修法是先解包 body（非 webhook 调用时直接用原对象）。\n//   ② **网关说 `message`，路由读 `text`** —— 两层字段名对不上，路由永远拿不到用户原话。\n//      适配是网关的职责，所以在这里补上 `text`，而不是让路由去猜两种名字。\nconst raw = $input.first().json;\nconst b = (raw && typeof raw.body === 'object' && raw.body !== null && !Array.isArray(raw.body)) ? raw.body : raw;\nconst errs = [];\nconst SCHEMA_VERSIONS = ['1.1'];\nconst UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;\n\nconst str = (v) => typeof v === 'string';\nconst isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);\n\nif (!str(b.schemaVersion) || SCHEMA_VERSIONS.indexOf(b.schemaVersion) < 0) errs.push('schemaVersion');\nif (!str(b.requestId) || !UUID.test(b.requestId)) errs.push('requestId');\nif (!str(b.message)) errs.push('message');\nelse if (b.message.length === 0 || b.message.length > 500) errs.push('message.length');\nif (!str(b.timezone)) errs.push('timezone');\nif (!str(b.timestamp)) errs.push('timestamp');\nif (!str(b.clientVersion)) errs.push('clientVersion');\nif (b.inputType !== 'text' && b.inputType !== 'voice') errs.push('inputType');\n\n// ① 可选字段的类型污染：出现即必须是字符串（不是数组、不是对象、不是 null）\nconst OPTIONAL_STRINGS = ['userId', 'sessionId', 'idempotencyKey', 'locale'];\nfor (const f of OPTIONAL_STRINGS) {\n  if (b[f] !== undefined && !str(b[f])) errs.push(f + '.type');\n}\n// userId 是本轮对抗的重点（§13.6 #4）：即使类型对，也要挡住空串与超长\nif (b.userId !== undefined) {\n  if (!str(b.userId) || b.userId.length === 0 || b.userId.length > 64) errs.push('userId.range');\n}\n\n// ② 数据胶囊：可选字段；出现时逐层封闭\nif (b.contextCapsule !== undefined) {\n  const c = b.contextCapsule;\n  if (!isPlainObject(c)) {\n    errs.push('contextCapsule.type');\n  } else {\n    const CAPSULE_KEYS = ['projectionVersion', 'purpose', 'window', 'busySlots', 'todoStatus'];\n    const extra = Object.keys(c).filter((k) => CAPSULE_KEYS.indexOf(k) < 0);\n    if (extra.length) errs.push('contextCapsule.extra:' + extra.join(','));\n    if (c.projectionVersion !== '1') errs.push('projectionVersion');\n    if (['availability', 'conflict', 'brief'].indexOf(c.purpose) < 0) errs.push('purpose');\n\n    // window：只许 startAt/endAt 两个字符串\n    if (c.window !== undefined) {\n      if (!isPlainObject(c.window)) errs.push('window.type');\n      else {\n        const wk = Object.keys(c.window).filter((k) => k !== 'startAt' && k !== 'endAt');\n        if (wk.length) errs.push('window.extra:' + wk.join(','));\n        if (!str(c.window.startAt) || !str(c.window.endAt)) errs.push('window.range');\n      }\n    }\n\n    // busySlots：**每一项**只许 startAt/endAt —— 课程名/教室/节次一旦漏进来必须在这里断掉\n    if (c.busySlots !== undefined) {\n      if (!Array.isArray(c.busySlots)) errs.push('busySlots.type');\n      else if (c.busySlots.length > 20) errs.push('busySlots.length');\n      else {\n        for (const s of c.busySlots) {\n          if (!isPlainObject(s)) { errs.push('busySlots.item.type'); break; }\n          const sk = Object.keys(s).filter((k) => k !== 'startAt' && k !== 'endAt');\n          if (sk.length) { errs.push('busySlots.item.extra:' + sk.join(',')); break; }\n          if (!str(s.startAt) || !str(s.endAt)) { errs.push('busySlots.item.range'); break; }\n        }\n      }\n    }\n\n    // todoStatus：只许 pendingCount / nextDueAt\n    if (c.todoStatus !== undefined) {\n      if (!isPlainObject(c.todoStatus)) errs.push('todoStatus.type');\n      else {\n        const tk = Object.keys(c.todoStatus).filter((k) => k !== 'pendingCount' && k !== 'nextDueAt');\n        if (tk.length) errs.push('todoStatus.extra:' + tk.join(','));\n        if (!Number.isInteger(c.todoStatus.pendingCount)) errs.push('todoStatus.pendingCount');\n      }\n    }\n  }\n}\n\n// _precheckOk 是给下游 If 节点用的**布尔**判定。用显式布尔字段而不是让 If 去算\n// 数组长度那类表达式：后者的求值语义在 If 节点里实测不可靠\n// （P11 真实运行：表达式写法没生效，非法请求照样被路由）。显式字段没有歧义。\n// ⚠️ 本段是模板字符串的内容：**不要在这里写裸反引号**，会提前闭合（踩过三次）。\nreturn [{ json: { ...b, text: b.message, _precheckErrors: errs, _precheckOk: errs.length === 0 } }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000002",
+      "name": "Precheck Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json._precheckOk }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000003",
+      "name": "Precheck OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        110,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "unimate-agent-intent-router",
+          "mode": "list"
+        },
+        "workflowInputs": {
+          "mode": "passthrough"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000004",
+      "name": "Route To Router",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Shape Response ────────────────────────────────────────\n// 唯一出口。任何路径（成功 / 参数错 / 上游挂 / 内部异常）都必须经过这里，\n// 响应形状恒定 —— 客户端只解析这 8 个字段，不做自然语言判断。\n//\n// ★ P11：上游失败时 n8n 会在条目上挂一个 `error` 字段（onError: continueErrorOutput\n//   把失败条目送到本节点的**第二个输入**）。必须在这里把它变成结构化错误——\n//   否则条目被静默丢弃，客户端拿到的是 **HTTP 200 + 空响应体**。\n//   这个现象在 P11 真实运行时真的出现过，见 docs/execution-log.md。\nconst d = $input.first().json;\nconst pre = d._precheckErrors || [];\n\nconst shape = (success, intent, data, errorCode, retryable, messageForUser) => ({\n  schemaVersion: '1.1',\n  requestId: d.requestId || '00000000-0000-4000-8000-000000000000',\n  success,\n  intent: intent ?? null,\n  data: data ?? {},\n  errorCode: errorCode ?? null,\n  retryable: retryable ?? false,\n  messageForUser: messageForUser ?? null,\n});\n\n// ① 上游（子流程）失败：**不泄露内部细节**，只给稳定的错误码与用户能懂的话\nif (d.error) {\n  return [{ json: shape(false, null, {}, 'E_INTERNAL', true, '服务暂时不可用，请稍后再试') }];\n}\n\n// ② 预检未过\nif (pre.length) {\n  const versionBad = pre.indexOf('schemaVersion') >= 0;\n  return [{ json: shape(false, null, { fields: pre },\n    versionBad ? 'E_VERSION_UNSUPPORTED' : 'E_SCHEMA',\n    false,\n    versionBad ? '请升级 App' : '我没听清，能再说一次吗？') }];\n}\n\n// ③ 正常路径：结果由 router / Tool 填入；router 没返回内容时给一个明确的降级答复。\nconst intent = d.intent ?? null;\nif (!d.intent && !d.data) {\n  return [{ json: shape(false, null, {}, 'E_INTERNAL', true, '服务暂时不可用，请稍后再试') }];\n}\n// ★ P11 修的：success **必须由结果推导**，不能在这里硬编码 true。\n//   §6.2 要求 errorCode 非空时 success 必为 false；原先上游返回\n//   {success:false, errorCode:'E_SCHEMA'} 会被这里改写成 success:true，\n//   于是客户端看到\"成功 + 有错误码\"这种自相矛盾的信封（真实运行时实测到）。\nconst success = d.success !== false && !d.errorCode;\nreturn [{ json: shape(success, intent, d.data ?? {}, d.errorCode ?? null, d.retryable ?? false, d.messageForUser ?? null) }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000005",
+      "name": "Shape Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Build Log Input（P09）────────────────────────────────\n// 把一条**脱敏元数据**送去 agent_observability。\n//\n// ★ 这里只取**信封里已有的字段** —— 不是\"记得别带课程名\"，\n//   是**上游根本没有**：Shape Response 只产那 8 个字段，message / 课程名 /\n//   教师 / 教室 / 记事内容在更早的地方就已经不在数据流里了。\n//   结构性约束比纪律可靠。\nconst d = $input.first().json;\n\n// UTF-8 字节数手算：不用 Buffer / TextEncoder。\n// n8n 的 Code 节点跑在沙箱里，Node 全局对象不一定在；\n// 一个 6 行的纯函数比\"大概率可用\"的全局对象可靠。\nconst utf8Len = (s) => {\n  let n = 0;\n  for (let i = 0; i < s.length; i++) {\n    const c = s.charCodeAt(i);\n    if (c < 0x80) n += 1;\n    else if (c < 0x800) n += 2;\n    else if (c >= 0xd800 && c <= 0xdbff) { n += 4; i++; }   // 代理对\n    else n += 3;\n  }\n  return n;\n};\n\n// payloadBytes 是**实测值**：这一条响应的真实 UTF-8 字节数。\n// 与 P08 实测出 74,370 字节（预算 2.3 倍）那次的口径一致，方便日后继续盯体积。\nlet payloadBytes = null;\ntry {\n  payloadBytes = utf8Len(JSON.stringify(d));\n} catch (e) {\n  payloadBytes = null;\n}\n\nreturn [{ json: {\n  requestId: d.requestId ?? null,\n  intent: d.intent ?? null,\n  errorCode: d.errorCode ?? null,\n  // latencyMs 与 textLength 在本机网关里**取不到**：Shape Response 之后信封只剩 8 个\n  // 字段，请求侧的长度与起始时刻都已被有意丢弃（那是数据边界，不是疏忽）。\n  // 按 docs/logging-spec.md 的规则：取不到就写 null —— **宁可 null，不臆造**。\n  // 换成真值需要一条贯穿 router 的 _meta seam，见 docs/observability.md §四（**未实现**）。\n  latencyMs: null,\n  textLength: null,\n  payloadBytes,   // 唯一一个真值，因为它是从**响应**算的\n} }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000006",
+      "name": "Build Log Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "unimate-agent-observability",
+          "mode": "list"
+        },
+        "workflowInputs": {
+          "mode": "passthrough"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000007",
+      "name": "Log Request",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $('Shape Response').first().json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000008",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Agent Webhook": {
+      "main": [
+        [
+          {
+            "node": "Precheck Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Precheck Payload": {
+      "main": [
+        [
+          {
+            "node": "Precheck OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Precheck OK?": {
+      "main": [
+        [
+          {
+            "node": "Route To Router",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Shape Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route To Router": {
+      "main": [
+        [
+          {
+            "node": "Shape Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Shape Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Response": {
+      "main": [
+        [
+          {
+            "node": "Build Log Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Log Input": {
+      "main": [
+        [
+          {
+            "node": "Log Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Request": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

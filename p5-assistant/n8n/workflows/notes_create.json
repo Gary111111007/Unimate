@@ -1,0 +1,63 @@
+{
+  "id": "unimate-notes-create",
+  "name": "notes_create",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "requestId"
+            },
+            {
+              "name": "text"
+            },
+            {
+              "name": "timezone"
+            }
+          ]
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000022",
+      "name": "Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── notes_create ─────────────────────────────────────────────\n// 比赛 MVP：Q2（账号模式下 n8n 是读服务端库还是只回指令）未定，\n// 因此本工作流【不访问任何数据源】，只把路由结果规整成统一输出信封。\n// 真实数据访问由未来接主工程时的 N8nAdapter 决定 —— 见 p5-assistant/NOTES.md。\nconst d = $input.first().json;\nreturn [{ json: {\n  success: true,\n  intent: d.intent ?? null,\n  data: { delegatedTo: 'local_rules' },\n  errorCode: null,\n  retryable: false,\n  cacheMode: 'disabled',\n  llmUsed: false,\n  requestId: d.requestId,\n} }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000023",
+      "name": "Build Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Input": {
+      "main": [
+        [
+          {
+            "node": "Build Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

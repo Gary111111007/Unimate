@@ -1,26 +1,27 @@
 :root {
-  --brand: #2E5AAC;
-  --brand-2: #E8A33D;
-  --bg: #F2F4F8;
+  --brand: #007AFF;
+  --brand-2: #5856D6;
+  --bg: #F2F2F7;
   --card: #FFFFFF;
-  --text: #14181F;
-  --muted: #6B7480;
-  --ink: #14181F;
-  --line: #E3E7EE;
-  --danger: #D9463F;
-  --ok: #2F9E5F;
-  --warn: #C97A12;
-  --ink: #14181F;
+  --text: #000000;
+  --muted: #8E8E93;
+  --ink: #000000;
+  --line: rgba(60, 60, 67, .18);
+  --danger: #FF3B30;
+  --ok: #34C759;
+  --warn: #FF9500;
   /* 语义表面色：组件里凡"比卡片更淡/更深的第二层底色"都走这几个，
      别再写死 #fff 或 #F2F4F8，否则暗色下就是一块白。 */
-  --soft: #F6F8FC;
-  --soft-2: #EDF1F7;
-  --field: #FFFFFF;
-  --tint: #EEF3FC;
-  --strong: #14181F;
+  --soft: #F2F2F7;
+  --soft-2: #E5E5EA;
+  --field: #F2F2F7;
+  --tint: rgba(0, 122, 255, .10);
+  --strong: #000000;
+  --pressed: rgba(0, 0, 0, .05);
+  --switch-off: #E9E9EA;
 
-  --r: 14px;
-  --shadow: 0 2px 10px rgba(20, 30, 60, .06);
+  --r: 12px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .025);
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-t: env(safe-area-inset-top, 0px);
 }
@@ -28,7 +29,7 @@
 html, body, #app { height: 100%; margin: 0; }
 body {
   background: var(--bg); color: var(--text);
-  font: 15px/1.5 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font: 15px/1.47 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", sans-serif;
   overscroll-behavior: none; user-select: none;
 }
 input, textarea { user-select: text; font: inherit; color: inherit; }
@@ -39,16 +40,16 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .row { display: flex; align-items: center; gap: 10px; }
 .col { display: flex; flex-direction: column; }
 .muted { color: var(--muted); }
-.small { font-size: 12px; }
-.bold { font-weight: 600; }
-.title { font-size: 19px; font-weight: 700; }
-.card { background: var(--card); border-radius: var(--r); box-shadow: var(--shadow); padding: 14px; }
-.card + .card { margin-top: 10px; }
+.small { font-size: 13px; line-height: 18px; }
+.bold { font-weight: 500; }
+.title { font-size: 20px; line-height: 25px; font-weight: 600; letter-spacing: -.25px; }
+.card { background: var(--card); border-radius: var(--r); box-shadow: var(--shadow); padding: 16px; }
+.card + .card { margin-top: 16px; }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  min-height: 44px; padding: 0 16px; border-radius: 12px; background: var(--brand); color: #fff; font-weight: 600;
+  min-height: 44px; padding: 0 16px; border-radius: 12px; background: var(--brand); color: #fff; font-weight: 500;
 }
-.btn:active { opacity: .85; }
+.btn:active { opacity: .72; transform: scale(.98); }
 /* 禁用的按钮必须看得出来（v2.24）：以前 .btn 没有 disabled 样式，
    "天气关着时的「立即更新」""备份恢复的「开始恢复」"看着和能点的一模一样 */
 .btn:disabled { opacity: .45; }
@@ -60,11 +61,11 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .field { margin-bottom: 12px; }
 .field > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 .field input, .field textarea, .field select {
-  width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: #FBFCFE; outline: none;
+  width: 100%; min-height: 44px; padding: 11px 12px; border: .5px solid var(--line); border-radius: 10px; background: var(--field); outline: none;
 }
-.field input:focus, .field textarea:focus { border-color: var(--brand); background: #fff; }
+.field input:focus, .field textarea:focus { border-color: var(--brand); background: var(--card); }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip { padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: #fff; font-size: 13px; }
+.chip { min-height: 36px; padding: 7px 12px; border-radius: 10px; border: .5px solid var(--line); background: var(--card); font-size: 13px; }
 .chip.on { background: var(--brand); color: #fff; border-color: var(--brand); }
 .chip.sm { padding: 5px 10px; font-size: 12px; }
 .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: #EDF0F5; color: #3A424E; }
@@ -74,9 +75,9 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .pill.danger { background: #FDECEA; color: var(--danger); }
 .pill.brand { background: rgba(46, 90, 172, .12); color: var(--brand); }
 .list { background: var(--card); border-radius: var(--r); overflow: hidden; box-shadow: var(--shadow); }
-.li { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-bottom: 1px solid var(--line); }
-.li:last-child { border-bottom: 0; }
-.li:active { background: #F7F9FC; }
+.li { width: 100%; min-height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px; position: relative; text-align: left; }
+.li:not(:last-child)::after { content: ''; position: absolute; left: 52px; right: 0; bottom: 0; height: 1px; background: var(--line); transform: scaleY(.5); transform-origin: bottom; }
+.li:active { background: var(--pressed); }
 .hairline { height: 1px; background: var(--line); margin: 12px 0; }
 .fab {
   position: fixed; right: 16px; bottom: calc(74px + var(--safe-b)); width: 56px; height: 56px; border-radius: 50%;
@@ -93,7 +94,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .empty { text-align: center; padding: 44px 22px; color: var(--muted); }
 .empty .big { font-size: 34px; margin-bottom: 8px; }
 .scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px calc(84px + var(--safe-b)); }
-.head { padding: calc(12px + var(--safe-t)) 14px 10px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30; }
+.head { padding: calc(12px + var(--safe-t)) 16px 10px; background: color-mix(in srgb, var(--card) 88%, transparent); border-bottom: .5px solid var(--line); backdrop-filter: saturate(180%) blur(20px); position: sticky; top: 0; z-index: 30; }
 /* 提醒：.head / .list 是每页骨架，底色必须走 var(--card)，写死 #fff 会在暗色模式留下整块白（真机截图反馈过） */
 .bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -105,24 +106,35 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 /* ===================== 暗色模式（PRD 5.12） ===================== */
 /* 主题由 <html data-theme> 控制：light / dark。跟随系统时在 JS 里换算成二值。 */
 :root { color-scheme: light; }
+/* 新主题由点击位置圆形展开；几何不动，避免整屏闪切打断视觉上下文。 */
+::view-transition-old(root),
+::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #0E131C;
-  --card: #171F2B;
-  --text: #E8ECF3;
-  --ink: #E8ECF3;
-  --muted: #97A3B4;
-  --line: #263141;
-  --brand: #6E9BE0;
-  --danger: #F0776E;
-  --ok: #4FC083;
-  --warn: #E0A03A;
-  --soft: #1B2432;
-  --soft-2: #222D3D;
-  --field: #101823;
-  --tint: #17233A;
-  --strong: #E8ECF3;
-  --shadow: 0 2px 12px rgba(0, 0, 0, .45);
+  --bg: #000000;
+  --card: #1C1C1E;
+  --text: #FFFFFF;
+  --ink: #FFFFFF;
+  --muted: rgba(235, 235, 245, .60);
+  --line: rgba(84, 84, 88, .55);
+  --brand: #0A84FF;
+  --danger: #FF453A;
+  --ok: #30D158;
+  --warn: #FF9F0A;
+  --soft: #2C2C2E;
+  --soft-2: #3A3A3C;
+  --field: #2C2C2E;
+  --tint: rgba(10, 132, 255, .16);
+  --strong: #FFFFFF;
+  --pressed: rgba(255, 255, 255, .08);
+  --switch-off: #39393D;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .18);
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation-duration: 0.001ms; }
 }
 :root[data-theme='dark'] body { background: var(--bg); color: var(--text); }
 
@@ -136,22 +148,22 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 :root[data-theme='dark'] input,
 :root[data-theme='dark'] textarea,
 :root[data-theme='dark'] select {
-  background: #101722 !important; color: var(--text) !important; border-color: var(--line) !important;
+  background: var(--field) !important; color: var(--text) !important; border-color: var(--line) !important;
 }
 :root[data-theme='dark'] input::placeholder,
 :root[data-theme='dark'] textarea::placeholder { color: #63708A; }
 :root[data-theme='dark'] .chip,
 :root[data-theme='dark'] .pill,
 :root[data-theme='dark'] .grey,
-:root[data-theme='dark'] .ghost { background: #1D2735; color: var(--text); border-color: var(--line); }
+:root[data-theme='dark'] .ghost { background: var(--soft); color: var(--text); border-color: var(--line); }
 :root[data-theme='dark'] .chip.on,
-:root[data-theme='dark'] .pill.brand { background: #23406E; color: #DCE8FB; border-color: #35597F; }
-:root[data-theme='dark'] .btn.grey { background: #223044; color: var(--text); }
-:root[data-theme='dark'] .btn.ghost { background: transparent; color: var(--brand); border-color: #2C4260; }
+:root[data-theme='dark'] .pill.brand { background: var(--tint); color: var(--brand); border-color: rgba(10, 132, 255, .35); }
+:root[data-theme='dark'] .btn.grey { background: var(--soft); color: var(--text); }
+:root[data-theme='dark'] .btn.ghost { background: transparent; color: var(--brand); border-color: var(--line); }
 :root[data-theme='dark'] .muted { color: var(--muted); }
 :root[data-theme='dark'] .hairline,
 :root[data-theme='dark'] hr { background: var(--line); }
-:root[data-theme='dark'] .tabbar { background: #121926; border-top-color: var(--line); }
+:root[data-theme='dark'] .tabbar { background: rgba(28, 28, 30, .88); border-top-color: var(--line); }
 :root[data-theme='dark'] .mask { background: rgba(0, 0, 0, .62); }
 :root[data-theme='dark'] .grid,
 :root[data-theme='dark'] .dayhead,
@@ -161,8 +173,8 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 :root[data-theme='dark'] .daycol { border-right-color: var(--line); }
 :root[data-theme='dark'] .cell { border-bottom-color: #1E2836; }
 :root[data-theme='dark'] .dayhead.today,
-:root[data-theme='dark'] .daycol.today { background: #17233A; }
-:root[data-theme='dark'] .dc.sel { background: #1B2C48; }
+:root[data-theme='dark'] .daycol.today { background: var(--tint); }
+:root[data-theme='dark'] .dc.sel { background: var(--tint); }
 :root[data-theme='dark'] .hints,
 :root[data-theme='dark'] .note,
 :root[data-theme='dark'] .disclaim { background: #1E1B12; color: var(--muted); }

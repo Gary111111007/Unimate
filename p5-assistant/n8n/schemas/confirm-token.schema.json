@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/confirm-token.schema.json",
+  "title": "confirmTokenRecord",
+  "description": "逐字对应主规划 §6.5 的全文。存在 Redis 里的令牌绑定记录（不透明令牌本身是 32 字节随机串）。\n【F5 承重说明】E15 已证实 n8n 的 Redis 节点 SET 与 EXPIRE 是两条独立命令，令牌【可能根本没有 TTL】。因此过期判断【只】看本记录的 exp 字段，不依赖 Redis TTL（§4.6.2）。\n【比赛口径】删除不进入 MVP，本 schema 冻结但无对应 Workflow。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["userId", "targetId", "impactCount", "exp"],
+  "properties": {
+    "userId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "targetId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "impactCount": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "exp": { "type": "integer", "minimum": 0, "description": "Unix 毫秒时间戳。承重字段，见上。" }
+  }
+}

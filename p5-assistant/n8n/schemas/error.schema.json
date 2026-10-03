@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/error.schema.json",
+  "title": "UniErrorCode",
+  "description": "错误码契约。逐条对应主规划 §6.3 的 15 行表格，未新增、未删减。\nL1 层（HTTP 状态码）与 L2 层（retryable）是这张表的两个属性；实现里由 agent_gateway 的 Shape Response 节点统一施加，业务节点只产出 errorCode。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["errorCode", "httpStatus", "retryable"],
+  "definitions": {
+    "code": {
+      "type": "string",
+      "enum": [
+        "E_SCHEMA",
+        "E_AUTH",
+        "E_FORBIDDEN",
+        "E_NOT_FOUND",
+        "E_AMBIGUOUS",
+        "E_CONFLICT",
+        "E_CONFIRM_REQUIRED",
+        "E_CONFIRM_INVALID",
+        "E_IDEMPOTENT_REPLAY",
+        "E_RATE_LIMITED",
+        "E_VERSION_UNSUPPORTED",
+        "E_UNSUPPORTED",
+        "E_LLM_UNAVAILABLE",
+        "E_UPSTREAM_TIMEOUT",
+        "E_INTERNAL"
+      ]
+    }
+  },
+  "properties": {
+    "errorCode": { "$ref": "#/definitions/code" },
+    "httpStatus": {
+      "type": "integer",
+      "enum": [200, 400, 401, 403, 404, 409, 426, 428, 429, 500, 504]
+    },
+    "retryable": { "type": "boolean" },
+    "messageForUser": { "type": ["string", "null"], "maxLength": 200 }
+  },
+  "x-error-table": {
+    "$comment": "主规划 §6.3 原文映射。这里是【声明性】副本，用于人工核对；实现以 agent_gateway 的 Shape Response 节点为准。",
+    "E_SCHEMA":              { "http": 400, "retryable": false, "meaning": "字段缺失/类型错/超长" },
+    "E_AUTH":                { "http": 401, "retryable": false, "meaning": "token 无效或 userId 不一致" },
+    "E_FORBIDDEN":           { "http": 403, "retryable": false, "meaning": "越权访问他人数据" },
+    "E_NOT_FOUND":           { "http": 404, "retryable": false, "meaning": "目标不存在" },
+    "E_AMBIGUOUS":           { "http": 409, "retryable": false, "meaning": "匹配到多条" },
+    "E_CONFLICT":            { "http": 409, "retryable": false, "meaning": "乐观锁版本不匹配" },
+    "E_CONFIRM_REQUIRED":    { "http": 428, "retryable": false, "meaning": "危险操作缺确认" },
+    "E_CONFIRM_INVALID":     { "http": 428, "retryable": false, "meaning": "令牌过期/已用/不匹配" },
+    "E_IDEMPOTENT_REPLAY":   { "http": 200, "retryable": false, "meaning": "同一幂等键重放" },
+    "E_RATE_LIMITED":        { "http": 429, "retryable": true,  "meaning": "超限" },
+    "E_VERSION_UNSUPPORTED": { "http": 426, "retryable": false, "meaning": "schemaVersion 不支持" },
+    "E_UNSUPPORTED":         { "http": 200, "retryable": false, "meaning": "意图无法识别" },
+    "E_LLM_UNAVAILABLE":     { "http": 200, "retryable": true,  "meaning": "模型超时/额度尽，降级为本机规则" },
+    "E_UPSTREAM_TIMEOUT":    { "http": 504, "retryable": true,  "meaning": "上游超时" },
+    "E_INTERNAL":            { "http": 500, "retryable": true,  "meaning": "未预期异常" }
+  }
+}

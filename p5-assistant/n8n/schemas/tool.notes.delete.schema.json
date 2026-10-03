@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/tool.notes.delete.schema.json",
+  "title": "notes.delete",
+  "description": "参数契约来自主规划 §4.6。【危险 Tool，G4 安全测试重点】\n【约束】首次调用不带 confirmToken → 返回 E_CONFIRM_REQUIRED + impact；确认后携带令牌重放。令牌绑定 userId + targetId + impactCount + exp，一次性。§4.6.3 的 7 个拒绝用例必须全部被拒并同时断言数据仍在。\n【比赛口径】不进入 MVP，统一返回 E_UNSUPPORTED（§1.4）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "userId"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "userId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "targetId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "targetHint": { "type": "string", "maxLength": 50 },
+    "confirmToken": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 128,
+      "description": "32 字节随机串的 base64url 编码。不透明令牌，校验后立即 DEL（§4.6.2）。"
+    }
+  },
+  "anyOf": [
+    { "required": ["targetId"] },
+    { "required": ["targetHint"] }
+  ]
+}

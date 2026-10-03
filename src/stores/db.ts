@@ -44,6 +44,7 @@ function defaultSettings(p: SchoolProfile): Settings {
     // 用户自行添加的校园入口（本校档案没收录的服务）
     customApps: [],
     toolFab: null,
+    moonFab: null,
     // 启动时只弹一次电池优化申请
     powerPrompted: false,
     // 天气（Net.md P0）：默认关闭 —— 关着的时候一次请求都不发

@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "课时表样例（学校形态）。**这份数据是自造的样例，不是任何真实高校的课表**——",
+    "它存在的意义是证明「节次 + 周次」这类学校差异只落在 ScheduleReader 里。",
+    "姓名一律脱敏（教师A~S），不含学号、教务 ID、Cookie 或任何个人身份字段。",
+    "节次表同样是样例：真实学校的作息时间由调用方传入，本文件不声称代表任何学校。"
+  ],
+  "readerIdHint": "fixture-period",
+  "termStart": "2026-09-07",
+  "periods": [
+    { "period": 1, "start": "08:00", "end": "08:45" },
+    { "period": 2, "start": "08:55", "end": "09:40" },
+    { "period": 3, "start": "10:00", "end": "10:45" },
+    { "period": 4, "start": "10:55", "end": "11:40" },
+    { "period": 5, "start": "14:00", "end": "14:45" },
+    { "period": 6, "start": "14:55", "end": "15:40" },
+    { "period": 7, "start": "16:00", "end": "16:45" },
+    { "period": 8, "start": "16:55", "end": "17:40" },
+    { "period": 9, "start": "19:00", "end": "19:45" },
+    { "period": 10, "start": "19:55", "end": "20:40" }
+  ],
+  "rows": [
+    {
+      "courseName": "高等数学",
+      "weekday": 3,
+      "periods": [3, 4],
+      "weeks": "1-16",
+      "room": "教三-201",
+      "teacherName": "教师A"
+    },
+    {
+      "courseName": "大学物理",
+      "weekday": 3,
+      "periods": [5, 6],
+      "weeks": "1-16",
+      "room": "教一-105",
+      "teacherName": "教师B"
+    },
+    {
+      "courseName": "线性代数",
+      "weekday": 4,
+      "periods": [1, 2],
+      "weeks": "1-16",
+      "room": "教三-102",
+      "teacherName": "教师C"
+    },
+    {
+      "courseName": "数据结构",
+      "weekday": 1,
+      "periods": [3, 4],
+      "weeks": "1-16",
+      "parity": "odd",
+      "room": "教二-301",
+      "teacherName": "教师D"
+    },
+    {
+      "courseName": "大学英语",
+      "weekday": 5,
+      "periods": [7, 8],
+      "weeks": "2-16",
+      "parity": "even",
+      "room": "教一-203",
+      "teacherName": "教师E"
+    }
+  ]
+}

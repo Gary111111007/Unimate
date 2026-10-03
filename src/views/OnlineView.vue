@@ -9,11 +9,14 @@ import { JwWebView, isNativeWebView } from '../services/jwwebview.ts';
 import ExamPanel from './ExamPanel.vue';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import type { CampusApp } from '../types.ts';
+import CampusToolsView from './CampusToolsView.vue';
+import AppleIcon from '../components/AppleIcon.vue';
 
 const db = useDb();
 const status = ref('');
 const p = () => db.profile!;
 const showIcons = ref(false);
+const showCampusTools = ref(false);
 
 /** 内置条目被长按改过的，用 appEdits 覆盖显示；自定义条目直接改本体。 */
 function merged(a: CampusApp): CampusApp {
@@ -36,7 +39,7 @@ const showAdd = ref(false);
 /** 考试查询面板（两条路径：教务系统真实抓取 / 内置演示样本） */
 const showExam = ref(false);
 const examUrl = ref('');
-const nf = ref({ name: '', url: '', icon: '🔗', iconData: '' });
+const nf = ref({ name: '', url: '', icon: 'link', iconData: '' });
 
 function normUrl(u: string): string {
   const s = u.trim();
@@ -59,8 +62,17 @@ async function openTarget(a: CampusApp): Promise<void> {
   void probeOne(a);
 }
 
-/** 预设图标：覆盖校园常见服务，省得用户自己想 emoji。 */
-const ICON_CHOICES = ['🔗','🏛','','🧭','','🏫','','💳','🚌','🏠','','','','💼','','','','🎯','','','','🎬','','','','','🏀','🚿','','🩺','📊','🗂'];
+/** 预设图标统一走单色线性 SVG；旧数据里的 Emoji 仍可读，但显示时映射到同语义图标。 */
+const ICON_CHOICES = ['link', 'school', 'book', 'document', 'heartPulse', 'key', 'compass', 'creditCard', 'bus', 'home', 'briefcase', 'target', 'chart', 'archive'];
+const BUILTIN_ICONS: Record<string, string> = {
+  course: 'book', jwglxt: 'school', exam: 'document', health: 'heartPulse', library: 'book', zy: 'key'
+};
+const LEGACY_ICONS: Record<string, string> = {
+  '🔗': 'link', '🏛': 'school', '📚': 'book', '📝': 'document', '🩺': 'heartPulse', '📖': 'book', '🔑': 'key',
+  '🧭': 'compass', '🏫': 'school', '💳': 'creditCard', '🚌': 'bus', '🏠': 'home', '💼': 'briefcase', '🎯': 'target', '📊': 'chart', '🗂': 'archive'
+};
+function iconName(icon: string): string { return ICON_CHOICES.includes(icon) ? icon : (LEGACY_ICONS[icon] || 'link'); }
+function campusIconName(app: CampusApp): string { return BUILTIN_ICONS[app.key] || iconName(app.icon || ''); }
 function iconTarget(): { icon: string; iconData: string } | null { return editing.value ? editing.value : nf.value as any; }
 
 async function pickIcon(): Promise<void> {
@@ -85,12 +97,12 @@ async function addApp(): Promise<void> {
   if (!validUrl(url)) { db.notify('网址格式不对，例：tygl.buct.edu.cn'); return; }
   const key = 'u' + Date.now();
   db.settings.customApps.push({
-    key, name, url, icon: (nf.value.icon || '').trim() || '🔗',
+    key, name, url, icon: (nf.value.icon || '').trim() || 'link',
     desc: '我自己添加的入口', builtin: false, iconData: nf.value.iconData || undefined
   });
   db.settings.appOrder = [...(db.settings.appOrder || []), key];   // 新加的排到最后，位置可再调
   await db.saveData();
-  nf.value = { name: '', url: '', icon: '🔗', iconData: '' };
+  nf.value = { name: '', url: '', icon: 'link', iconData: '' };
   showAdd.value = false;
   db.notify('已添加，只存在你这台手机上');
 }
@@ -243,7 +255,7 @@ async function saveEdit(): Promise<void> {
   if (!validUrl(url)) { db.notify('网址格式不对，例：tygl.buct.edu.cn'); return; }
   const patch: Partial<CampusApp> = {
     name: e.name.trim(), url, desc: (e.desc || '').trim(),
-    icon: (e.icon || '').trim() || '🔗', iconData: e.iconData || undefined
+    icon: (e.icon || '').trim() || 'link', iconData: e.iconData || undefined
   };
   if (editingBuiltin.value) {
     if (!db.settings.appEdits) db.settings.appEdits = {};
@@ -294,6 +306,12 @@ async function probeAll(): Promise<void> {
       <div class="small">把{{ p().shortName }}要用的东西收在一页里。<b>长按并拖动</b>可换位置，拖到上方改信息、拖到下方删除。</div>
     </div>
 
+    <button class="campus-tools-entry" @click="showCampusTools = true">
+      <span class="campus-tools-entry-icon">◈</span>
+      <span class="grow"><b>校园工具</b><small>地图 · 场馆状态 · 体测评分 · 空闲教室 · 选课工具</small></span>
+      <span>›</span>
+    </button>
+
     <div class="secrow">
       <span class="seclabel">校园服务（{{ apps.length }}）</span>
       <div class="row" style="gap: 6px">
@@ -310,7 +328,7 @@ async function probeAll(): Promise<void> {
         <div class="iconbar">
           <div class="preview">
             <img v-if="nf.iconData" :src="nf.iconData" class="icoimg big" alt="" />
-            <span v-else class="prevemoji">{{ nf.icon || '🔗' }}</span>
+            <AppleIcon v-else class="preview-icon" :name="iconName(nf.icon)" :size="26" />
           </div>
           <div class="grow">
             <button class="btn sm ghost block" @click="showIcons = !showIcons">{{ showIcons ? '收起预设' : '选预设图标' }}</button>
@@ -319,7 +337,7 @@ async function probeAll(): Promise<void> {
           <button v-if="nf.iconData" class="btn sm danger" style="margin-left:6px" @click="clearIcon">清除</button>
         </div>
         <div v-if="showIcons" class="icongrid">
-          <button v-for="ic in ICON_CHOICES" :key="ic" class="ichip" :class="{ on: !nf.iconData && nf.icon === ic }" @click="nf.icon = ic; nf.iconData = ''">{{ ic }}</button>
+          <button v-for="ic in ICON_CHOICES" :key="ic" class="ichip" :class="{ on: !nf.iconData && iconName(nf.icon) === ic }" :aria-label="ic" @click="nf.icon = ic; nf.iconData = ''"><AppleIcon :name="ic" :size="20" /></button>
         </div>
       </div>
       <button class="btn block sm" @click="addApp">保存到本机</button>
@@ -334,7 +352,7 @@ async function probeAll(): Promise<void> {
         <span v-if="customKeys.has(a.key)" class="tag-mine">我的</span>
         <span v-else-if="(db.settings.appEdits || {})[a.key]" class="tag-edited">已改</span>
         <img v-if="a.iconData" :src="a.iconData" class="icoimg" alt="" />
-        <span v-else class="ico">{{ a.icon }}</span>
+        <AppleIcon v-else class="ico" :name="campusIconName(a)" :size="24" />
         <div class="an">{{ a.name }}</div>
         <div class="ad">{{ a.desc }}</div>
         <div v-if="cookieMap[a.key]" class="ck" :class="{ has: cookieMap[a.key] !== '无' }">Cookie {{ cookieMap[a.key] }}</div>
@@ -379,7 +397,7 @@ async function probeAll(): Promise<void> {
           <div class="iconbar">
             <div class="preview">
               <img v-if="editing.iconData" :src="editing.iconData" class="icoimg big" alt="" />
-              <span v-else class="prevemoji">{{ editing.icon || '🔗' }}</span>
+              <AppleIcon v-else class="preview-icon" :name="iconName(editing.icon)" :size="26" />
             </div>
             <div class="grow">
               <button class="btn sm ghost block" @click="showIcons = !showIcons">{{ showIcons ? '收起预设' : '选预设图标' }}</button>
@@ -388,7 +406,7 @@ async function probeAll(): Promise<void> {
             <button v-if="editing.iconData" class="btn sm danger" style="margin-left:6px" @click="clearIcon">清除</button>
           </div>
           <div v-if="showIcons" class="icongrid">
-            <button v-for="ic in ICON_CHOICES" :key="ic" class="ichip" :class="{ on: !editing.iconData && editing.icon === ic }" @click="editing.icon = ic; editing.iconData = ''">{{ ic }}</button>
+            <button v-for="ic in ICON_CHOICES" :key="ic" class="ichip" :class="{ on: !editing.iconData && iconName(editing.icon) === ic }" :aria-label="ic" @click="editing.icon = ic; editing.iconData = ''"><AppleIcon :name="ic" :size="20" /></button>
           </div>
         </div>
         <div class="small muted" style="margin-bottom: 8px">改动只影响本机显示，不上传、不联网，也不会改变学校网站本身。</div>
@@ -401,6 +419,7 @@ async function probeAll(): Promise<void> {
   </div>
 
   <ExamPanel v-if="showExam" :start-url="examUrl" @close="showExam = false" />
+  <CampusToolsView v-if="showCampusTools" @close="showCampusTools = false" />
 </template>
 
 <style scoped>
@@ -413,11 +432,15 @@ async function probeAll(): Promise<void> {
 .app.drop { outline: 2px solid var(--brand); outline-offset: -2px; }
 
 .grid { position: relative; }
+.campus-tools-entry { width: 100%; margin-top: 12px; padding: 13px 14px; border-radius: 15px; background: var(--card); color: var(--ink); box-shadow: var(--shadow); display: flex; align-items: center; gap: 11px; text-align: left; }
+.campus-tools-entry-icon { width: 38px; height: 38px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #fff; background: linear-gradient(135deg, var(--brand), #7257c8); font-size: 21px; }
+.campus-tools-entry b { display: block; font-size: 14px; }.campus-tools-entry small { display: block; color: var(--muted); font-size: 10.5px; margin-top: 3px; }
 .hero { background: linear-gradient(140deg, #2E5AAC, #3E6FBF); color: #fff; }
 .hero .title { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
 .hero .small { color: rgba(255, 255, 255, .82); font-size: 12.5px; line-height: 1.6; }
-.secrow { display: flex; align-items: center; justify-content: space-between; margin: 14px 2px 8px; }
-.seclabel { font-size: 13px; font-weight: 700; color: var(--ink); }
+.secrow { display: flex; align-items: center; justify-content: space-between; margin: 10px 2px 6px; }
+.seclabel { font-size: 12px; font-weight: 600; color: var(--text); }
+.secrow .btn.sm { min-height: 30px; padding: 0 9px; border-radius: 9px; font-size: 12px; }
 .addbox { padding: 12px; }
 .addbox .field { margin-bottom: 10px; }
 .addbox label, .sheet label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
@@ -426,24 +449,25 @@ async function probeAll(): Promise<void> {
 .tag-edited, .tag-mine { position: absolute; top: 5px; left: 6px; font-size: 9px; border-radius: 5px; padding: 1px 4px; }
 .tag-edited { color: #7A6A1F; background: #FFF3C4; }
 .tag-mine { color: #fff; background: #8A93A3; left: auto; right: 24px; }
-.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.app { position: relative; background: var(--card); border-radius: 14px; padding: 14px 8px 12px; text-align: center; box-shadow: var(--shadow); user-select: none; -webkit-touch-callout: none; -webkit-user-select: none; }
-.app:active { transform: scale(.97); }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.app { min-height: 108px; position: relative; background: var(--card); border-radius: 14px; padding: 11px 7px 9px; text-align: center; box-shadow: var(--shadow); user-select: none; -webkit-touch-callout: none; -webkit-user-select: none; transition: transform .1s ease, background-color .18s ease; }
+.app:active { transform: scale(.98); background: color-mix(in srgb, var(--card) 94%, var(--text)); }
 .app.mine { border: 1px dashed #B9C9E8; }
-.ico { font-size: 26px; line-height: 1.2; }
-.an { font-size: 13px; font-weight: 700; margin-top: 6px; color: var(--ink); }
-.ad { font-size: 10.5px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+.ico { margin: 0 auto; color: var(--brand); }
+.an { font-size: 14px; line-height: 18px; font-weight: 500; margin-top: 7px; color: var(--text); }
+.ad { font-size: 10.5px; color: var(--muted); margin-top: 3px; line-height: 14px; }
 .ck { font-size: 9.5px; margin-top: 4px; color: #B0433B; }
 .ck.has { color: #2FA35C; }
 .del { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%; border: none; background: var(--soft); color: var(--muted); font-size: 14px; line-height: 1; }
 .iconbar { display: flex; align-items: center; gap: 8px; }
 .preview { width: 46px; height: 46px; border-radius: 12px; background: var(--soft); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; flex: none; }
-.prevemoji { font-size: 24px; }
+.preview-icon { color: var(--brand); }
 .icoimg { width: 30px; height: 30px; border-radius: 9px; object-fit: cover; background: var(--soft); }
 .icoimg.big { width: 42px; height: 42px; border-radius: 10px; }
 .icongrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-top: 10px; max-height: 132px; overflow: auto; }
-.ichip { font-size: 19px; padding: 5px 0; border-radius: 9px; border: 1px solid var(--line); background: var(--card); }
+.ichip { min-height: 36px; padding: 5px 0; border-radius: 9px; border: .5px solid var(--line); background: var(--card); color: var(--muted); display: flex; align-items: center; justify-content: center; }
 .ichip.on { border-color: var(--brand); background: var(--tint); }
+@media (prefers-reduced-motion: reduce) { .app { transition: none; } }
 .mask { position: fixed; inset: 0; z-index: 110; background: rgba(8,12,20,.46); display: flex; align-items: flex-end; }
 .sheet { width: 100%; max-height: 88vh; overflow: auto; background: var(--card); border-radius: 18px 18px 0 0; padding: 14px 14px calc(16px + var(--safe-b)); }
 .sheet .title { font-size: 16px; font-weight: 700; }

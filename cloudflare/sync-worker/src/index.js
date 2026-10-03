@@ -105,7 +105,7 @@ async function r2Object(env, key, init) {
 
 async function readRecord(env, name) {
   const response = await r2Object(env, await accountObjectKey(env, name), { method: 'GET' });
-  if (response.status === 404) return null;
+  if (response.status === 404) return null;1
   if (!response.ok) throw new Error('读取账号记录失败（' + response.status + '）');
   try { return await response.json(); } catch { throw new Error('账号记录损坏'); }
 }
@@ -176,6 +176,84 @@ async function withinRate(request, env) {
 
 async function readJson(request) {
   try { return await request.json(); } catch { return null; }
+}
+
+const AGENT_TOOLS = [
+  { type: 'function', function: { name: 'getSchedule', description: '查询手机本机课表。', parameters: { type: 'object', additionalProperties: false, properties: { query: { type: 'string', enum: ['next', 'today', 'tomorrow', 'week', 'free', 'conflicts', 'brief'] }, date: { type: 'string' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'getNote', description: '查询手机本机记事或待办。', parameters: { type: 'object', additionalProperties: false, properties: { keyword: { type: 'string' }, includeDone: { type: 'boolean' } } } } },
+  { type: 'function', function: { name: 'addNote', description: '在手机本机新增一条不带提醒时间的记事。', parameters: { type: 'object', additionalProperties: false, properties: { title: { type: 'string' }, content: { type: 'string' } }, required: ['title'] } } },
+  { type: 'function', function: { name: 'createReminder', description: '在手机本机新增一条带提醒时间的记事。remindAt 使用 ISO 8601。', parameters: { type: 'object', additionalProperties: false, properties: { title: { type: 'string' }, content: { type: 'string' }, remindAt: { type: 'string' } }, required: ['title', 'remindAt'] } } },
+  { type: 'function', function: { name: 'getWeather', description: '读取手机本机缓存天气，必要时按现有开关刷新。', parameters: { type: 'object', additionalProperties: false, properties: { refresh: { type: 'boolean' } } } } },
+  { type: 'function', function: { name: 'openFeature', description: '打开 App 内的指定功能。', parameters: { type: 'object', additionalProperties: false, properties: { feature: { type: 'string', enum: ['schedule', 'notes', 'weather', 'settings', 'secondClass', 'online'] } }, required: ['feature'] } } }
+];
+
+const DEFAULT_WORKERS_AI_MODEL = '@cf/zai-org/glm-4.7-flash';
+
+/**
+ * 在线模式只接收用户主动输入的文字。Workers AI 只做理解、规划和 Tool Calling；
+ * Tool 最终仍由 Android 校验参数并在本机执行，模型名不进入 APK。
+ */
+async function agentChat(request, env, origin) {
+  if (!(await withinRate(request, env))) return json({ error: '请求过于频繁，请稍后再试' }, 429, origin);
+  if (!env.AI || typeof env.AI.run !== 'function') {
+    return json({ error: 'Workers AI 尚未绑定' }, 503, origin);
+  }
+  const body = await readJson(request);
+  const input = Array.isArray(body?.messages) ? body.messages : [];
+  if (!input.length || input.length > 12) return json({ error: '对话消息数量不允许' }, 400, origin);
+  let total = 0;
+  const messages = [];
+  for (const item of input) {
+    const role = item?.role;
+    const content = typeof item?.content === 'string' ? item.content.trim() : '';
+    if ((role !== 'user' && role !== 'assistant') || !content || content.length > 500) {
+      return json({ error: '对话消息格式错误' }, 400, origin);
+    }
+    total += content.length;
+    messages.push({ role, content });
+  }
+  if (total > 6000 || messages[messages.length - 1].role !== 'user') {
+    return json({ error: '对话上下文不允许' }, 400, origin);
+  }
+  const requested = new Set(Array.isArray(body?.toolNames) ? body.toolNames.filter((name) => typeof name === 'string') : []);
+  const tools = AGENT_TOOLS.filter((item) => requested.size === 0 || requested.has(item.function.name));
+  const system = '你是 Uni，高校学生的任务型助手。使用简体中文。需要课表、记事、天气或页面跳转时必须选择提供的 Tool，并只输出结构化 Tool Call；不要声称已经读取数据或执行成功，Android 会在本机校验和执行。不要索取教务密码、Cookie、验证码。普通学习生活交流可以直接回答。不要使用 Emoji、彩色图标或 Markdown 图标，列表只使用短横线或数字。一次只选择一个最合适的 Tool。';
+  const model = String(env.WORKERS_AI_MODEL || DEFAULT_WORKERS_AI_MODEL);
+  let timer;
+  let result;
+  try {
+    result = await Promise.race([
+      env.AI.run(model, {
+        messages: [{ role: 'system', content: system }, ...messages],
+        tools,
+        tool_choice: 'auto',
+        parallel_tool_calls: false,
+        temperature: 0.2,
+        max_completion_tokens: 800
+      }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Workers AI timeout')), 25000); })
+    ]);
+  } catch (error) {
+    const limited = /(?:429|quota|rate|limit|neuron)/i.test(String(error?.message || error || ''));
+    return json({ error: limited ? 'Workers AI 免费额度暂时用完' : 'Workers AI 暂时无法连接' }, limited ? 429 : 502, origin);
+  } finally { clearTimeout(timer); }
+  const message = result?.choices?.[0]?.message;
+  const toolCall = Array.isArray(message?.tool_calls) ? message.tool_calls[0] : null;
+  if (toolCall?.type === 'function' && typeof toolCall.function?.name === 'string') {
+    if (!tools.some((item) => item.function.name === toolCall.function.name)) return json({ error: 'Workers AI 选择了未授权 Tool' }, 502, origin);
+    let args;
+    try {
+      args = toolCall.function.arguments && typeof toolCall.function.arguments === 'object'
+        ? toolCall.function.arguments
+        : JSON.parse(toolCall.function.arguments || '{}');
+    }
+    catch { return json({ error: 'Workers AI Tool 参数不是有效 JSON' }, 502, origin); }
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return json({ error: 'Workers AI Tool 参数必须是对象' }, 502, origin);
+    return json({ type: 'tool_call', call: { id: String(toolCall.id || crypto.randomUUID()), name: toolCall.function.name, arguments: args }, provider: 'workers-ai' }, 200, origin);
+  }
+  const content = typeof message?.content === 'string' ? message.content.trim() : '';
+  if (!content) return json({ error: 'Workers AI 没有返回内容' }, 502, origin);
+  return json({ type: 'message', content: content.slice(0, 4000), provider: 'workers-ai' }, 200, origin);
 }
 
 /** 鉴权：`?account=` 定位记录 + `Authorization: Bearer <token>` 换会话 */
@@ -475,7 +553,8 @@ export default {
     }
     if (url.pathname === '/health' && request.method === 'GET') {
       // atRest 告诉客户端：服务端有没有启用落盘加密（DATA_KEY）
-      return json({ ok: true, service: 'unimate-sync', atRest: !!env.DATA_KEY, accounts: true }, 200, origin);
+      return json({ ok: true, service: 'unimate-sync', atRest: !!env.DATA_KEY, accounts: true,
+        agent: 'workers-ai', agentReady: !!env.AI, agentModel: String(env.WORKERS_AI_MODEL || DEFAULT_WORKERS_AI_MODEL) }, 200, origin);
     }
 
     // v2.43 账号登录（服务器托管）：注册 / 登录 / 账号信息 / 注销 / 备份读写
@@ -486,6 +565,7 @@ export default {
     if (url.pathname === '/v1/password' && request.method === 'POST') return passwordChange(request, env, origin);
     if (url.pathname === '/v1/backup' && request.method === 'PUT') return backupPut(request, env, url, origin);
     if (url.pathname === '/v1/backup' && request.method === 'GET') return backupGet(request, env, url, origin);
+    if (url.pathname === '/v1/agent/chat' && request.method === 'POST') return agentChat(request, env, origin);
 
     // v2.50 管理员：页面 + 两个接口（列账号 / 重置密码）
     if (url.pathname === '/admin' && request.method === 'GET') return adminPage();

@@ -1,0 +1,66 @@
+{
+  "id": "unimate-agent-observability",
+  "name": "agent_observability",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "requestId"
+            },
+            {
+              "name": "intent"
+            },
+            {
+              "name": "latencyMs"
+            },
+            {
+              "name": "errorCode"
+            }
+          ]
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000028",
+      "name": "Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Build Log Row ─────────────────────────────────────────\n// 只产出【脱敏元数据】。刻意没有 message / 课程名 / 教师 / 教室 / 记事内容字段——\n// 与主规划 §7.5 的 agent_log 表结构一致：那张表里【根本没有】message 列。\n// 结构性约束比纪律可靠：不是\"记得别写\"，是\"没有地方可写\"。\nconst d = $input.first().json;\nreturn [{ json: {\n  request_id: d.requestId ?? null,\n  intent: d.intent ?? null,\n  latency_ms: typeof d.latencyMs === 'number' ? d.latencyMs : null,\n  error_code: d.errorCode ?? null,\n  success: !d.errorCode,\n  env: 'local',\n  // 以下字段是【长度】而不是内容\n  input_length: typeof d.textLength === 'number' ? d.textLength : null,\n  payload_bytes: typeof d.payloadBytes === 'number' ? d.payloadBytes : null,\n} }];\n"
+      },
+      "id": "00000000-0000-4000-8000-000000000029",
+      "name": "Build Log Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Input": {
+      "main": [
+        [
+          {
+            "node": "Build Log Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

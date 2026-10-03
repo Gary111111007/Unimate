@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unimate.local/schemas/tool.notes.query.schema.json",
+  "title": "notes.query",
+  "description": "参数契约来自主规划 §4.4 的输入行 + §6.4 的槽位行。\n【约束】分页必须有上限（§4.4）：limit 上界 50，禁止无上限返回。空结果是成功（success:true, data:[]），不是错误。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "userId"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "userId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "keyword": { "type": "string", "maxLength": 50 },
+    "timeRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "type": "string", "format": "date-time" },
+        "to": { "type": "string", "format": "date-time" }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 5,
+      "items": { "type": "string", "maxLength": 12 }
+    },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 },
+    "cursor": { "type": "string", "maxLength": 64 }
+  }
+}
