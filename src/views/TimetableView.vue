@@ -15,6 +15,7 @@ import { fixReminderSetting, refreshReminderRisk, reminderRisk } from '../servic
 import { guard } from '../services/guard.ts';
 import ImportPanel from './ImportPanel.vue';
 import SettingsPanel from '../components/SettingsPanel.vue';
+import AppleIcon from '../components/AppleIcon.vue';
 
 const db = useDb();
 const week = ref(db.currentWeek);
@@ -700,25 +701,6 @@ function toggleWeek(w: number): void {
 
 <template>
   <div class="scroll" @touchstart="onTouchStart" @touchend="onTouchEnd">
-    <!-- 还没有课表时不显示周次条：否则空账号会看到"第 1 周 · 共 0 周"这种自相矛盾的抬头 -->
-    <div v-if="db.activeTimetable" class="card weeknav">
-      <button class="nav" @click="shift(-1)" :disabled="week <= 1">‹</button>
-      <div class="cur" @click="showWeekPicker = true">
-        <div class="bold">第 {{ week }} 周 <span class="wr">{{ weekRange }}</span></div>
-        <div class="small muted">{{ db.activeTimetable?.name || '还没有课表' }} · 共 {{ db.activeTimetable?.totalWeeks || 0 }} 周</div>
-      </div>
-      <button class="nav" @click="shift(1)" :disabled="week >= (db.activeTimetable?.totalWeeks || 18)">›</button>
-      <button v-if="week !== db.currentWeek" class="btn sm ghost today" @click="goToday">回本周</button>
-    </div>
-    <!--
-      v2.48：找回入口在登录页（没登录时用得上）。
-      v2.51：**已登录**时主页也留一行小字 —— 管理员重置密码或令牌过期后，用户要"只重新登录、不取回数据"，
-      那时他已经在 App 里，进不去登录页。只在真的登录了云端账号时才出现，不占版面。
-    -->
-    <div v-if="db.activeTimetable" class="hintrow">
-      <span class="swipe-hint">左右滑动可切换周次</span>
-      <button v-if="db.settings.cloudAccount" class="minilink" @click="db.openRecovery()">账号与找回 ›</button>
-    </div>
       <!-- 天气（Net.md P0）：默认关闭。关着、或还没拿到数据时这里一行都不渲染，
            不会给课表页顶出多余的空白；点一下 = 更新（同样受 30 分钟限制）。 -->
       <div v-if="wxNow" class="wxbar" @click="refreshWeather()" aria-label="天气，点一下更新">
@@ -729,7 +711,7 @@ function toggleWeek(w: number): void {
       </div>
       <!-- 提醒可用性（v2.28）：只在精确闹钟/电池优化真的没就绪时出现；点一下才去系统设置，不自动跳 -->
       <div v-if="risk && risk.canFix && !riskDismissed" class="riskbar">
-        <span class="rkico">⏰</span>
+        <AppleIcon class="rkico" name="alarm" :size="20" />
         <span class="rktxt">{{ riskText }}</span>
         <button class="btn sm" @click="fixRisk()">去开启</button>
         <button class="rke" aria-label="本次不再提示" @click="riskDismissed = true">×</button>
@@ -783,6 +765,21 @@ function toggleWeek(w: number): void {
       </div>
     </div>
     </transition>
+
+    <!-- 周次切换放在课表内容之后：顶部优先留给提醒、天气和下一节课。 -->
+    <div v-if="db.activeTimetable" class="card weeknav">
+      <button class="nav" @click="shift(-1)" :disabled="week <= 1">‹</button>
+      <div class="cur" @click="showWeekPicker = true">
+        <div class="bold">第 {{ week }} 周 <span class="wr">{{ weekRange }}</span></div>
+        <div class="small muted">{{ db.activeTimetable?.name || '还没有课表' }} · 共 {{ db.activeTimetable?.totalWeeks || 0 }} 周</div>
+      </div>
+      <button class="nav" @click="shift(1)" :disabled="week >= (db.activeTimetable?.totalWeeks || 18)">›</button>
+      <button v-if="week !== db.currentWeek" class="btn sm ghost today" @click="goToday">回本周</button>
+    </div>
+    <div v-if="db.activeTimetable" class="hintrow">
+      <span class="swipe-hint">左右滑动可切换周次</span>
+      <button v-if="db.settings.cloudAccount" class="minilink" @click="db.openRecovery()">账号与找回 ›</button>
+    </div>
   </div>
 
       <!-- 小尺寸待机；首次点击放大，再次点击开菜单；可在整个窗口内拖动 -->
@@ -971,7 +968,7 @@ function toggleWeek(w: number): void {
 /* 工具箱固定在右下角（bottom 88px + 高 52px），滚动区底部要留够余量，
    否则滚到底时课表最后一行永远压在按钮底下点不到。 */
 .scroll { padding-bottom: calc(152px + var(--safe-b)); }
-.weeknav { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
+.weeknav { display: flex; align-items: center; gap: 6px; margin-top: 16px; padding: 8px 10px; }
 .nav { width: 34px; height: 34px; border-radius: 10px; background: var(--soft-2); color: var(--brand); font-size: 20px; line-height: 1; flex: none; }
 .nav:disabled { opacity: .35; }
 .cur { flex: 1; text-align: center; }
@@ -991,9 +988,9 @@ function toggleWeek(w: number): void {
 .wxtip { color: var(--warn); flex: none; }
 .wxr { margin-left: auto; font-size: 12px; color: var(--muted); flex: none; }
 /* 提醒可用性提示条：只在与"提醒会不会准"有关的问题上出现（精确闹钟/电池优化未就绪） */
-.riskbar { display: flex; align-items: center; gap: 8px; margin: 0 0 7px; padding: 6px 10px; border-radius: 11px; background: var(--tint); border: 1px solid var(--brand); }
-.rkico { font-size: 14px; flex: none; }
-.rktxt { flex: 1; min-width: 0; font-size: 12px; color: var(--strong); line-height: 1.35; }
+.riskbar { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; padding: 9px 10px 9px 12px; border-radius: 12px; background: var(--card); border: .5px solid var(--line); box-shadow: var(--shadow); }
+.rkico { color: var(--warn); flex: none; }
+.rktxt { flex: 1; min-width: 0; font-size: 13px; color: var(--text); line-height: 1.4; }
 .rke { flex: none; width: 22px; height: 22px; border-radius: 50%; color: var(--muted); font-size: 14px; line-height: 1; }
 .nextbar { display: flex; align-items: center; gap: 9px; background: var(--card); border-radius: 11px; padding: 7px 10px; margin: 0 0 7px; box-shadow: var(--shadow); }
 /* v2.51：已登录云端账号时，主页那行"账号与找回"入口（很小、和周次提示同一行） */

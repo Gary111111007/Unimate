@@ -6,12 +6,13 @@ import { exportBackup, inspectBackup, restoreBackup } from '../services/backup.t
 import { base64ToBytes } from '../services/zip.ts';
 import { permissionState, ensurePermission, rescheduleAll, scheduleDemoPing, scheduledCount, scheduleStats, cancelAll, scheduleTest, exactAlarmState, requestExactAlarmSetting, wireSelfCheck, powerStatus, requestIgnoreBattery, selfCheckReport, heartbeatStatus, setReminderGuard, reminderGuardStatus, rebuildNotifyChannels, calendarSyncEnabled, calendarStatus, setCalendarSync, clearCalendarEvents, syncCalendarNow, calendarEventsFromSchedule } from '../services/notify.ts';
 import { nowStamp } from '../services/id.ts';
-import { applyTheme, type ThemeMode } from '../services/theme.ts';
+import { animateThemeChange, type ThemeMode, type ThemeTransitionOrigin } from '../services/theme.ts';
 import { FONT_LEVELS, applyTextZoom } from '../services/display.ts';
 import { SECOND_CLASS_BLOCKS, TOTAL_FULL_SCORE } from '../catalog/secondClass.ts';
 import { agoText, weatherText } from '../services/weather.ts';
 import { pickAvatarRaw } from '../services/avatar.ts';
 import AvatarCropper from '../components/AvatarCropper.vue';
+import AppleIcon from '../components/AppleIcon.vue';
 
 const db = useDb();
 /** v2.47：`sync` 那一屏搬去主页的「账号与找回」面板（components/AccountRecovery.vue）了 */
@@ -94,9 +95,18 @@ async function saveSettings(what: string): Promise<void> {
   panel.value = '';
 }
 
-function setTheme(t: ThemeMode): void {
+function themeTriggerOrigin(e: MouseEvent): ThemeTransitionOrigin {
+  const el = e.currentTarget as HTMLElement | null;
+  const rect = el?.getBoundingClientRect();
+  // 键盘触发的 click 坐标通常是 0,0；这时从按钮中心展开，视觉与焦点来源一致。
+  if (e.detail === 0 && rect) return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  return { x: e.clientX, y: e.clientY };
+}
+
+function setTheme(t: ThemeMode, e: MouseEvent): void {
+  if (db.settings.theme === t) return;
   db.settings.theme = t;
-  applyTheme(t);
+  void animateThemeChange(t, themeTriggerOrigin(e));
 }
 
 /** 字号：改设置 + 立刻生效 + 落盘，避免"点了没反应"（真机反复反馈过这个） */
@@ -394,7 +404,7 @@ async function copyInterests(): Promise<void> {
       <span v-if="db.session?.isDemo" class="pill warn">演示模式</span>
     </div>
 
-    <div class="card" style="margin-top: 10px">
+    <div class="card me-summary">
       <!-- 有二课的学校（北化）显示自评总分；没有二课的学校（北二外）只显示两本时长台账，
            不把 0/600 这种无意义的数字摆出来 -->
       <template v-if="db.profile?.secondClass.enabled">
@@ -412,17 +422,23 @@ async function copyInterests(): Promise<void> {
       </template>
     </div>
 
-    <div class="list" style="margin-top: 10px">
-      <div class="li" @click="open('notify')"><span class="ico">🔔</span><div class="grow"><div class="bold">通知设置</div><div class="small muted">上课提醒 / 待办提醒 / 权限状态</div></div><span>›</span></div>
-      <div class="li" @click="open('theme')"><span class="ico">🌗</span><div class="grow"><div class="bold">外观与主题</div><div class="small muted">跟随系统深色 / 常浅 / 常深 · 字号（小 / 标准 / 大 / 特大）</div></div><span class="chev">›</span></div>
-<div class="li" @click="open('watermark')"><span class="ico">💧</span><div class="grow"><div class="bold">拍照水印</div><div class="small muted">自主开关水印内容与样式</div></div><span>›</span></div>
-      <div class="li" @click="open('weather')"><span class="ico">🌤️</span><div class="grow"><div class="bold">天气</div><div class="small muted">{{ db.settings.weatherEnabled ? '已开启 · 课表页顶部一行天气' : '默认关闭 · 打开后课表页顶部显示一行天气' }}</div></div><span>›</span></div>
-      <div class="li" @click="open('backup')"><span class="ico">💾</span><div class="grow"><div class="bold">备份与恢复</div><div class="small muted">导出 / 导入 .unimate.zip</div></div><span>›</span></div>
-      <div class="li" @click="open('interests')"><span class="ico">🏫</span><div class="grow"><div class="bold">意向清单</div><div class="small muted">已提交意向的高校（本机 {{ db.interests.length }} 条）</div></div><span>›</span></div>
-      <div class="li" @click="open('about')"><span class="ico">ℹ️</span><div class="grow"><div class="bold">关于 Unimate</div><div class="small muted">版本、定位与隐私说明</div></div><span>›</span></div>
+    <div class="settings-group-title">偏好设置</div>
+    <div class="list settings-list">
+      <button type="button" class="li settings-row" @click="open('notify')"><AppleIcon class="ico" name="bell" /><span class="grow"><span class="settings-label">通知设置</span><span class="settings-value">上课提醒、待办提醒与权限</span></span><AppleIcon class="chev" name="chevronRight" :size="17" /></button>
+      <button type="button" class="li settings-row" @click="open('theme')"><AppleIcon class="ico" name="moon" /><span class="grow"><span class="settings-label">外观与主题</span><span class="settings-value">深浅模式与字号</span></span><AppleIcon class="chev" name="chevronRight" :size="17" /></button>
+      <button type="button" class="li settings-row" @click="open('watermark')"><AppleIcon class="ico" name="droplet" /><span class="grow"><span class="settings-label">拍照水印</span><span class="settings-value">内容、透明度与默认状态</span></span><AppleIcon class="chev" name="chevronRight" :size="17" /></button>
+      <button type="button" class="li settings-row" @click="open('weather')"><AppleIcon class="ico" name="cloudSun" /><span class="grow"><span class="settings-label">天气</span><span class="settings-value">{{ db.settings.weatherEnabled ? '已开启' : '未开启' }}</span></span><AppleIcon class="chev" name="chevronRight" :size="17" /></button>
     </div>
 
-    <div class="card" style="margin-top: 10px">
+    <div class="settings-group-title">数据与支持</div>
+    <div class="list settings-list">
+      <button type="button" class="li settings-row" @click="open('backup')"><AppleIcon class="ico" name="archive" /><span class="grow"><span class="settings-label">备份与恢复</span><span class="settings-value">导出或导入备份</span></span><AppleIcon class="chev" name="chevronRight" :size="17" /></button>
+      <button type="button" class="li settings-row" @click="open('interests')"><AppleIcon class="ico" name="school" /><span class="grow"><span class="settings-label">意向清单</span><span class="settings-value">本机 {{ db.interests.length }} 条</span></span><AppleIcon class="chev" name="chevronRight" :size="17" /></button>
+      <button type="button" class="li settings-row" @click="open('about')"><AppleIcon class="ico" name="info" /><span class="grow"><span class="settings-label">关于 Unimate</span><span class="settings-value">版本、定位与隐私</span></span><AppleIcon class="chev" name="chevronRight" :size="17" /></button>
+    </div>
+
+    <div class="settings-group-title">账户</div>
+    <div class="card account-actions">
       <div v-if="db.session?.isDemo" class="row" style="margin-bottom: 10px">
         <button class="btn grow grey" @click="resetDemo">重置演示数据</button>
         <button class="btn grow ghost" @click="scheduleDemoPing(); db.notify('已排期：2 分钟后弹通知')">演示一条通知</button>
@@ -438,12 +454,12 @@ async function copyInterests(): Promise<void> {
 
   <div v-if="panel" class="mask" @click.self="closePanel">
     <div class="sheet">
-      <div class="row"><div class="title grow">{{ { notify: '通知设置', watermark: '拍照水印', weather: '天气', backup: '备份与恢复', about: '关于 Unimate', interests: '意向清单' }[panel] }}</div><button class="btn sm ghost" @click="closePanel">关闭</button></div>
+      <div class="row"><div class="title grow">{{ { notify: '通知设置', theme: '外观与主题', watermark: '拍照水印', weather: '天气', backup: '备份与恢复', about: '关于 Unimate', interests: '意向清单' }[panel] }}</div><button class="btn sm ghost" @click="closePanel">关闭</button></div>
       <div class="hairline"></div>
 
       <template v-if="panel === 'notify'">
-        <div class="li" style="padding: 10px 0"><span class="grow">总开关</span><button class="chip sm" :class="{ on: db.settings.notifyEnabled }" @click="db.settings.notifyEnabled = !db.settings.notifyEnabled; reschedule()">{{ db.settings.notifyEnabled ? '开' : '关' }}</button></div>
-        <div class="li" style="padding: 10px 0"><span class="grow">上课提醒</span><button class="chip sm" :class="{ on: db.settings.classReminderEnabled }" @click="db.settings.classReminderEnabled = !db.settings.classReminderEnabled; reschedule()">{{ db.settings.classReminderEnabled ? '开' : '关' }}</button></div>
+        <div class="li" style="padding: 10px 0"><span class="grow">总开关</span><button type="button" class="me-ios-switch" role="switch" :aria-checked="db.settings.notifyEnabled" aria-label="通知总开关" @click="db.settings.notifyEnabled = !db.settings.notifyEnabled; reschedule()"><span></span></button></div>
+        <div class="li" style="padding: 10px 0"><span class="grow">上课提醒</span><button type="button" class="me-ios-switch" role="switch" :aria-checked="db.settings.classReminderEnabled" aria-label="上课提醒" @click="db.settings.classReminderEnabled = !db.settings.classReminderEnabled; reschedule()"><span></span></button></div>
         <div class="field"><label>提前几分钟提醒上课</label>
           <div class="chips"><button v-for="m in [5, 10, 15, 20, 30]" :key="m" class="chip sm" :class="{ on: db.settings.classReminderMinutes === m }" @click="db.settings.classReminderMinutes = m; reschedule()">{{ m }} 分钟</button></div>
         </div>
@@ -495,7 +511,7 @@ async function copyInterests(): Promise<void> {
           <!-- 提醒守护前台服务（v2.34）：三项系统开关全开仍"只有打开 App 才收到提醒"时的最后一道保活 -->
           <div class="row" style="justify-content: space-between; margin-top: 8px">
             <span class="grow small">提醒守护（前台服务）</span>
-            <button class="chip sm" :class="{ on: db.settings.reminderGuard }" @click="toggleGuard(!db.settings.reminderGuard)">{{ db.settings.reminderGuard ? '开' : '关' }}</button>
+            <button type="button" class="me-ios-switch" role="switch" :aria-checked="db.settings.reminderGuard" aria-label="提醒守护" @click="toggleGuard(!db.settings.reminderGuard)"><span></span></button>
           </div>
           <div class="small muted" style="margin-top: 4px; line-height: 1.6">
             开启后通知栏会常驻一条<b>静音小通知</b>（"Unimate 提醒运行中"），让系统不把 App 冻住 ——
@@ -545,14 +561,14 @@ async function copyInterests(): Promise<void> {
       
       <template v-else-if="panel === 'theme'">
         <div class="field"><label>外观</label>
-          <div class="chips">
-            <button class="chip" :class="{ on: db.settings.theme === 'system' }" @click="setTheme('system')">跟随系统</button>
-            <button class="chip" :class="{ on: db.settings.theme === 'light' }" @click="setTheme('light')">始终浅色</button>
-            <button class="chip" :class="{ on: db.settings.theme === 'dark' }" @click="setTheme('dark')">始终深色</button>
+          <div class="chips me-segmented">
+            <button class="chip" :class="{ on: db.settings.theme === 'system' }" :aria-pressed="db.settings.theme === 'system'" @click="setTheme('system', $event)">跟随系统</button>
+            <button class="chip" :class="{ on: db.settings.theme === 'light' }" :aria-pressed="db.settings.theme === 'light'" @click="setTheme('light', $event)">始终浅色</button>
+            <button class="chip" :class="{ on: db.settings.theme === 'dark' }" :aria-pressed="db.settings.theme === 'dark'" @click="setTheme('dark', $event)">始终深色</button>
           </div>
         </div>
         <div class="field" style="margin-top: 10px"><label>字号</label>
-          <div class="chips">
+          <div class="chips me-segmented me-font-segmented">
             <button v-for="f in FONT_LEVELS" :key="f.k" class="chip" :class="{ on: (db.settings.fontSize || 100) === f.k }" @click="setFont(f.k)">{{ f.t }}</button>
           </div>
         </div>
@@ -564,7 +580,7 @@ async function copyInterests(): Promise<void> {
         <button class="btn block grey" style="margin-top: 12px" @click="saveSettings('外观与主题')">保存设置</button>
       </template>
       <template v-else-if="panel === 'watermark'">
-        <div class="li" style="padding: 10px 0"><span class="grow small">默认给新照片加水印</span><button class="chip sm" :class="{ on: db.settings.watermarkEnabledDefault }" @click="db.settings.watermarkEnabledDefault = !db.settings.watermarkEnabledDefault">{{ db.settings.watermarkEnabledDefault ? '开' : '关' }}</button></div>
+        <div class="li" style="padding: 10px 0"><span class="grow small">默认给新照片加水印</span><button type="button" class="me-ios-switch" role="switch" :aria-checked="db.settings.watermarkEnabledDefault" aria-label="默认给新照片加水印" @click="db.settings.watermarkEnabledDefault = !db.settings.watermarkEnabledDefault"><span></span></button></div>
         <div class="field"><label>水印包含哪些行（自主组合）</label>
           <div class="chips">
             <button class="chip sm" :class="{ on: db.settings.watermarkLines.time }" @click="db.settings.watermarkLines.time = !db.settings.watermarkLines.time">拍摄时间（建议常开）</button>
@@ -583,7 +599,7 @@ async function copyInterests(): Promise<void> {
       <template v-else-if="panel === 'weather'">
         <div class="li" style="padding: 10px 0">
           <span class="grow">天气（课表页顶部一行）</span>
-          <button class="chip sm" :class="{ on: db.settings.weatherEnabled }" @click="db.settings.weatherEnabled = !db.settings.weatherEnabled">{{ db.settings.weatherEnabled ? '开' : '关' }}</button>
+          <button type="button" class="me-ios-switch" role="switch" :aria-checked="db.settings.weatherEnabled" aria-label="天气" @click="db.settings.weatherEnabled = !db.settings.weatherEnabled"><span></span></button>
         </div>
         <div class="small muted" style="line-height: 1.7; margin-bottom: 10px">
           <b>默认关闭</b>，打开后课表页顶部才出现一行天气。<br />
@@ -681,13 +697,33 @@ async function copyInterests(): Promise<void> {
 </template>
 
 <style scoped>
-.me { display: flex; gap: 12px; align-items: center; }
-.avatar { width: 46px; height: 46px; border-radius: 14px; background: var(--brand); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 21px; font-weight: 700; overflow: hidden; }
+.me { display: flex; gap: 14px; align-items: center; padding: 18px 16px; box-shadow: none; }
+.me-summary { margin-top: 16px; box-shadow: none; }
+.avatar { width: 52px; height: 52px; border-radius: 50%; background: var(--brand); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 21px; font-weight: 600; overflow: hidden; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .avactions { display: flex; gap: 12px; margin-top: 4px; }
-.alink { font-size: 11px; color: var(--brand); padding: 0; }
-.ico { font-size: 19px; }
-.logo { width: 54px; height: 54px; margin: 4px auto 8px; border-radius: 16px; background: linear-gradient(135deg, #2E5AAC, #4E7BD6); color: #fff; font-size: 30px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.alink { font-size: 13px; line-height: 18px; color: var(--brand); padding: 0; }
+.settings-group-title { margin: 24px 16px 7px; color: var(--muted); font-size: 13px; line-height: 18px; }
+.settings-list { box-shadow: none; }
+.settings-row { min-height: 64px; }
+.settings-row .grow { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.settings-label { display: block; color: var(--text); font-size: 17px; line-height: 22px; font-weight: 400; }
+.settings-value { display: block; overflow: hidden; color: var(--muted); font-size: 13px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.ico { color: var(--brand); }
+.chev { color: color-mix(in srgb, var(--muted) 55%, transparent); }
+.account-actions { box-shadow: none; padding: 12px; }
+.me-ios-switch { width: 51px; height: 31px; flex: none; padding: 2px; border-radius: 999px; background: var(--switch-off); transition: background-color .2s ease; }
+.me-ios-switch span { display: block; width: 27px; height: 27px; border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0, 0, 0, .22); transition: transform .2s cubic-bezier(.25,.8,.25,1); }
+.me-ios-switch[aria-checked='true'] { background: var(--ok); }
+.me-ios-switch[aria-checked='true'] span { transform: translateX(20px); }
+.me-segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; padding: 2px; border-radius: 9px; background: var(--soft-2); }
+.me-segmented .chip { min-width: 0; min-height: 32px; padding: 4px 6px; border: 0; border-radius: 7px; background: transparent; color: var(--text); }
+.me-segmented .chip.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .14); }
+.me-font-segmented { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (prefers-reduced-motion: reduce) {
+  .me-ios-switch, .me-ios-switch span { transition: none; }
+}
+.logo { width: 54px; height: 54px; margin: 4px auto 8px; border-radius: 14px; background: var(--brand); color: #fff; font-size: 28px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
 .periods { max-height: 240px; overflow: auto; }
 .prow { display: grid; grid-template-columns: 62px 1fr 12px 1fr; gap: 6px; align-items: center; margin-bottom: 6px; }
 .pn { font-size: 12px; color: var(--muted); }

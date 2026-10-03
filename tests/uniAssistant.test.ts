@@ -66,10 +66,10 @@ const service = readFileSync(join(process.cwd(), 'src/services/uniAssistant.ts')
 const view = readFileSync(join(process.cwd(), 'src/views/UniView.vue'), 'utf8');
 const main = readFileSync(join(process.cwd(), 'src/screens/Main.vue'), 'utf8');
 ok('本机桥接没有网络调用', !/\bfetch\s*\(|XMLHttpRequest|axios\b/.test(service));
-ok('界面如实区分 Online 与 Offline Mode', view.includes('Online Mode') && view.includes('Offline Mode'));
-ok('界面明确本机数据不自动发给模型', view.includes('课表、记事和天气数据由手机本机 Tool') && view.includes('不会自动发给模型'));
+ok('界面不再显示 Online 与 Offline 状态说明', !view.includes('Online Mode') && !view.includes('Offline Mode'));
+ok('界面不再显示模型数据边界说明卡', !view.includes('课表、记事和天气数据由手机本机 Tool') && !view.includes('不会自动发给模型'));
 ok('界面包含消息列表、加载和错误状态', view.includes('uni-chat-list') && view.includes('Uni 正在处理') && view.includes('role="alert"'));
-ok('Uni 已成为独立底部页签', main.includes("{ label: 'Uni', icon: '✦' }") && main.includes('<UniView v-else-if="db.activeTab === 2"'));
+ok('Uni 已成为独立底部页签并使用单星图标', main.includes("{ label: 'Uni', icon: 'star' }") && main.includes('<UniView v-else-if="db.activeTab === 2"'));
 ok('高风险操作使用统一确认框', view.includes('await db.confirm({') && view.includes('confirmation.confirmText'));
 
 console.log(`\nUni Assistant Test: ${pass} passed, ${fail} failed`);

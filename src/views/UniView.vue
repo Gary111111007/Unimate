@@ -1,25 +1,19 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { nextTick, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { guard } from '../services/guard.ts';
 import { AgentCore, type AgentMessage, type AgentReply } from '../services/agentCore.ts';
 import { HttpAIProvider, NetworkAwarePlanner } from '../services/aiProvider.ts';
 import { createStudentTools, LocalRulePlanner, type AgentFeature, type StudentAgentPort } from '../services/uniTools.ts';
-import { BrowserSpeechInput, BrowserSpeechOutput, VoiceAgent } from '../services/voiceAI.ts';
 import { agoText, weatherText } from '../services/weather.ts';
 import type { ActionCard } from '../../p5-assistant/n8n/core/types.ts';
 
-const props = defineProps<{ actionToken?: number; actionKind?: 'text' | 'voice' }>();
-const emit = defineEmits<{ mode: [value: 'online' | 'offline'] }>();
 const db = useDb();
 const text = ref('');
 const loading = ref(false);
-const listening = ref(false);
 const errorText = ref('');
 const messageList = ref<HTMLElement | null>(null);
 const errorBox = ref<HTMLElement | null>(null);
-const textInput = ref<HTMLInputElement | null>(null);
-const mode = ref<'online' | 'offline'>(typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'online');
 const examples = ['下一节什么课', '查一下记事', '记一下带实验报告', '打开记事本'];
 
 const port: StudentAgentPort = {
@@ -60,7 +54,6 @@ const port: StudentAgentPort = {
 const localPlanner = new LocalRulePlanner();
 const dualPlanner = new NetworkAwarePlanner(new HttpAIProvider(), localPlanner);
 const agent = new AgentCore({ planner: dualPlanner, localPlanner, tools: createStudentTools(port) });
-const voiceAgent = new VoiceAgent(new BrowserSpeechInput(), new BrowserSpeechOutput(), agent);
 const messages = ref<readonly AgentMessage[]>(agent.messages());
 
 async function scrollToBottom(): Promise<void> {
@@ -87,10 +80,8 @@ async function send(question?: string): Promise<void> {
   loading.value = true;
   try {
     const reply = await agent.ask(value);
-    mode.value = dualPlanner.mode();
     await applyConfirmation(reply);
   } catch (error) {
-    mode.value = dualPlanner.mode();
     errorText.value = error instanceof Error ? error.message : 'Uni 暂时无法回答，请稍后再试';
   } finally {
     messages.value = agent.messages();
@@ -98,44 +89,6 @@ async function send(question?: string): Promise<void> {
     await scrollToBottom();
   }
 }
-
-async function startVoice(): Promise<void> {
-  if (loading.value) return;
-  errorText.value = '';
-  loading.value = true;
-  listening.value = true;
-  try {
-    const result = await guard('Uni 语音链路', voiceAgent.run(), 50_000, null);
-    if (!result) throw new Error('语音链路超时，请重试');
-    mode.value = dualPlanner.mode();
-    await applyConfirmation(result.reply);
-  } catch (error) {
-    errorText.value = error instanceof Error ? error.message : '语音输入失败，请重试';
-  } finally {
-    messages.value = agent.messages();
-    listening.value = false;
-    loading.value = false;
-    await scrollToBottom();
-  }
-}
-
-function focusText(): void { void nextTick(() => textInput.value?.focus()); }
-function updateNetworkMode(): void { mode.value = navigator.onLine === false ? 'offline' : 'online'; }
-
-watch(() => props.actionToken, () => {
-  if (!props.actionToken) return;
-  if (props.actionKind === 'voice') void startVoice(); else focusText();
-}, { immediate: true });
-watch(mode, (value) => emit('mode', value), { immediate: true });
-
-onMounted(() => {
-  window.addEventListener('online', updateNetworkMode);
-  window.addEventListener('offline', updateNetworkMode);
-});
-onUnmounted(() => {
-  window.removeEventListener('online', updateNetworkMode);
-  window.removeEventListener('offline', updateNetworkMode);
-});
 
 function cardTime(card: ActionCard): string {
   if (!card.time) return '';
@@ -151,14 +104,6 @@ function runCard(card: ActionCard): void {
 
 <template>
   <div class="scroll uni-chat-page">
-    <section class="card uni-chat-head">
-      <div class="uni-chat-mark">☾</div>
-      <div class="grow"><div class="bold">Uni 学生 Agent</div><div class="small muted">Workers AI 在线 + 本机离线兜底</div></div>
-      <span class="pill" :class="mode === 'online' ? 'live' : 'uni-chat-mode-offline'">{{ mode === 'online' ? 'Online' : 'Offline' }}</span>
-    </section>
-    <div class="uni-chat-boundary small">
-      Online Mode 只把你主动发送的文字交给 Unimate 的 Workers AI 选择 Tool；课表、记事和天气数据由手机本机 Tool 读取或修改，不会自动发给模型。免费额度用完、网络异常或断网时会自动切到 Offline Mode。请勿输入教务密码、Cookie 或验证码。
-    </div>
     <div class="chips uni-chat-examples">
       <button v-for="item in examples" :key="item" class="chip sm" :disabled="loading" @click="send(item)">{{ item }}</button>
     </div>
@@ -176,14 +121,14 @@ function runCard(card: ActionCard): void {
           <details v-if="message.explain.length" class="uni-chat-explain"><summary>查看回答依据</summary><div v-for="line in message.explain" :key="line">· {{ line }}</div></details>
         </div>
       </article>
-      <div v-if="loading" class="uni-chat-message uni-chat-assistant"><div class="uni-chat-bubble uni-chat-loading">{{ listening ? '正在听你说话…' : 'Uni 正在处理…' }}</div></div>
+      <div v-if="loading" class="uni-chat-message uni-chat-assistant"><div class="uni-chat-bubble uni-chat-loading">Uni 正在处理…</div></div>
     </section>
     <div v-if="errorText" ref="errorBox" class="uni-chat-error" role="alert">
       <div>{{ errorText }}</div>
       <button class="uni-chat-offline" type="button" @click="send('下一节什么课')">试试离线查课</button>
     </div>
     <form class="uni-chat-compose" @submit.prevent="send()">
-      <input ref="textInput" v-model="text" maxlength="500" enterkeyhint="send" placeholder="和 Uni 说点什么…" :disabled="loading" />
+      <input v-model="text" maxlength="500" enterkeyhint="send" placeholder="和 Uni 说点什么…" :disabled="loading" />
       <button class="btn" type="submit" :disabled="!text.trim() || loading">发送</button>
     </form>
   </div>
@@ -191,9 +136,6 @@ function runCard(card: ActionCard): void {
 
 <style scoped>
 .uni-chat-page { padding-bottom: calc(154px + var(--safe-b)); }
-.uni-chat-head { display: flex; align-items: center; gap: 12px; }
-.uni-chat-mark { width: 42px; height: 42px; flex: none; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: linear-gradient(145deg, var(--brand), #5f82c8); color: #fff; font-size: 22px; font-weight: 800; }
-.uni-chat-boundary { margin: 10px 2px 12px; padding: 10px 12px; border-radius: 12px; color: var(--muted); background: var(--tint); border: 1px solid var(--line); }
 .uni-chat-examples { margin-bottom: 12px; }
 .uni-chat-list { display: grid; gap: 10px; padding: 2px 2px 90px; }
 .uni-chat-message { display: flex; }
@@ -204,7 +146,6 @@ function runCard(card: ActionCard): void {
 .uni-chat-content { white-space: pre-wrap; line-height: 1.65; }
 .uni-chat-source { display: inline-block; margin-top: 7px; font-size: 10px; color: var(--muted); }
 .uni-chat-loading { color: var(--muted); }
-.uni-chat-mode-offline { color: var(--muted); background: var(--soft); }
 .uni-chat-error { margin-top: 10px; padding: 9px 11px; border-radius: 10px; color: #b42318; background: #fff0ee; }
 .uni-chat-offline { margin-top: 7px; padding: 5px 9px; border: 1px solid currentColor; border-radius: 8px; color: inherit; background: transparent; }
 .uni-chat-cards { display: grid; gap: 7px; margin-top: 9px; }

@@ -89,13 +89,13 @@ console.log('\n--- 界面是否真的按档案走（结构断言，防止只改�
 {
   const main = read('src/screens/Main.vue');
   ok('第 2 栏标签取自档案 secondClass.label', /label:\s*db\.profile\?\.secondClass\.label/.test(main), '');
-  ok('第 2 栏图标按有没有二课区分', /secondClass\.label \|\| '第二课堂', icon: db\.profile\?\.secondClass\.enabled \? '🏅' : '📌'/.test(main), '');
+  ok('第 2 栏线性图标按有没有二课区分', /secondClass\.label \|\| '第二课堂', icon: db\.profile\?\.secondClass\.enabled \? 'award' : 'bookmark'/.test(main), '');
   ok('页面标题栏也跟着改（不再写死"第二课堂"）', /if \(db\.activeTab === 1\) return db\.profile\?\.secondClass\.label/.test(main), '');
 }
 {
   const sc = read('src/views/SecondClassView.vue');
   ok('二课 sheet 被 hasErke 拦住', /v-if="sheet === 'erke' && hasErke"/.test(sc), '');
-  ok('没有二课时不显示"二课填报"入口', /v-if="hasErke"[^>]*>🏅 二课填报/.test(sc), '');
+  ok('没有二课时不显示"二课填报"入口', /v-if="hasErke"[^>]*>[\s\S]*?<AppleIcon name="award"[^>]*\/>二课填报<\/button>/.test(sc), '');
   ok('没有二课时不显示"填报活动"悬浮按钮', /v-if="sheet === 'erke' && hasErke" class="fab"/.test(sc), '');
   ok('显示"本校专属活动规则尚未核实"的说明卡', sc.includes('本校专属活动规则尚未核实') && /secondClass\.notice/.test(sc), '');
   ok('切换学校后不会停在空的二课页', /watch\(hasErke/.test(sc), '');

@@ -158,7 +158,7 @@ ok('Workers AI 默认模型与 Tool 白名单真实传入 binding', capturedMode
 ok('Workers AI Tool Call 被校验并转换成 App 协议', workerResponse.status === 200 && workerDecision?.provider === 'workers-ai' && workerDecision?.call?.arguments?.query === 'tomorrow');
 ok('健康检查公开 Agent 绑定状态', healthBody?.agent === 'workers-ai' && healthBody?.agentReady === true && healthBody?.agentModel === '@cf/zai-org/glm-4.7-flash');
 ok('免费额度或网关失败会回落本机提示', client.includes('return offlineNotice()') && client.includes('已切换到本机离线模式'));
-ok('Uni 页面如实显示 Workers AI 在线与本机兜底', view.includes('Workers AI 在线 + 本机离线兜底') && view.includes('免费额度用完'));
+ok('Uni 页面不再显示连接状态卡与模式说明', !view.includes('Workers AI 在线 + 本机离线兜底') && !view.includes('Online Mode 只把你主动发送'));
 ok('Pages 转发 Agent API', pages.includes("'/v1/agent/chat'"));
 ok('长对话直接定位最后回复或错误卡片', view.includes("target?.scrollIntoView({ block: 'center', behavior: 'smooth' })") && view.includes('errorText.value ? errorBox.value'));
 ok('高风险确认统一走 db.confirm', view.includes('await db.confirm({') && view.includes('agent.confirm(confirmation.id'));
@@ -169,7 +169,7 @@ ok('月亮按钮本体仍透明无边框且没有文字标签', !moon.includes('
 ok('月亮本体使用 Gemini 风格渐变流光且尊重减少动态效果设置', moon.includes('linear-gradient(135deg') && moon.includes('background-clip: text') && moon.includes('drop-shadow') && moon.includes('@keyframes uni-moon-aurora') && moon.includes('prefers-reduced-motion: reduce'));
 ok('月亮外层使用四向收尖的 Gemini 玻璃星芒并随展开同步放大', moon.includes('.uni-moon-launcher::before') && moon.includes('backdrop-filter: blur') && moon.includes('clip-path: polygon(50% 0%') && moon.includes('uni-moon-glass-ring') && moon.includes('.uni-moon-expanded::before'));
 ok('月牙通过尺寸和描边加粗', moon.includes('-webkit-text-stroke: 1px') && moon.includes('font-size: 29px') && moon.includes('font-size: 49px'));
-ok('月亮入口接入主界面', main.includes('<MoonAgentButton') && main.includes("openAgent('voice')"));
+ok('月亮入口已从主界面移除', !main.includes('<MoonAgentButton') && !main.includes("openAgent('voice')"));
 ok('顶部标题保持简洁的 Uni', main.includes("return 'Uni'"));
 
 // 模拟 APK → 独立 Pages → Worker 的 HTTP 契约，账号请求不能流入 AI 服务。

@@ -15,6 +15,7 @@ import { writeBinaryBase64, writeJson, fileUri } from '../services/io.ts';
 import { sha256Base64 } from '../services/crypto.ts';
 import { uuid, nowStamp, dateStamp } from '../services/id.ts';
 import type { BlockKey, PhotoEvidence, SecondClassRecord } from '../types.ts';
+import AppleIcon from '../components/AppleIcon.vue';
 
 const db = useDb();
 const active = ref<BlockKey | 'all'>('all');
@@ -369,9 +370,9 @@ const total = computed(() => db.totalScore());
   <div class="scroll">
 
     <div class="modes3">
-      <button v-if="hasErke" :class="{ on: sheet === 'erke' }" @click="sheet = 'erke'">🏅 二课填报</button>
-      <button :class="{ on: sheet === 'vol' }" @click="sheet = 'vol'">🤝 志愿时长</button>
-      <button :class="{ on: sheet === 'labor' }" @click="sheet = 'labor'">🧹 劳育时长</button>
+      <button v-if="hasErke" :class="{ on: sheet === 'erke' }" :aria-pressed="sheet === 'erke'" @click="sheet = 'erke'"><AppleIcon name="award" :size="16" />二课填报</button>
+      <button :class="{ on: sheet === 'vol' }" :aria-pressed="sheet === 'vol'" @click="sheet = 'vol'"><AppleIcon name="handHeart" :size="16" />志愿时长</button>
+      <button :class="{ on: sheet === 'labor' }" :aria-pressed="sheet === 'labor'" @click="sheet = 'labor'"><AppleIcon name="broom" :size="16" />劳育时长</button>
     </div>
 
     <HoursPanel v-if="sheet === 'vol'" kind="volunteer" label="志愿时长" />
@@ -458,7 +459,7 @@ const total = computed(() => db.totalScore());
       </div>
     </template>
 
-      <div v-if="!records.length" class="empty"><div class="big">🏅</div>还没有填报记录<div class="small">选一个板块，逐条点「记一条」；或点右下角自由填报</div></div>
+      <div v-if="!records.length" class="empty"><AppleIcon class="big empty-award" name="award" :size="34" />还没有填报记录<div class="small">选一个板块，逐条点「记一条」；或点右下角自由填报</div></div>
 
     <div v-if="hourCount" class="card hoursum">
       <div class="row" style="align-items: flex-end; gap: 10px">
@@ -633,9 +634,11 @@ const total = computed(() => db.totalScore());
 .crec { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 9px; background: var(--soft-2); margin-top: 5px; }
 .clausectx { background: var(--soft); border-radius: 10px; padding: 9px 11px; margin: 8px 0; }
 .clausectx .small { line-height: 1.65; }
-.modes3 { display: flex; gap: 6px; margin-bottom: 12px; }
-.modes3 button { flex: 1; padding: 9px 4px; border-radius: 11px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 12.5px; }
-.modes3 button.on { background: var(--brand); color: #fff; border-color: var(--brand); font-weight: 700; }
+.modes3 { display: flex; gap: 2px; margin-bottom: 16px; padding: 2px; border-radius: 10px; background: var(--soft-2); }
+.modes3 button { flex: 1; min-width: 0; min-height: 38px; padding: 6px 3px; border-radius: 8px; color: var(--muted); font-size: 12px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 4px; transition: color .18s ease, background-color .18s ease, box-shadow .18s ease; }
+.modes3 button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .14); }
+.empty-award { margin: 0 auto 8px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .modes3 button { transition: none; } }
 /* 没有第二课堂的学校：这条说明替代了原来的分值表与填报入口 */
 .norule { background: var(--soft); box-shadow: none; line-height: 1.7; }
 .big-num { font-size: 30px; font-weight: 800; color: var(--brand); line-height: 1.1; }
