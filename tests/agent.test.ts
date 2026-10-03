@@ -1,10 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentCore, type AgentTool } from '../src/services/agentCore.ts';
 import { normalizeAssistantText } from '../src/services/assistantText.ts';
 import { AGENT_API_BASE, HttpAIProvider, NetworkAwarePlanner, type AgentDecision, type AgentPlanRequest, type AgentPlanner } from '../src/services/aiProvider.ts';
 import { createStudentTools, LocalRulePlanner, type StudentAgentPort } from '../src/services/uniTools.ts';
-import { VoiceAgent, type VoiceInput, type VoiceOutput } from '../src/services/voiceAI.ts';
 
 let pass = 0; let fail = 0;
 function ok(name: string, cond: boolean): void {
@@ -119,30 +118,14 @@ const fallbackAgent = new AgentCore({ planner: fallbackPlanner, tools: createStu
 const fallbackReply = await fallbackAgent.ask('查一下记事本');
 ok('网关不可达自动切 Offline Mode', fallbackPlanner.mode() === 'offline' && fallbackReply.content.includes('带实验报告'));
 
-class FakeVoiceInput implements VoiceInput {
-  available(): boolean { return true; }
-  async listen() { return { text: '你好' }; }
-}
-class FakeVoiceOutput implements VoiceOutput {
-  spoken = '';
-  available(): boolean { return true; }
-  async speak(text: string) { this.spoken = text; }
-  stop() {}
-}
-const voicePlanner = new QueuePlanner([{ type: 'message', content: '你好，我是 Uni' }]);
-const voiceCore = new AgentCore({ planner: voicePlanner });
-const voiceOutput = new FakeVoiceOutput();
-await new VoiceAgent(new FakeVoiceInput(), voiceOutput, voiceCore).run();
-ok('Voice 链路按 ASR → Agent → TTS 执行', voiceOutput.spoken === '你好，我是 Uni');
-
 const client = readFileSync(join(process.cwd(), 'src/services/aiProvider.ts'), 'utf8');
 const worker = readFileSync(join(process.cwd(), 'cloudflare/sync-worker/src/index.js'), 'utf8');
 const pages = readFileSync(join(process.cwd(), 'cloudflare/pages/_worker.js'), 'utf8');
 const view = readFileSync(join(process.cwd(), 'src/views/UniView.vue'), 'utf8');
 const main = readFileSync(join(process.cwd(), 'src/screens/Main.vue'), 'utf8');
 const moon = readFileSync(join(process.cwd(), 'src/components/MoonAgentButton.vue'), 'utf8');
-const voiceService = readFileSync(join(process.cwd(), 'src/services/voiceAI.ts'), 'utf8');
 const nativePlugin = readFileSync(join(process.cwd(), 'android/app/src/main/java/com/unimate/app/JwWebViewPlugin.java'), 'utf8');
+const jwBridge = readFileSync(join(process.cwd(), 'src/services/jwwebview.ts'), 'utf8');
 const syncWorker = (await import('../cloudflare/sync-worker/src/index.js')).default;
 let capturedModel = '';
 let capturedInput: any = null;
@@ -175,17 +158,165 @@ ok('健康检查公开 Agent 绑定状态', healthBody?.agent === 'workers-ai' &
 ok('免费额度或网关失败会回落本机提示', client.includes('return offlineNotice()') && client.includes('已切换到本机离线模式'));
 ok('Uni 页面不再显示连接状态卡与模式说明', !view.includes('Workers AI 在线 + 本机离线兜底') && !view.includes('Online Mode 只把你主动发送'));
 ok('Pages 转发 Agent API', pages.includes("'/v1/agent/chat'"));
-ok('长对话直接定位最后回复或错误卡片', view.includes("target?.scrollIntoView({ block: 'center', behavior: 'smooth' })") && view.includes('errorText.value ? errorBox.value'));
+// v2.73：滚动容器换成整页后，"最后一条"不能再靠 lastElementChild（会拿到输入框那条表单），
+// 改成显式查 .uni-chat-message:last-of-type / .uni-chat-loading；错误卡片仍优先。
+ok('长对话直接定位最后回复或错误卡片',
+  view.includes("errorBox.value?.scrollIntoView({ block: 'end', behavior: 'smooth' })")
+  && view.includes(".uni-chat-message:last-of-type")
+  && view.includes("el.scrollTop = el.scrollHeight"), '');
 ok('Uni 历史按学校和账号保存在本机并在进页时恢复', view.includes("'/agent/history.json'") && view.includes('readJson<unknown[]>') && view.includes('writeJson(historyPath()') && view.includes('历史记录'));
-ok('Uni 输入区有语音按钮且原生调用受 guard 超时保护', view.includes('aria-label="语音输入"') && view.includes('name="microphone"') && voiceService.includes("guard(\n        'Uni 系统语音识别'") && voiceService.includes('JwWebView.speechToText'));
-ok('Android 原生语音桥调用系统 RecognizerIntent 并只返回文字', nativePlugin.includes('public void speechToText') && nativePlugin.includes('RecognizerIntent.ACTION_RECOGNIZE_SPEECH') && nativePlugin.includes('handleSpeechResult') && nativePlugin.includes('EXTRA_RESULTS'));
-ok('系统语音弹窗不存在时回退 SpeechRecognizer 并按需申请麦克风权限', nativePlugin.includes('startSpeechRecognizerFallback(call)') && nativePlugin.includes('SpeechRecognizer.createSpeechRecognizer') && nativePlugin.includes('RecognitionListener') && nativePlugin.includes('requestPermissionForAlias("microphone"'));
-ok('系统识别服务仍不可用时可唤起系统输入法', nativePlugin.includes('public void showKeyboard') && nativePlugin.includes('InputMethodManager.SHOW_IMPLICIT') && voiceService.includes('class BrowserSpeechInput'));
+// v2.67 人性化对话：日期分隔条 + 头像 + 分组 + 呼吸点加载 + 历史面板按天分组。
+ok('对话区按天插入日期分隔条', view.includes('uni-chat-day') && view.includes('dayLabel') && view.includes("'今天'") && view.includes("'昨天'"));
+ok('对话区为我和 Uni 显示头像并合并连续同一方发言', view.includes('uni-chat-avatar') && view.includes('chatEntries') && view.includes('newGroup') && view.includes('uni-chat-avatar-ghost'));
+ok('等待回复使用呼吸点而不是裸文字', view.includes('uni-chat-dots') && !view.includes('正在听，请说话'));
+// v2.70：历史面板从"平铺每条消息"改成"一轮轮对话"（问题当标题、回答当预览、点一下跳回去）。
+ok('历史面板按天分组并可回看谁说了什么', view.includes('historyGroups') && view.includes('uni-history-group') && view.includes('uni-history-day') && view.includes('chatTurns'));
+ok('历史面板把消息配成"一轮轮对话"而不是平铺每条消息',
+  view.includes('interface ChatTurn') && view.includes('uni-history-turn') && view.includes('uni-history-q') && view.includes('uni-history-a'));
+ok('历史条目可点回原处（锚点 + 定位）',
+  view.includes('data-mid=') && view.includes('function jumpTo') && view.includes('scrollIntoView({ block: \'center\''));
+ok('历史面板支持搜索与"再问一次"', view.includes('historyQuery') && view.includes('uni-history-search') && view.includes('askAgain'));
+ok('历史摘要去掉 Markdown 记法（不显示 ## 与 **）',
+  view.includes('toPlainText(m.content)') && view.includes('toPlainText(reply.content)'));
+ok('清空历史走 db.confirm 二次确认并说明影响面与不可恢复',
+  view.includes('function clearHistory') && view.includes('确认清空全部历史对话') && view.includes('清空后无法恢复'));
+// v2.70：模型喜欢输出 Markdown，真机上曾原样显示 `## 标题` / `**加粗**`。
+ok('助手回复使用结构化 Markdown 渲染组件', view.includes('<MarkdownText') && view.includes('richReply(entry.message.content)'));
+/*
+ * 注意：不能直接 `includes('v-html')` —— MarkdownText.vue 的注释里**故意**写了
+ * "为什么不是 v-html"，那是给人看的说明。断言必须只看模板/代码部分，剥掉注释。
+ * （这和 v2.67 那次"注释里写断言关键词导致假失败"是同一个坑：AGENTS.md 记着。）
+ */
+const mdComponent = readFileSync(join(process.cwd(), 'src/components/MarkdownText.vue'), 'utf8');
+const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+const uniNoComment = stripComments(view);
+const mdNoComment = stripComments(mdComponent);
+ok('Markdown 渲染不经过 v-html（无 XSS 面）',
+  !uniNoComment.includes('v-html') && !mdNoComment.includes('v-html') && !stripComments(readFileSync(join(process.cwd(), 'src/services/markdown.ts'), 'utf8')).includes('innerHTML'));
+ok('气泡可复制，且复制的是去 Markdown 记法的纯文本',
+  view.includes('function copyMessage') && view.includes('navigator.clipboard') && view.includes('toPlainText(message.content)'));
+ok('最后一条回复可重新生成（重放原问题，不原地改写历史）',
+  view.includes('function regenerate') && view.includes('isLast') && view.includes("aria-label=\"重新生成\""));
+ok('不在底部时给"回到最新"入口，不强行拽走用户阅读位置',
+  view.includes('atBottom') && view.includes('uni-chat-tobottom') && view.includes('onListScroll'));
+ok('气泡内的重复元信息已移除（时间/来源挪到气泡外的行动栏）', !view.includes('uni-chat-meta'));
+
+/*
+ * v2.71：产品负责人要求「UNI 的最上方历史记录要保持可以始终看到」。
+ * v2.73：产品负责人又强调「这里把历史记录固定在本界面的最上方」——
+ *   说明 v2.71 那次**没真的吸住**：当时 `.uni-chat-list` 自己也是滚动容器，
+ *   两层嵌套时内层先滚、外层不动，`sticky` 便无从谈起。
+ *   现在把 ref 与 @scroll 都移到整页 `.uni-chat-page`，内层只做布局。
+ *
+ * 关键不是"加了个按钮"，而是**它得真的吸住**：z-index 要**低于** compose(42) 与
+ * 回到最新(43)，否则往上滚时会盖住输入框那一栏。
+ * 这几条一起断言，是因为少任何一个都会在真机上表现为"看着像吸顶其实没吸住"。
+ *
+ * 【v2.76 修正】上面这条 top 断言原来钉的是 `top: 0` —— 那是个**错的期望值**，
+ * 真机实测（Playwright 量 getBoundingClientRect）在滚动 500px 后是
+ * `.head.top = 0` / `.uni-chat-history.top = -434`：**根本没吸住**，
+ * 未滚动时看着"贴住了"只是因为自然位置恰好在那儿。
+ * 详见下面 v2.76 那一组"结构性"断言 —— 光改 top 的数值没用。
+ */
+ok('历史入口 sticky 常驻且吸附到标题栏下沿（top 走 --unih-head 变量）',
+  /\.uni-chat-history \{[^}]*position:\s*sticky;[^}]*top:\s*var\(--unih-head/.test(uniNoComment));
+ok('历史入口层级低于输入框与"回到最新"（不遮挡输入）',
+  /\.uni-chat-history \{[^}]*z-index:\s*41;/.test(uniNoComment)
+  && /\.uni-chat-compose \{[^}]*z-index:\s*42;/.test(uniNoComment)
+  && /\.uni-chat-tobottom \{[^}]*z-index:\s*43;/.test(uniNoComment));
+ok('吸顶条用不透明底色 var(--bg)（透明会糊住滚过去的内容）',
+  /\.uni-chat-history \{[^}]*background:\s*var\(--bg\);/.test(uniNoComment));
+ok('吸顶条的外层与内层卡片分开（外层挡内容、内层做圆角）',
+  view.includes('class="uni-chat-history-in"') && uniNoComment.includes('.uni-chat-history-in'));
+/*
+ * v2.73 核心：**滚动容器必须是整页**。
+ * 只断言 `position: sticky` 是查不出"没吸住"的 —— 必须同时守住"内层不再自己滚"。
+ */
+ok('ref 与 @scroll 都挂在整页上（滚动容器 = .uni-chat-page）',
+  /ref="messageList"[^>]*class="scroll uni-chat-page"[^>]*@scroll\.passive="onListScroll"/.test(view), '');
+ok('内层 .uni-chat-list 不再是自己滚动的容器（双层滚动会让 sticky 失效）',
+  !/ref="messageList"[^>]*class="uni-chat-list"/.test(view)
+  && !/@scroll\.passive="onListScroll"[^>]*class="uni-chat-list"/.test(view)
+  && !/\.uni-chat-list \{[^}]*overflow/.test(uniNoComment), '');
+// v2.73：底部空白 = 内外两层各留一段 padding 叠成 272px；现在只留外层（给 fixed 输入框让位）
+ok('底部不再双重留白（内层去掉了 118px，只保留外层给输入框让位）',
+  !/\.uni-chat-list \{[^}]*padding:[^}]*118px/.test(uniNoComment)
+  && /\.uni-chat-page \{[^}]*padding-bottom:\s*calc\(154px/.test(uniNoComment), '');
+// v2.73：grid 默认 align-content: stretch 会把短对话的行拉开，看起来就是"下面一大片空"
+ok('对话列表 align-content: start（否则短对话会被 grid 拉开成大片空白）',
+  /\.uni-chat-list \{[^}]*align-content:\s*start/.test(uniNoComment));
+/*
+ * v2.74：产品负责人「把历史对话固定在最顶部的 UNI 下面」——
+ * v2.73 已经吸住了，但负边距只有 -12px（正好抵 `.scroll` 的左右 padding），
+ * 视觉上依然跟 header 之间留着一条缝，看起来不像 header 的延伸。
+ *
+ * 【v2.76 更新】横向出血到 -16px 保留（底色通栏），但**纵向的 -12px 上出血删掉了**：
+ * 结构改了以后它已不在 `.uni-chat-page` 内，不需要再抵那个 padding；
+ * 纵向改为 `0`，靠 `top: var(--unih-head)` 精确吸附。
+ */
+ok('历史入口横向出血到 -16px（底色通栏），纵向不再靠负边距硬凑（v2.76）',
+  /\.uni-chat-history \{[^}]*margin:\s*0 -16px 10px;/.test(uniNoComment), '');
+/*
+ * v2.75：产品负责人第三次推进同一件事 ——「**把历史对话给我固定在UNI下沿别动**」。
+ * v2.74 已经把底色条做到通栏，但内层还是"一张带边框的圆角卡"，
+ * 真机上看得出"这是页面里的一张卡"，不像标题栏的一部分。
+ * 这一版把它读成标题栏的延伸：
+ *   - 内层去掉边框/底色，不再是独立卡片（否则跟标题栏是两截）；
+ *   - 外层底色必须是**不透明**的 var(--bg) —— sticky 块背后会有内容滚过去，
+ *     半透明/毛玻璃都会糊成一团（v2.74 踩过，别改回去）；
+ *   - 下边框留着，作为"标题栏到此为止"的分界。
+ */
+ok('历史入口内层去卡片化（无边框无底色，读起来是标题栏的一行）（v2.75）',
+  /\.uni-chat-history-in \{[^}]*background:\s*transparent;[^}]*border:\s*none;/.test(uniNoComment), '');
+ok('历史入口外层底色仍是不透明的 var(--bg)（透明会糊住滚过去的内容）',
+  /\.uni-chat-history \{[^}]*background:\s*var\(--bg\);/.test(uniNoComment)
+  && !/\.uni-chat-history \{[^}]*background:\s*color-mix/.test(uniNoComment), '');
+ok('历史入口保留下边框作为与标题栏的分界（v2.75）',
+  /\.uni-chat-history \{[^}]*border-bottom:\s*1px solid var\(--line\);/.test(uniNoComment), '');
+/*
+ * ================= v2.76：真正让 sticky 生效的**结构性**约束 =================
+ *
+ * 这一组是本轮的核心教训。前四轮（v2.72~2.75）每次都在调 `.uni-chat-history` 的
+ * 颜色/边框/边距，测试也只查这些"外观特征"，于是**"根本没吸住"可以一路蒙混过关**。
+ *
+ * CSS 规范里 sticky 的约束：**祖先只要有 overflow（非 visible）就构成约束容器**，
+ * sticky 子元素只能在该容器的高度范围内吸附 —— 而 `.uni-chat-page` 带着全局
+ * `.scroll` 的 `overflow-y: auto`。同时真正在滚的是 `<html>`（`.screen` 是
+ * `min-height: 100%` 而非 `height: 100%`，`.scroll{flex:1}` 拿不到确定高度，
+ * 自己永不滚动，交给页面级滚动兜底）。
+ *
+ * 所以唯一的修法是把历史入口挪出 `.uni-chat-page`、与 `.head` 做兄弟。
+ * 下面这几条钉的就是"层级关系"，靠正则从模板里验：
+ *   A. 历史入口在滚动容器**之外**（滚动容器那层必须先开、后关，历史入口不在其中）；
+ *   B. 外面有一层不裁剪的 `.uni-chat-wrap` 当根（overflow 必须 visible，否则又是约束容器）；
+ *   C. `top` 由脚本量的 `--unih-head` 提供，且有兜底与重新测量（改页签/转屏不会错位）。
+ */
+const pageOpen = view.indexOf('class="scroll uni-chat-page"');
+const histIdx = view.indexOf('class="uni-chat-history"');
+ok('历史入口在滚动容器之外（与 .head 同级，否则 sticky 被约束容器限制，永远吸不住）（v2.76）',
+  pageOpen !== -1 && histIdx !== -1 && histIdx < pageOpen, '');
+ok('Uni 页根节点是不裁剪的 .uni-chat-wrap（overflow 必须 visible，否则又成了约束容器）（v2.76）',
+  view.includes('class="uni-chat-wrap"')
+  && !/\.uni-chat-wrap \{[^}]*overflow-\w+:\s*(hidden|auto|scroll)/.test(uniNoComment), '');
+ok('脚本挂载时量标题栏高度并写入 --unih-head（含兜底 0 与 resize/orientation 重新测量）（v2.76）',
+  view.includes("'--unih-head': headOffset + 'px'")
+  && /function syncHeadHeight\(\)/.test(view)
+  && view.includes('window.addEventListener(\'resize\', syncHeadHeight)')
+  && view.includes('window.addEventListener(\'orientationchange\', syncHeadHeight)')
+  && /\.uni-chat-history \{[^}]*top:\s*var\(--unih-head,\s*0px\)/.test(uniNoComment), '');
+ok('量完的高度要 removeEventListener（组件卸载后不许留着监听器）（v2.76）',
+  view.includes("window.removeEventListener('resize', syncHeadHeight)")
+  && view.includes("window.removeEventListener('orientationchange', syncHeadHeight)"), '');
+// v2.67：语音输入整条链路已下线，用"断言不存在"反向锁死，避免它悄悄回来。
+ok('Uni 输入区不再有语音按钮或麦克风入口', !view.includes('aria-label="语音输入"') && !view.includes('name="microphone"') && !view.includes('uni-chat-mic') && !view.includes('listenVoice'));
+ok('voiceAI 语音服务模块已删除', !existsSync(join(process.cwd(), 'src/services/voiceAI.ts')));
+ok('WebView 桥不再暴露语音识别与系统键盘方法', !jwBridge.includes('speechToText') && !jwBridge.includes('showKeyboard'));
+ok('Android 原生桥不再包含语音识别代码', !nativePlugin.includes('speechToText') && !nativePlugin.includes('RecognizerIntent') && !nativePlugin.includes('SpeechRecognizer') && !nativePlugin.includes('handleSpeechResult'));
 const androidManifest = readFileSync(join(process.cwd(), 'android/app/src/main/AndroidManifest.xml'), 'utf8');
-ok('SpeechRecognizer 后备声明录音权限', androidManifest.includes('android.permission.RECORD_AUDIO'));
+ok('AndroidManifest 不再申请录音权限', !androidManifest.includes('android.permission.RECORD_AUDIO'));
 ok('高风险确认统一走 db.confirm', view.includes('await db.confirm({') && view.includes('agent.confirm(confirmation.id'));
 ok('本机快速规则先于在线 Provider', view.includes('const localPlanner = new LocalRulePlanner()') && view.includes('localPlanner, tools: createStudentTools(port)'));
-ok('月亮短按文字、长按语音', moon.includes("emit('text')") && moon.includes("emit('voice')") && moon.includes('560'));
+ok('月亮短按放大、再点进入对话（已无长按语音）', moon.includes("emit('text')") && !moon.includes("emit('voice')") && !moon.includes('longTriggered'));
 ok('月亮平时小、点击放大并支持全窗口拖动', moon.includes('moonExpanded') && moon.includes('uni-moon-expanded') && moon.includes('clampToBox') && moon.includes('barH: 0'));
 ok('月亮按钮本体仍透明无边框且没有文字标签', !moon.includes('uni-moon-mode') && moon.includes('border: none') && moon.includes('background: transparent') && moon.includes('box-shadow: none'));
 ok('月亮本体使用 Gemini 风格渐变流光且尊重减少动态效果设置', moon.includes('linear-gradient(135deg') && moon.includes('background-clip: text') && moon.includes('drop-shadow') && moon.includes('@keyframes uni-moon-aurora') && moon.includes('prefers-reduced-motion: reduce'));

@@ -158,7 +158,7 @@
 
 **v2.38 实现状态（结论已在 v2.40 更正）**：客户端加密、恢复码、`.umig`、上传/下载/预览/二次确认恢复已实现；私有 R2、Worker、四项 secret 与 CORS 已部署。v2.38 把 v2.37 真机首次加密暴露的 `$ is not a function` 当成 WebCrypto 兼容问题，改为"标准 WebCrypto 优先 + 纯 JS 兜底"并加 60 秒超时（两路 PBKDF2/AES-GCM 交叉向量逐字节一致）。**这一整套改造本身没坏、予以保留，但它并没有修好那个报错** —— 真因见下一段。恢复码采用独立 256-bit 秘密包裹同一数据密钥，因此能真正恢复，而不是只验证摘要。
 
-**v2.40 定案：`$ is not a function` 不是密码学问题，是变量重名**：v2.34 在 `src/views/MeView.vue` 写了 `const guard = ref({...})`（提醒守护前台服务状态），与同文件第 8 行 `import { guard } from '../services/guard.ts'`（AGENTS.md 硬规则 8 要求的超时工具）**重名**。SFC 编译把 import 的那个改名（dev 构建里报的就是 `guard2 is not a function`，真机压缩后成 `$`），于是 v2.35 新增的 `guard('生成同步备份', …)` 变成"调用一个 ref"。修法：改名 `guardState`，并在 `test:order` 加**全仓库"顶层声明与 import 重名"静态扫描**（变异验证过：把重名写回去必红）。这条经验已进 `docs/context.md` 的坑表。详见 PRD 11.48。
+**v2.40 定案：`$ is not a function` 不是密码学问题，是变量重名**：v2.34 在 `src/views/MeView.vue` 写了 `const guard = ref({...})`（提醒守护前台服务状态），与同文件第 8 行 `import { guard } from '../services/guard.ts'`（AGENTS.md 硬规则 8 要求的超时工具；该编号现为第 7 条）**重名**。SFC 编译把 import 的那个改名（dev 构建里报的就是 `guard2 is not a function`，真机压缩后成 `$`），于是 v2.35 新增的 `guard('生成同步备份', …)` 变成"调用一个 ref"。修法：改名 `guardState`，并在 `test:order` 加**全仓库"顶层声明与 import 重名"静态扫描**（变异验证过：把重名写回去必红）。这条经验已进 `docs/context.md` 的坑表。详见 PRD 11.48。
 
 **v2.39 真机阻断修复**：接手复核时发现两件事会让真机必然失败 ——
 ① `*.workers.dev` 在大陆被 DNS 污染（实测解析到 69.171.228.74，443 超时；而 pages.dev 200/1.3s），手机连不到 Worker；

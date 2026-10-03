@@ -85,8 +85,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- Uni 语音输入：仅在系统弹窗式识别不可用、改走 SpeechRecognizer 后备时申请。 -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- v2.67：Uni 语音输入已下线，录音权限一并移除（App 不再申请麦克风）。 -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

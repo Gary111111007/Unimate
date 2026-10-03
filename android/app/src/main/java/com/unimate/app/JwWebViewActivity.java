@@ -63,6 +63,10 @@ public class JwWebViewActivity extends Activity {
     private String homeUrl = "";
     private boolean retriedOnce;
     private int barWidth;
+    /** zfimport 模式（v2.68）：课表接口参数。学年起始年 / 学期码 / 功能码 */
+    private String zfXnm = "";
+    private String zfXqm = "";
+    private String zfGnmkdm = "";
 
     /** 网页里的 <input type=file>（交作业、传附件）：北化在线/学习通提交作业必走这条路。 */
     private static final int REQ_FILES = 4108;
@@ -79,6 +83,10 @@ public class JwWebViewActivity extends Activity {
         mode = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_MODE), "timetable");
         actionLabel = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_ACTION_LABEL), "读取当前结果");
         allowExternal = args.getBooleanExtra(JwWebViewPlugin.EXTRA_ALLOW_EXTERNAL, false);
+        // zfimport（v2.68）：课表接口参数，前端算好学期码再传进来
+        zfXnm = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_ZF_XNM), "");
+        zfXqm = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_ZF_XQM), "");
+        zfGnmkdm = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_ZF_GNMKDM), "");
         if (isExamMode() && (selector == null || selector.isEmpty())) {
             // 考试页是 jqGrid：优先取整个表格容器，取不到再退到行容器/整页
             selector = "#gbox_tabGrid,#tabGrid,table.ui-jqgrid-btable,body";
@@ -219,10 +227,11 @@ public class JwWebViewActivity extends Activity {
         fabLp.bottomMargin = (int) (88 * dp);
         fabLp.rightMargin = (int) (10 * dp);
         fab.setLayoutParams(fabLp);
-        fab.setListener(() -> runScrape());
-        if (isExamMode() || isCampusMode()) {
-            fab.setLabel(isExamMode() ? "识别考试" : actionLabel);
-            fab.setVisibility(View.VISIBLE);   // 考试/校园数据模式常驻
+        fab.setListener(() -> runAction());
+        if (isExamMode() || isCampusMode() || isZfImportMode()) {
+            // zfimport：按钮叫「导入课表」，用户登录完点它即可，不用自己找菜单路径
+            fab.setLabel(isExamMode() ? "识别考试" : (isZfImportMode() ? "导入课表" : actionLabel));
+            fab.setVisibility(View.VISIBLE);   // 考试/校园数据/正方导入模式常驻
         } else {
             fab.setVisibility(View.GONE);
         }
@@ -335,7 +344,8 @@ public class JwWebViewActivity extends Activity {
         String h = hostOf(url);
         boolean timetable = h.contains("jwglxt");
         // 考试模式：按钮常驻（学生要先自己点"查询"，那一刻页面还没到考试页，按钮就必须在场）
-        if (fab != null) fab.setVisibility((isExamMode() || isCampusMode()) ? View.VISIBLE : (timetable ? View.VISIBLE : View.GONE));
+        // zfimport：也常驻 —— 用户登录完落在哪一页不确定，不能等到"课表页"才给按钮
+        if (fab != null) fab.setVisibility((isExamMode() || isCampusMode() || isZfImportMode()) ? View.VISIBLE : (timetable ? View.VISIBLE : View.GONE));
         if (titleView != null && url != null && !url.isEmpty() && !url.equals("about:blank")) {
             String t = webView == null ? null : webView.getTitle();
             if (t != null && !t.trim().isEmpty()) titleView.setText(t.trim());
@@ -344,6 +354,76 @@ public class JwWebViewActivity extends Activity {
 
     private boolean isExamMode() { return "exam".equalsIgnoreCase(mode); }
     private boolean isCampusMode() { return "campus".equalsIgnoreCase(mode); }
+    private boolean isZfImportMode() { return "zfimport".equalsIgnoreCase(mode); }
+
+    /**
+     * 正方 jwglxt 课表接口导入（mode=zfimport，v2.68）。
+     *
+     * 与 scrape() 的区别：scrape 是"抓页面上已有的表格 HTML"（要求用户自己点到课表页），
+     * 这里则是"以**当前页面的登录会话**去调学校的课表接口拿 JSON" —— 用户只要登录成功停在
+     * 任意教务页面即可，不用自己找菜单。
+     *
+     * 安全边界（重要，改动前先读）：
+     *  - 这段 JS **完全由原生拼装**，不接受调用方传入的脚本 —— 不下发并执行 JS 是 Net.md 2.4 的红线；
+     *  - 只用**同源** fetch（credentials: 'include'），JSESSIONID 由 WebView 内核按域名自动携带，
+     *    原生和前端都**读不到** Cookie 值 —— 对应 PRD 5.4.8；
+     *  - 不读取页面上的任何表单值（账号/密码），不代填、不回传。
+     *
+     * 参数：xnm=学年起始年（如 "2026"），xqm=学期码（前端用 xqmOf() 换算），gnmkdm=功能码。
+     */
+    private void zfImport() {
+        if (fab == null || fab.getVisibility() != View.VISIBLE) return;
+        fab.setBusy(true);
+        errBox.setVisibility(View.GONE);
+
+        String xnm = orDefault(zfXnm, String.valueOf(java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)));
+        String xqm = orDefault(zfXqm, "3");
+        String gnmkdm = orDefault(zfGnmkdm, "N2151");
+
+        // 用 JSONObject.quote 把参数安全地嵌进脚本，避免引号/反斜杠注入
+        String js = "(function(){"
+            + "var gnmkdm=" + JSONObject.quote(gnmkdm) + ";"
+            + "var body='xnm='+encodeURIComponent(" + JSONObject.quote(xnm) + ")"
+            + "+'&xqm='+encodeURIComponent(" + JSONObject.quote(xqm) + ")"
+            + "+'&kzlx=ck&xsdm=&kclbdm=&kclxdm=';"
+            + "var base=location.origin+'/jwglxt';"
+            // 先探一次课表页，用来区分"会话还在不在"和"有没有权限"
+            + "return fetch(base+'/kbcx/xskbcx_cxXskbcxIndex.html?gnmkdm='+gnmkdm+'&layout=default',"
+            + "{credentials:'include'})"
+            + ".then(function(r){return r.text();})"
+            + ".then(function(page){"
+            +   "if(page.indexOf('login_slogin.html')>=0&&page.indexOf('name=\"yhm\"')>=0)return JSON.stringify({error:'SESSION_EXPIRED'});"
+            +   "if(page.indexOf('没有访问权限')>=0||page.indexOf('无访问权限')>=0)return JSON.stringify({error:'QUERY_DENIED'});"
+            +   "return fetch(base+'/kbcx/xskbcx_cxXsKb.html?gnmkdm='+gnmkdm,"
+            +   "{method:'POST',credentials:'include',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:body})"
+            +   ".then(function(r2){return r2.text();});"
+            + "})"
+            + ".then(function(out){return JSON.stringify({body:out,url:location.href});})"
+            + ".catch(function(e){return JSON.stringify({error:'NETWORK_RETRYABLE:'+e.message,url:location.href});});"
+            + "})()";
+
+        webView.evaluateJavascript(js, value -> {
+            String raw = value == null || value.equals("null") ? "{}" : value;
+            try {
+                String unwrapped = new JSONObject("{\"v\":" + raw + "}").getString("v");
+                JSONObject obj = new JSONObject(unwrapped);
+                if (obj.has("error")) {
+                    // 错误码原样带回前端，由前端映射成人话（错误分类的单一来源在 zfClient.ts）
+                    finishWith("", obj.getString("error"));
+                } else {
+                    finishWith(obj.getString("body"), "");
+                }
+            } catch (Exception e) {
+                finishWith("", "PARSE_FAILED");
+            }
+        });
+    }
+
+    /** 把 scrape 与 zfImport 合成一个入口，供圆点按钮调用 */
+    private void runAction() {
+        if (isZfImportMode()) zfImport();
+        else runScrape();
+    }
 
     private TextView nav(String glyph) {
         TextView t = new TextView(this);

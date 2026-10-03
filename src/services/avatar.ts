@@ -72,7 +72,7 @@ export async function cropToAvatar(source: string, rect: { sx: number; sy: numbe
 
 /**
  * 选头像（**只选图，不裁**）：返回原图 data URL，交给 `AvatarCropper` 让用户自己取景。
- * 用户取消返回 null（不是错误）。原生调用包了 `guard()`（AGENTS.md 硬规则 8）。
+ * 用户取消返回 null（不是错误）。原生调用包了 `guard()`（AGENTS.md 硬规则 7）。
  */
 export async function pickAvatarRaw(): Promise<string | null> {
   let photo: { dataUrl?: string } | null = null;

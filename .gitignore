@@ -1,9 +1,22 @@
+# 根目录与**任意层级**的 node_modules 都必须忽略。
+# 只写 `node_modules/` 在 Git 里等价于 `**/node_modules/`，但为防误改这里显式写全，
+# 因为 cloudflare/sync-worker/node_modules 有 180M（v2.52 体检发现）。
 node_modules/
+**/node_modules/
 dist/
 artifacts/
 *.log
 build-gradle*.log
 .DS_Store
+Thumbs.db
+
+# 编辑器 / 工具临时文件
+.vscode/.codex-tmp/
+# vite.config.ts 每次热重载生成的临时副本（v2.52 体检发现十来个）
+vite.config.ts.timestamp-*.mjs
+# Code Runner 的一次性产物
+tempCodeRunnerFile.c
+tempCodeRunnerFile.exe
 
 # 测试跑一次就重写一次的临时产物（zip 测试往这里写），不该跟着提交走
 tests/tmp-interop.zip

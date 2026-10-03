@@ -25,6 +25,17 @@ import { activeRulePacks, builtinAdapterVersion, setActiveRulePacks, type RulePa
 export const SCHEMA_VERSION = 1;
 export const APP_VERSION = '1.0.0';
 
+/**
+ * v2.75：没有学校档案时，本机数据落的**占位校名**。
+ *
+ * 起因：产品负责人要求"没有云端档案的学校也能用这个软件"（走「课表识别」自己填教务地址）。
+ * 那条路上 `profile` 是 null，而数据区路径是 `schools/<校名>/users/<账号>` ——
+ * 没有校名可填。用它兜底，课表就能真的存进本机，而不是在最后一步崩掉。
+ *
+ * 下划线开头是为了**绝不与真实 schoolId 撞车**（档案 id 都是 `buct` / `bisu` 这种小写字母）。
+ */
+export const LOCAL_SCOPE = '_local';
+
 function defaultSettings(p: SchoolProfile): Settings {
   return {
     notifyEnabled: true, classReminderEnabled: true, classReminderMinutes: 10,
@@ -64,6 +75,19 @@ function defaultSettings(p: SchoolProfile): Settings {
   };
 }
 
+/**
+ * v2.75：**没有学校档案时**的通用默认设置。
+ *
+ * `defaultSettings()` 需要一份档案来取"节次时间 / 学期起止"，但
+ * 「课表识别」允许没有云端档案的学校直接导入 —— 那条路上 `profile` 是 null。
+ * 这里用内置的通用节次表（`DEFAULT_PERIOD_TIMES`）与当前设置里的学期参数兜底，
+ * 让"载入数据 / 新建课表"都能走完，不至于在最后一步崩掉。
+ *
+ * 有档案时**永远仍走 `defaultSettings()`**，行为一字未改。
+ *
+ * 注意：它是 store 内部的闭包（要读 `profile` / `settings` 两个 ref），
+ * 所以定义在 `defineStore` 里面，而不是和 `defaultSettings` 一起放在文件顶层。
+ */
 export interface ConfirmRequest {
   title: string; body: string; detail?: string;
   confirmText: string; cancelText: string; danger: boolean;
@@ -141,8 +165,50 @@ const screen = ref<'school' | 'login' | 'app'>('login');
     return Math.min(Math.max(Math.floor(diff / 7) + 1, 1), t.totalWeeks);
   });
 
+  /**
+   * 当前数据区的路径前缀：`schools/<校>/users/<账号>`。
+   *
+   * 【v2.75 修：没有学校档案时会崩】
+   * 这里原来是 `'schools/' + profile.value!.schoolId + '/users/' + session.value!.accountId`。
+   * 以前所有写数据的入口都要求"先选一所本机有档案的学校"（`selectSchool` 会先 `profileOf` 判空），
+   * 所以那两个 `!` 从来没被真正踩到。
+   *
+   * v2.75 起「课表识别」允许**没有云端档案**的学校直接试导入
+   * （产品负责人：「我做正方系统的识别是为了让没有云端档案的也可以用这个软件」）——
+   * 那条路上 `profile` 是 null，拼出来就是 `schools/undefined/users/...`，
+   * 于是**用户最需要的那条路会在最后一步炸掉**。
+   *
+   * 修法：档案缺失时退回一个**本机占位校名**（`_local`）。
+   * 为什么不是"干脆不存"：用户明确要求这条路能用，那就得真能存下来；
+   * 课表是他的数据，不该因为"这所学校没有签名档案"而丢失。
+   * 占位目录只在这台手机本机有意义，不参与任何档案解析，也不影响有档案的学校（那条路径一字未改）。
+   */
   function base(): string {
-    return 'schools/' + profile.value!.schoolId + '/users/' + session.value!.accountId;
+    const sid = profile.value ? profile.value.schoolId : LOCAL_SCOPE;
+    return 'schools/' + sid + '/users/' + session.value!.accountId;
+  }
+
+  /**
+   * v2.75：**没有学校档案时**的通用默认设置（有档案时仍走 `defaultSettings`）。
+   *
+   * `defaultSettings()` 要一份档案来取"节次时间 / 学期起止"，但走「课表识别」进来的
+   * 学校可能没有档案（`profile` 为 null）。这里用内置的通用节次表与当前设置里的学期参数兜底，
+   * 保证"载入数据 / 新建课表"能走完 —— 不让用户在最需要它的那条路上栽在最后一步。
+   */
+  function baseSettings(): Settings {
+    const p = profile.value;
+    if (p) return defaultSettings(p);
+    const fallback = profileFor('buct')!;
+    return defaultSettings({
+      ...fallback,
+      academic: {
+        ...fallback.academic,
+        periodTimes: DEFAULT_PERIOD_TIMES.map((x) => ({ ...x })),
+        // 学期名不放在 Settings 里（它属于课表）；这里只兜底"节次表 + 学期起止周数"
+        semesterStartMonday: (settings.value && settings.value.semesterStartMonday) || fallback.academic.semesterStartMonday,
+        totalWeeks: (settings.value && settings.value.totalWeeks) || fallback.academic.totalWeeks
+      }
+    });
   }
 
   function notify(msg: string): void {
@@ -460,7 +526,12 @@ function answerConfirm(ok: boolean): void {
   async function loadUserData(): Promise<void> {
     if (!session.value) return;
     const b = base();
-    settings.value = { ...defaultSettings(profile.value!), ...(await readJson<Partial<Settings>>(b + '/settings.json', {})) as Settings };
+    /*
+     * v2.75：没有档案的学校（走「课表识别」进来的）也要能载入数据。
+     * `defaultSettings` 需要一份档案来取节次时间/学期起点，没有档案时用内置那套通用默认值兜底
+     * —— 否则这里 `profile.value!` 一样是 null，一进来就崩。
+     */
+    settings.value = { ...baseSettings(), ...(await readJson<Partial<Settings>>(b + '/settings.json', {})) as Settings };
     timetables.value = await readJson<Timetable[]>(b + '/timetable/timetables.json', []);
     courses.value = await readJson<Course[]>(b + '/timetable/courses.json', []);
     notes.value = await readJson<NoteItem[]>(b + '/notes/notes.json', []);
@@ -530,11 +601,20 @@ function answerConfirm(ok: boolean): void {
 
   // ---------------- CRUD helpers ----------------
   function newTimetable(name: string): Timetable {
-    const p = profile.value!;
+    /*
+     * 【v2.75 修】原来这里直接 `profile.value!`。
+     * 「课表识别」允许没有档案的学校直接导入，那条路上 profile 是 null ——
+     * 而导入的第一步就是 `newTimetable('我的课表')`，于是**必崩**。
+     * 这三个字段本来就是"跟着学校档案的默认值走"，档案不在时用设置里的值即可。
+     */
+    const p = profile.value;
     const t: Timetable = {
-      id: uuid(), name, semesterLabel: p.academic.semesterLabel,
-      semesterStartMonday: settings.value.semesterStartMonday, totalWeeks: settings.value.totalWeeks,
-      periodCount: 12, isActive: true, source: 'manual', createdAt: nowStamp(), updatedAt: nowStamp()
+      id: uuid(), name,
+      semesterLabel: p ? p.academic.semesterLabel : '',
+      semesterStartMonday: settings.value.semesterStartMonday,
+      totalWeeks: settings.value.totalWeeks,
+      periodCount: p && p.academic.periodTimes.length ? p.academic.periodTimes.length : 12,
+      isActive: true, source: 'manual', createdAt: nowStamp(), updatedAt: nowStamp()
     };
     timetables.value.push(t);
     settings.value.lastActiveTimetableId = t.id;
@@ -798,6 +878,30 @@ function hourTotal(kind: HourKind): number {
     return true;
   }
 
+  /**
+   * 把用户自己填的教务地址写进**本机档案副本**（v2.71，「正方识别」面板用）。
+   *
+   * 【为什么需要它】外校要能导入，档案里必须有 `systems.jwglxtUrl`。
+   * 但档案是**签名下发的**，开发方暂时没收录某所学校时就拿不到那个字段 ——
+   * 与其让用户干等，不如允许他在本机补一个地址（《教务助手》"添加学校"就是这么干的）。
+   *
+   * 【边界（不许越界）】
+   *  - 只改**已下载的那份副本**的这一个字段，然后重写 `catalog/downloaded-schools.json`。
+   *    **不碰 APK 内置档案**（那是 build 产物）；用户点「删除下载档案」回到内置就会自然还原。
+   *  - 输入必须已由 `services/jwAddress.ts` 解析并协议白名单过（本函数只做非空兜底），
+   *    因为这里的值会直接喂给 WebView 当 URL。
+   *  - 不联网、不探测、不上传。
+   */
+  async function updateJwglxtUrl(schoolId: string, url: string): Promise<boolean> {
+    const item = downloadedSchools.value[schoolId];
+    if (!item) { notify('这所学校的档案还没下载，无法保存地址'); return false; }
+    const clean = String(url || '').trim();
+    if (!/^https?:\/\//i.test(clean)) { notify('教务地址必须以 http:// 或 https:// 开头'); return false; }
+    item.profile.systems = { ...item.profile.systems, jwglxtUrl: clean };
+    await saveDownloaded();
+    return true;
+  }
+
   // ---------------- 天气（Net.md P0 / PRD 5.13，v2.24） ----------------
   /*
    * 这是 App 的**第一个真联网功能**，三条口径都在这里守（界面只负责调 ensureWeather）：
@@ -916,6 +1020,8 @@ function hourTotal(kind: HourKind): number {
     newTimetable, addCourse, removeCourse, addNote, addRecord, addHour, removeHour, addMaterial, removeMaterial, materialsOf, hourTotal, blockScore, totalScore, coursesOn, persistManifest,
     weatherBusy, weatherMsg, ensureWeather,
     downloadedSchools, downloadedList, schoolRows, catalog, profileOf, checkCatalog, downloadSchool, removeDownloaded,
+    /** v2.71：「正方识别」面板用 —— 把用户自己填的教务地址写进本机档案副本 */
+    updateJwglxtUrl,
     /** 把已下载档案落盘：正常流程由 downloadSchool/removeDownloaded 调用（测试里模拟"下载成功"时会直接用） */
     saveDownloaded,
     downloadedAdapters, adapterRows, adapterSourceText, downloadAdapter, removeAdapter

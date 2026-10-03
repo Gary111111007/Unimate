@@ -1,5 +1,12 @@
+/*
+ * 【v2.70 视觉降噪】主色从系统蓝 #007AFF 降一档到 #2C6FE0。
+ * 起因：真机截图里整块蓝色（底栏选中、按钮、气泡、横幅）亮度偏高、饱和偏满，
+ * 看久了"吵" —— 用户原话是"这个 ui 给我优化一下"。
+ * 降饱和 + 略降亮度后仍是同一个色相，但安静不少，和 --brand-2 的搭配也更稳。
+ * 注意：test:css 里有一条断言盯着 `--brand` 的取值，改这里要同步改断言。
+ */
 :root {
-  --brand: #007AFF;
+  --brand: #2C6FE0;
   --brand-2: #5856D6;
   --bg: #F2F2F7;
   --card: #FFFFFF;
@@ -15,7 +22,7 @@
   --soft: #F2F2F7;
   --soft-2: #E5E5EA;
   --field: #F2F2F7;
-  --tint: rgba(0, 122, 255, .10);
+  --tint: rgba(44, 111, 224, .10);
   --strong: #000000;
   --pressed: rgba(0, 0, 0, .05);
   --switch-off: #E9E9EA;
@@ -119,14 +126,15 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   --ink: #FFFFFF;
   --muted: rgba(235, 235, 245, .60);
   --line: rgba(84, 84, 88, .55);
-  --brand: #0A84FF;
+  /* v2.70：暗色主色同步降一档（跟随浅色的色相，别再用 #0A84FF） */
+  --brand: #4C8DF6;
   --danger: #FF453A;
   --ok: #30D158;
   --warn: #FF9F0A;
   --soft: #2C2C2E;
   --soft-2: #3A3A3C;
   --field: #2C2C2E;
-  --tint: rgba(10, 132, 255, .16);
+  --tint: rgba(76, 141, 246, .16);
   --strong: #FFFFFF;
   --pressed: rgba(255, 255, 255, .08);
   --switch-off: #39393D;
@@ -157,7 +165,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 :root[data-theme='dark'] .grey,
 :root[data-theme='dark'] .ghost { background: var(--soft); color: var(--text); border-color: var(--line); }
 :root[data-theme='dark'] .chip.on,
-:root[data-theme='dark'] .pill.brand { background: var(--tint); color: var(--brand); border-color: rgba(10, 132, 255, .35); }
+:root[data-theme='dark'] .pill.brand { background: var(--tint); color: var(--brand); border-color: rgba(76, 141, 246, .38); }
 :root[data-theme='dark'] .btn.grey { background: var(--soft); color: var(--text); }
 :root[data-theme='dark'] .btn.ghost { background: transparent; color: var(--brand); border-color: var(--line); }
 :root[data-theme='dark'] .muted { color: var(--muted); }

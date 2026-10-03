@@ -5,7 +5,7 @@
 本次是在现有 Vue + Capacitor Android、Pinia 数据层、P5 本机规则层和 Cloudflare Worker 上增量接线，没有替换课表、记事、天气、提醒或账号模块。
 
 ```text
-月亮悬浮入口 / Uni 页 / Voice
+月亮悬浮入口 / Uni 页（文字对话）
               │
               ▼
           Agent Core
@@ -41,12 +41,11 @@
 
 | 模块 | 文件 | 职责 |
 | --- | --- | --- |
-| 月亮入口 | `src/components/MoonAgentButton.vue` | 短按进入文字输入；长按 560 ms 进入语音链路 |
+| 月亮入口 | `src/components/MoonAgentButton.vue` | 短按放大，再点进入 Uni 文字对话；可全窗口拖动（v2.67 起不再有长按语音） |
 | Agent Core | `src/services/agentCore.ts` | 上下文、Tool 注册、结构化调用、风险确认 token、执行结果 |
 | Online / Offline Planner | `src/services/aiProvider.ts` | 调自己的网关；失败降级；网络恢复重试 |
 | 本机规则与 Tool | `src/services/uniTools.ts` | Offline 意图解析；课表、记事、天气、页面跳转 Tool |
-| App 适配器 | `src/views/UniView.vue` | 实现 `StudentAgentPort`，把 Tool 接到现有 store/UI；Agent Core 不 import Pinia |
-| Voice seam | `src/services/voiceAI.ts` | `VoiceInput` / `VoiceOutput` / `VoiceAgent`，固定 ASR → Agent → Tool → TTS |
+| App 适配器 | `src/views/UniView.vue` | 实现 `StudentAgentPort`，把 Tool 接到现有 store/UI；Agent Core 不 import Pinia；含按天分组的对话与历史面板 |
 | 自有服务端 | `cloudflare/sync-worker/src/index.js` | 通过 `AI` binding 调 Workers AI Function Calling；校验返回 JSON；不执行本机 Tool |
 | AI Pages 中转 | `cloudflare/agent-pages/public/_worker.js` | `unimate3-ai-pages.pages.dev` 经 `UNIMATE_AI` 服务绑定调用新账号 Worker；只允许健康检查与 Agent 路由 |
 
@@ -99,15 +98,25 @@ Offline Mode 不加载本地大模型，不新增模型文件、向量数据库�
 
 课表和记事仍由现有本机存储维护，断网不会影响读取与写入。待办确认状态保存在本轮本机会话中；取消、无待确认时回复“是”或重复确认都不会写入。`navigator.onLine` 只用于快速判断；即使系统误报有网，只要 Agent 网关失败且该命令能离线处理，也会落回 Offline Mode。
 
-## 5. Voice 接口
+## 5. 对话与历史记录（v2.67）
 
-`VoiceAgent` 的固定流水线是：
+Uni 只做**文字对话**，语音输入整条链路已下线：
 
-```text
-VoiceInput.transcribe() → AgentCore.ask() → Tool → VoiceOutput.speak()
-```
+- 前端：不再有麦克风按钮、`listenVoice()`、监听态与键盘语音兜底提示。
+- 服务层：`src/services/voiceAI.ts`（`VoiceInput` / `VoiceOutput` / `VoiceAgent`）已删除。
+- WebView 桥：`jwwebview.ts` 不再暴露 `speechToText` / `showKeyboard`。
+- 原生：`JwWebViewPlugin.java` 移除 `speechToText`、`showKeyboard`、`SpeechRecognizer` 后备与 `handleSpeechResult`；`AndroidManifest.xml` 不再申请 `RECORD_AUDIO`。
+- 月亮入口：短按放大、再点进入对话；拖动保存位置不变。
 
-默认适配器只尝试 WebView 提供的 Web Speech API，不增加原生 SDK、模型体积或模型 Key。当前 APK 没有新增录音权限，因此长按入口、超时保护、ASR/TTS 接口和降级提示已接好，但 Android 真机语音识别不能标记为已可用。后续接小智 AI、Whisper.cpp、Sherpa-ONNX 或服务端 ASR/TTS 时，只需替换 `VoiceInput` / `VoiceOutput`，不用改在线 Provider、Agent Core 或 Tool。
+对话区人性化（参考开源语音/聊天助手的通用做法）：
+
+- **按天分组**：每次跨天插入一条"今天 / 昨天 / 9月21日 周一"分隔条。
+- **头像 + 分组**：用户与 Uni 各有头像；连续同一方发言只显示第一个头像与气泡尾巴（`newGroup`）。
+- **时间克制**：同一方连续发言不再逐条重复完整时间，只显示 `HH:mm`。
+- **加载反馈**：等待回复用三点呼吸动画，而不是一行裸文字。
+- **历史面板**：按天分组、当天标题吸顶；用户消息只作为"问过什么"的摘要，Uni 回复完整呈现。
+
+历史记录仍按学校和账号保存在 `schools/<schoolId>/users/<accountId>/agent/history.json`，只恢复纯文本与时间，不恢复旧操作卡或确认 token。
 
 ## 6. 构建与验证
 
@@ -121,4 +130,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1
 
 2026-10-01 补充验证：独立 AI Pages 已上线，生产 `/health` 200 且 `agentReady:true`；真实模型返回“在线测试成功”，查询明天课表返回 `getSchedule` 结构化调用，APK Origin 预检 204。Agent 测试 49/49，包含 Provider 经中转返回在线回答、CORS、路由隔离和请求体上限。本次未开启付费计划；账单计划 API 无权限，免费额度消耗未核验。
 
-仍未验证：真机网络切换、真机月亮手势、ASR/TTS、Tool 写入和提醒的端到端点击。不能用静态构建或桌面 HTTP 结果代替真机结果。
+仍未验证：真机网络切换、真机月亮手势、Tool 写入和提醒的端到端点击。不能用静态构建或桌面 HTTP 结果代替真机结果。（语音输入已下线，不再列入验证范围。）

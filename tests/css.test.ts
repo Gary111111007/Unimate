@@ -200,7 +200,22 @@ ok('底栏状态变化有过渡且尊重 reduced-motion', /transition\s*:/.test(
 
 // Inset Grouped 与线性图标是本轮视觉语言的可执行契约，防止又退回彩色 Emoji + 重阴影。
 const globalStyles = readFileSync(join(root, 'styles.css'), 'utf8');
-ok('浅色主题使用 Apple 系统灰与系统蓝', /--brand:\s*#007AFF/i.test(globalStyles) && /--bg:\s*#F2F2F7/i.test(globalStyles));
+/*
+ * v2.70：主色从系统蓝 #007AFF 降一档到 #2C6FE0（真机截图反馈"整块蓝太吵"）。
+ * 这里不再写死原色值，而是断言"**仍然只有一个主色变量** +
+ * 色相落在蓝色区间 + 饱和度/亮度都在克制的范围内" —— 这样既守住 Apple 观感，
+ * 又不会因为一次调色就把断言写死成新的魔法值。
+ */
+const brandMatch = globalStyles.match(/--brand:\s*#([0-9A-Fa-f]{6})/);
+const brandHex = brandMatch ? brandMatch[1] : '';
+const rgb = [0, 2, 4].map((i) => parseInt(brandHex.slice(i, i + 2), 16));
+const maxC = Math.max(...rgb);
+const minC = Math.min(...rgb);
+const sat = maxC === 0 ? 0 : (maxC - minC) / maxC;
+ok('浅色主色仍是蓝色相且降过饱和（不再是满饱和系统蓝）',
+  rgb[2] > rgb[0] && rgb[2] > rgb[1] && sat <= 0.88 && maxC <= 0xF0,
+  '--brand=#' + brandHex + ' sat=' + sat.toFixed(2));
+ok('浅色主题使用 Apple 系统灰背景', /--bg:\s*#F2F2F7/i.test(globalStyles));
 ok('深色主题使用纯黑背景与深灰卡片', /\[data-theme=.dark.\][\s\S]*--bg:\s*#000000/i.test(globalStyles) && /--card:\s*#1C1C1E/i.test(globalStyles));
 ok('功能列表达到 52px 触控高度并使用内缩分隔线', /\.li\s*\{[^}]*min-height:\s*52px/.test(globalStyles) && /\.li:not\(:last-child\)::after\s*\{[^}]*left:\s*52px/.test(globalStyles));
 ok('我的页入口使用统一 SVG 线性图标且不含彩色 Emoji', meView.includes('<AppleIcon') && !/[🔔🌗💧🌤💾🏫ℹ]/u.test(meView));
@@ -215,6 +230,29 @@ ok('下一节课卡片位于课表内容之后且在周次切换之前', timetab
 ok('校园服务宫格使用统一线性图标', onlineUi.includes(':name="campusIconName(a)"') && !onlineUi.includes('<span v-else class="ico">{{ a.icon }}</span>'));
 ok('校园服务卡片与操作按钮使用紧凑尺寸', /\.app\s*\{[^}]*min-height:\s*108px/.test(onlineUi) && /:size="24"/.test(onlineUi) && /\.secrow \.btn\.sm\s*\{[^}]*min-height:\s*30px/.test(onlineUi));
 ok('二课分类使用线性图标与 aria-pressed', secondClassUi.includes('<AppleIcon') && (secondClassUi.match(/:aria-pressed="sheet ===/g) || []).length === 3 && !secondClassUi.includes('>🏅 二课填报') && !secondClassUi.includes('>🤝 志愿时长') && !secondClassUi.includes('>🧹 劳育时长'));
+
+/*
+ * v2.71：暗色下选校页那几个标签「看不清」。
+ *
+ * 真机反馈原话是"深色模式下'教务系统待识别'这几个字有问题"。根因：
+ * `.jwtag` 的底色写死 #F0F2F5、字用 var(--muted)，在暗色下 = 浅灰底 + 60% 白字，
+ * 对比度约 1.4:1，几乎看不见；而 styles.css 里那段 `:root[data-theme='dark'] .pill/.chip/.grey`
+ * **兜不住 `.jwtag`**（它不在名单里）。
+ *
+ * 这里守两件事：
+ *  ① `.jwtag` 系列不再有写死的浅色底（必须走 --soft-2 / --tint / 透明叠加）；
+ *  ② hint 与 warn 这类"正向/警示"标签必须有**自己的暗色覆盖**，不能只靠变量自动翻。
+ */
+const schoolPickerUi = readFileSync(join(root, 'screens', 'SchoolPicker.vue'), 'utf8');
+const jwtagBase = /\.jwtag \{[^}]*\}/.exec(schoolPickerUi)?.[0] || '';
+ok('教务系统标签底色不再写死浅色（走语义变量）',
+  jwtagBase.includes('var(--soft-2)') && !/#F0F2F5/i.test(jwtagBase), jwtagBase.slice(0, 90));
+const jwtagHint = /\.jwtag\.hint \{[^}]*\}/.exec(schoolPickerUi)?.[0] || '';
+ok('「可登录导入课表」标签不再写死浅绿底', !/#E6F6EC/i.test(jwtagHint), jwtagHint.slice(0, 90));
+ok('正向/警示标签有独立的暗色覆盖（不指望变量自己翻）',
+  /:root\[data-theme='dark'\] \.jwtag\.hint/.test(schoolPickerUi) && /:root\[data-theme='dark'\] \.statepill\.warn/.test(schoolPickerUi));
+ok('「开发中」标签在暗色下也走 --soft-2（与待识别同类处理）',
+  /:root\[data-theme='dark'\] \.statepill\.dev \{ background: var\(--soft-2\)/.test(schoolPickerUi));
 
 console.log('');
 console.log('CSS Test: ' + passed + ' passed, ' + failed + ' failed');

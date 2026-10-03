@@ -75,6 +75,11 @@ Invoke-Npm 'test:p5-prototype'
 Invoke-Npm 'test:parser'
 Invoke-Npm 'test:exam'
 Invoke-Npm 'test:school'
+Invoke-Npm 'test:jwsystems'
+Invoke-Npm 'test:zfclient'
+Invoke-Npm 'test:zfimport'
+Invoke-Npm 'test:markdown'
+Invoke-Npm 'test:jwaddress'
 Invoke-Npm 'test:share'
 Invoke-Npm 'test:weather'
 Invoke-Npm 'test:avatar'
@@ -206,6 +211,13 @@ $hasRemotePayload = @($names | Where-Object { $_ -like "assets/public/catalog/*"
 
 $match = $false
 
+# 【修复】$p2 原来只在下面的 foreach 里赋值，而"文件名已是当前 bundle"的那一支会在
+# 赋 $p2 之前就 continue —— 于是正常路径下 $p2 一直是 $null，
+# 第 6 步的 Select-String -LiteralPath $p2 直接 ParameterArgumentValidationErrorNullNotAllowed，
+# 校验在半途崩掉（打印出来的"版权署名(bundle)"那一行是崩前写进去的，不可信）。
+# 现在把临时路径提到循环外先建好，并在此处直接写出"包内那份"供第 6 步查署名。
+$p2 = Join-Path $env:TEMP "apk-bundle.js"
+
 foreach ($e in $pkgJs) {
 
   if ($e.FullName.Split("/")[-1] -ne $distJs.Name) { continue }
@@ -213,8 +225,6 @@ foreach ($e in $pkgJs) {
   $ms = New-Object IO.MemoryStream
 
   $st = $e.Open(); $st.CopyTo($ms); $st.Close(); $ms.Close()
-
-  $p2 = Join-Path $env:TEMP "apk-bundle.js"
 
   [IO.File]::WriteAllBytes($p2, $ms.ToArray())
 

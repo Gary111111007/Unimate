@@ -195,7 +195,7 @@ async function useDemo(): Promise<void> {
 .schoolname { font-weight: 600; }
 .body { flex: 1; padding: 26px 16px; }
 .demobar { background: var(--tint); color: var(--brand); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; line-height: 1.7; margin-bottom: 16px; }
-.logo { width: 60px; height: 60px; margin: 0 auto 10px; border-radius: 18px; background: linear-gradient(135deg, #2E5AAC, #4E7BD6); color: #fff; font-size: 34px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.logo { width: 60px; height: 60px; margin: 0 auto 10px; border-radius: 18px; background: linear-gradient(135deg, #2C6FE0, #4E7BD6); color: #fff; font-size: 34px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
 .title { text-align: center; font-size: 20px; font-weight: 700; }
 .form { margin-top: 22px; }
 .tabs { display: flex; gap: 8px; margin-bottom: 16px; }

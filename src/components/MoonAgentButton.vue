@@ -5,7 +5,8 @@ import { guard } from '../services/guard.ts';
 import { anchorFromPos, clampToBox, posFromAnchor, toolBox } from '../services/toolbox.ts';
 
 const props = defineProps<{ busy?: boolean; mode?: 'online' | 'offline' }>();
-const emit = defineEmits<{ text: []; voice: [] }>();
+// v2.67：语音输入已下线（见 docs/agent-architecture.md）。月亮只保留"短按放大 / 再点进入 Uni"。
+const emit = defineEmits<{ text: [] }>();
 const db = useDb();
 
 const holding = ref(false);
@@ -21,9 +22,7 @@ const moonSize = computed(() => moonExpanded.value ? MOON_LARGE_SIZE : MOON_SMAL
 const moonStyle = computed(() => ({
   transform: 'translate3d(' + moonPos.value.x + 'px, ' + moonPos.value.y + 'px, 0)'
 }));
-let holdTimer = 0;
 let collapseTimer = 0;
-let longTriggered = false;
 let gesture: { id: number; sx: number; sy: number; ox: number; oy: number; moved: boolean; wasExpanded: boolean } | null = null;
 
 function zoomFactor(): number {
@@ -77,21 +76,11 @@ function pressStart(event: PointerEvent): void {
   clearTimeout(collapseTimer);
   placeMoon();
   holding.value = true;
-  longTriggered = false;
   gesture = {
     id: event.pointerId, sx: event.clientX, sy: event.clientY,
     ox: moonPos.value.x, oy: moonPos.value.y, moved: false, wasExpanded: moonExpanded.value
   };
   try { (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); } catch { /* 不支持也可短按 */ }
-  clearTimeout(holdTimer);
-  holdTimer = setTimeout(() => {
-    if (!gesture || gesture.moved) return;
-    longTriggered = true;
-    holding.value = false;
-    expandMoon();
-    emit('voice');
-    scheduleCollapse();
-  }, 560) as unknown as number;
 }
 
 function pressMove(event: PointerEvent): void {
@@ -104,14 +93,12 @@ function pressMove(event: PointerEvent): void {
     current.moved = true;
     moonDragging.value = true;
     holding.value = false;
-    clearTimeout(holdTimer);
   }
   if (!current.moved) return;
   moonPos.value = clampToBox(current.ox + dx, current.oy + dy, moonBounds());
 }
 
 function pressEnd(event: PointerEvent): void {
-  clearTimeout(holdTimer);
   holding.value = false;
   const current = gesture;
   gesture = null;
@@ -122,20 +109,15 @@ function pressEnd(event: PointerEvent): void {
     if (moonExpanded.value) scheduleCollapse();
     return;
   }
-  if (!longTriggered) {
-    if (!current.wasExpanded) expandMoon();
-    else { emit('text'); collapseMoon(); }
-  }
-  longTriggered = false;
+  if (!current.wasExpanded) expandMoon();
+  else { emit('text'); collapseMoon(); }
 }
 
 function pressCancel(): void {
-  clearTimeout(holdTimer);
   holding.value = false;
   if (gesture?.moved) saveMoonPosition();
   gesture = null;
   moonDragging.value = false;
-  longTriggered = false;
   if (moonExpanded.value) scheduleCollapse();
 }
 
@@ -156,7 +138,6 @@ onMounted(() => {
   window.addEventListener('resize', placeMoon);
 });
 onUnmounted(() => {
-  clearTimeout(holdTimer);
   clearTimeout(collapseTimer);
   window.removeEventListener('resize', placeMoon);
 });
@@ -174,7 +155,7 @@ onUnmounted(() => {
     }"
     :style="moonStyle"
     :disabled="busy"
-    :aria-label="mode === 'offline' ? 'Uni 月亮助手，Offline Mode；点击放大后使用，也可在全窗口拖动' : 'Uni 月亮助手；点击放大后使用，也可在全窗口拖动'"
+    :aria-label="mode === 'offline' ? 'Uni 月亮助手，Offline Mode；点击放大后再点进入对话，也可在全窗口拖动' : 'Uni 月亮助手；点击放大后再点进入对话，也可在全窗口拖动'"
     @pointerdown="pressStart"
     @pointermove="pressMove"
     @pointerup="pressEnd"

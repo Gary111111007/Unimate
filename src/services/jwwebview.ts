@@ -18,17 +18,22 @@ export interface JwWebViewPlugin {
      * 'timetable'（默认）：抓课表，圆钮只在教务域名下出现；
      * 'exam'：抓考试，按钮**常驻**并显示「识别考试」。
      * 'campus'：校园数据只读采集，按钮常驻，只读取调用方给出的结果容器。
+     * 'zfimport'（v2.68，外校正方 jwglxt）：不抓页面 DOM，而是在**同源会话**里由原生拼装 JS
+     * 调课表接口取 kbList JSON。三个 zf* 参数是必填的（学期码由前端用 zfClient.xqmOf() 算好）。
+     * 安全边界：脚本完全由原生构造、只走同源 fetch、不读 Cookie 值、不读表单值。
      */
-    mode?: 'timetable' | 'exam' | 'campus';
+    mode?: 'timetable' | 'exam' | 'campus' | 'zfimport';
+    /** 仅 zfimport 用：学年（如 "2025"） */
+    zfXnm?: string;
+    /** 仅 zfimport 用：学期码 1/2/3（1=第一学期，2=第二学期，3=短学期） */
+    zfXqm?: string;
+    /** 仅 zfimport 用：功能模块码，默认 N2151（学生课表查询） */
+    zfGnmkdm?: string;
   }): Promise<WebViewOpenResult>;
   /** 只问"有没有、几条"，原生侧不返回 Cookie 内容 */
   cookieProbe(options: { url: string }): Promise<CookieProbe>;
   /** 用系统应用打开本机私有目录里的文件 */
   openFile(options: { path: string; name?: string; mime?: string }): Promise<{ ok: boolean; error: string; mime?: string }>;
-  /** 调用系统语音识别；App 只接收文字，不保存录音 */
-  speechToText(options: { locale?: string }): Promise<{ ok: boolean; text: string; error: string }>;
-  /** 聚焦 Web 输入框后唤起系统输入法，供没有 RecognitionService 的设备使用键盘语音输入 */
-  showKeyboard(): Promise<{ ok: boolean; error: string }>;
   /** 电池优化豁免 + 精确闹钟状态，以及机型指引 */
   powerStatus(): Promise<PowerStatus>;
   /** 申请加入电池优化白名单（先试系统一键弹窗，退回设置列表页） */
@@ -116,8 +121,6 @@ export const JwWebView = registerPlugin<JwWebViewPlugin>('JwWebView', {
     open: async (): Promise<WebViewOpenResult> => ({ ok: false, reason: 'web-unsupported' }),
     cookieProbe: async (): Promise<CookieProbe> => ({ present: false, count: 0 }),
     openFile: async (): Promise<{ ok: boolean; error: string }> => ({ ok: false, error: '桌面预览环境无法调用系统应用' }),
-    speechToText: async () => ({ ok: false, text: '', error: '桌面预览环境没有系统语音识别桥' }),
-    showKeyboard: async () => ({ ok: false, error: '桌面预览环境无法调用系统输入法' }),
     powerStatus: async (): Promise<PowerStatus> => ({ ok: false, ignoring: false, exactAlarm: true, rom: '', hint: '桌面预览环境无法查询电池优化状态，请在手机上查看', error: 'web-unsupported' }),
     requestIgnoreBattery: async () => ({ ok: false, mode: '', error: '桌面预览环境无法调用系统设置' }),
     openExactAlarmSettings: async () => ({ ok: false, error: '桌面预览环境无法调用系统设置' }),
