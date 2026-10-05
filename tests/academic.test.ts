@@ -15,6 +15,7 @@ const gradesHtml = read('fixtures/academic-grades.sample.html');
 const examsJson = read('fixtures/academic-exams.sample.json');
 const examsHtml = read('fixtures/academic-exams.sample.html');
 const legacyExamHtml = read('fixtures/jwglxt-exam.sample.html');
+const jqgridExamHtml = read('fixtures/academic-exams-jqgrid.sample.html');
 
 let pass = 0;
 const fails: string[] = [];
@@ -57,6 +58,10 @@ console.log('\n--- 双通道解析 ---');
   ok('考试时间生成 startAt', eh.records.every((e) => e.startAt !== null));
   ok('通用考试样本旧解析器确实无结果', parseJwglxtExams(examsHtml).exams.length === 0);
   ok('通用解析器能兜底这个样本（3 条）', parseAcademicExams(examsHtml).records.length === 3);
+  const jqgridNoAria = jqgridExamHtml.replace(/\saria-describedby=\"[^\"]*\"/gi, '');
+  const jqgridFallback = parseAcademicExams(jqgridNoAria);
+  ok('缺少旧列标记时 jqGrid 能走通用兜底', parseJwglxtExams(jqgridNoAria).exams.length === 0 && jqgridFallback.records.length === 1, String(jqgridFallback.records.length));
+  ok('jqGrid 分页栏不会被当成假考试', jqgridFallback.records.every((e) => !!e.examTime && !!e.date), JSON.stringify(jqgridFallback.records));
   ok('考试记录保留日期和起止时间', eh.records.every((e) => e.date.length > 0 && e.start.length > 0 && e.end.length > 0));
 }
 

@@ -89,6 +89,10 @@ function mapRows<T>(scope: AcademicScope, rows: unknown[], rules: AcademicRules,
     if (!name && !timeOrScore) { diagnostics.push({ code: 'row-dropped', channel, message: '第 ' + (i + 1) + ' 行缺少课程名和关键字段，已丢弃', row: i + 1 }); return; }
     const code = chooseCode(fieldValues(row, aliases.courseCode || [])); if (!code.code && code.internalFiltered) diagnostics.push({ code: 'internal-course-id-filtered', channel, message: '第 ' + (i + 1) + ' 行课程代码是内部 ID，已置空', row: i + 1, fields: ['courseCode'] });
     const t = parseExamTime(readField(row, aliases.examTime || []));
+    if (scope === 'exams' && !t.ok) {
+      diagnostics.push({ code: 'missing-fields', channel, message: '第 ' + (i + 1) + ' 行考试时间无法识别，已丢弃', row: i + 1, fields: ['examTime'] });
+      return;
+    }
     const base = { courseCode: code.code, courseName: name || (scope === 'grades' ? '未命名课程' : '未命名考试'), remark: readField(row, aliases.remark || []), termId: normalizeTerm(readField(row, aliases.year || []), readField(row, aliases.term || [])) };
     records.push((scope === 'grades' ? { ...base, credits: parseNumber(readField(row, aliases.credits || [])), score: readField(row, aliases.score || []), point: parseNumber(readField(row, aliases.point || [])), nature: readField(row, aliases.nature || []), category: readField(row, aliases.category || []), teacher: readField(row, aliases.teacher || []), assessment: readField(row, aliases.assessment || []), status: readField(row, aliases.status || []) } : { ...base, examType: readField(row, aliases.examType || []), examTime: readField(row, aliases.examTime || []), date: t.date, start: t.start, end: t.end, startAt: t.startAt, location: readField(row, aliases.location || []), campus: readField(row, aliases.campus || []), seat: readField(row, aliases.seat || []), mode: readField(row, aliases.mode || []) }) as unknown as T);
   });
