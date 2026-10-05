@@ -64,7 +64,7 @@ export interface CatalogEntry {
  */
 export interface AdapterEntry {
   id: string;
-  kind: 'timetable' | 'exam';
+  kind: 'timetable' | 'exam' | 'academic';
   version: number;
   file: string;
   sha256: string;
@@ -165,7 +165,7 @@ export function parseAdapterEntry(x: any): AdapterEntry | null {
   if (!x || typeof x !== 'object') return null;
   const id = String(x.id || '');
   if (!/^[a-z][a-z0-9-]{2,31}$/.test(id)) return null;
-  if (x.kind !== 'timetable' && x.kind !== 'exam') return null;
+  if (x.kind !== 'timetable' && x.kind !== 'exam' && x.kind !== 'academic') return null;
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(String(x.file || ''))) return null;
   if (!/^[0-9a-f]{64}$/i.test(String(x.sha256 || ''))) return null;
   if (!(Number(x.version) >= 1)) return null;

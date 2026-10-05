@@ -55,7 +55,8 @@ public class JwWebViewActivity extends Activity {
     /**
      * 抓取模式：
      *  "timetable"（默认）= 课表，圆钮只在教务域名下出现；
-     *  "exam" = 考试，按钮**常驻**并显示「识别考试」（产品负责人："这个界面你得一直保有一个按键，叫做识别考试"）。
+     *  "exam" = 考试，按钮**常驻**并显示「识别考试」；
+     *  "grade" = 成绩，按钮**常驻**并显示「识别成绩」。
      */
     private String mode = "timetable";
     private String actionLabel = "读取当前结果";
@@ -67,6 +68,10 @@ public class JwWebViewActivity extends Activity {
     private String zfXnm = "";
     private String zfXqm = "";
     private String zfGnmkdm = "";
+    /** grade 模式：一次抓取多个分页，累积每页表格 HTML */
+    private final java.util.ArrayList<String> gradePages = new java.util.ArrayList<>();
+    private String gradeLastSig = "";
+    private int gradePageCount = 0;
 
     /** 网页里的 <input type=file>（交作业、传附件）：北化在线/学习通提交作业必走这条路。 */
     private static final int REQ_FILES = 4108;
@@ -87,7 +92,7 @@ public class JwWebViewActivity extends Activity {
         zfXnm = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_ZF_XNM), "");
         zfXqm = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_ZF_XQM), "");
         zfGnmkdm = orDefault(args.getStringExtra(JwWebViewPlugin.EXTRA_ZF_GNMKDM), "");
-        if (isExamMode() && (selector == null || selector.isEmpty())) {
+        if ((isExamMode() || isGradeMode()) && (selector == null || selector.isEmpty())) {
             // 考试页是 jqGrid：优先取整个表格容器，取不到再退到行容器/整页
             selector = "#gbox_tabGrid,#tabGrid,table.ui-jqgrid-btable,body";
         }
@@ -228,9 +233,9 @@ public class JwWebViewActivity extends Activity {
         fabLp.rightMargin = (int) (10 * dp);
         fab.setLayoutParams(fabLp);
         fab.setListener(() -> runAction());
-        if (isExamMode() || isCampusMode() || isZfImportMode()) {
+        if (isExamMode() || isGradeMode() || isCampusMode() || isZfImportMode()) {
             // zfimport：按钮叫「导入课表」，用户登录完点它即可，不用自己找菜单路径
-            fab.setLabel(isExamMode() ? "识别考试" : (isZfImportMode() ? "导入课表" : actionLabel));
+            fab.setLabel(isExamMode() ? "识别考试" : (isGradeMode() ? "识别成绩" : (isZfImportMode() ? "导入课表" : actionLabel)));
             fab.setVisibility(View.VISIBLE);   // 考试/校园数据/正方导入模式常驻
         } else {
             fab.setVisibility(View.GONE);
@@ -345,7 +350,7 @@ public class JwWebViewActivity extends Activity {
         boolean timetable = h.contains("jwglxt");
         // 考试模式：按钮常驻（学生要先自己点"查询"，那一刻页面还没到考试页，按钮就必须在场）
         // zfimport：也常驻 —— 用户登录完落在哪一页不确定，不能等到"课表页"才给按钮
-        if (fab != null) fab.setVisibility((isExamMode() || isCampusMode() || isZfImportMode()) ? View.VISIBLE : (timetable ? View.VISIBLE : View.GONE));
+        if (fab != null) fab.setVisibility((isExamMode() || isGradeMode() || isCampusMode() || isZfImportMode()) ? View.VISIBLE : (timetable ? View.VISIBLE : View.GONE));
         if (titleView != null && url != null && !url.isEmpty() && !url.equals("about:blank")) {
             String t = webView == null ? null : webView.getTitle();
             if (t != null && !t.trim().isEmpty()) titleView.setText(t.trim());
@@ -353,6 +358,7 @@ public class JwWebViewActivity extends Activity {
     }
 
     private boolean isExamMode() { return "exam".equalsIgnoreCase(mode); }
+    private boolean isGradeMode() { return "grade".equalsIgnoreCase(mode); }
     private boolean isCampusMode() { return "campus".equalsIgnoreCase(mode); }
     private boolean isZfImportMode() { return "zfimport".equalsIgnoreCase(mode); }
 
@@ -518,6 +524,7 @@ public class JwWebViewActivity extends Activity {
 
     /** 抓取：只读取指定表格的 outerHTML，不读表单值、不读 Cookie。 */
     private void scrape() {
+        if (isGradeMode()) { scrapeGradePages(); return; }
         String css = selector == null || selector.isEmpty() ? "#kbgrid_table_0" : selector;
         // selector 支持逗号分隔的候选列表（考试页的表格 id 可能因版本而异，逐个试）
         StringBuilder arr = new StringBuilder("[");
@@ -543,6 +550,72 @@ public class JwWebViewActivity extends Activity {
                 finishWith("", "parse-failed");
             }
         });
+    }
+
+    private String gradeSelectorJs() {
+        String css = selector == null || selector.isEmpty() ? "#gbox_tabGrid,#tabGrid,table.ui-jqgrid-btable,table,body" : selector;
+        StringBuilder arr = new StringBuilder("[");
+        for (String one : css.split(",")) {
+            one = one.trim();
+            if (!one.isEmpty()) arr.append(JSONObject.quote(one)).append(",");
+        }
+        arr.append("]");
+        return arr.toString();
+    }
+
+    private static String nextButtonJs() {
+        return "function disabled(x){if(!x)return true;var c=' '+(x.className||'')+' ';return c.indexOf(' ui-state-disabled ')>=0||c.indexOf(' disabled ')>=0||x.disabled===true;}"
+            + "function nextBtn(){var qs=['#next_pager','#next_tabGrid','.ui-icon-seek-next'];"
+            + "for(var i=0;i<qs.length;i++){try{var e=document.querySelector(qs[i]);if(e){var b=e.closest?e.closest('.ui-pg-button'):null;if(!b)b=e;if(!disabled(b))return b;}}catch(_){ }}"
+            + "var all=document.querySelectorAll('.ui-pg-button');for(var j=0;j<all.length;j++){var t=(all[j].getAttribute('title')||'').trim();if((t==='Next Page'||t==='下一页'||t==='下页'||t==='Next')&&!disabled(all[j]))return all[j];}"
+            + "all=document.querySelectorAll('a,button,span,div');for(var j=0;j<all.length;j++){var t=(all[j].innerText||all[j].textContent||'').trim();if((t==='>'||t==='下一页'||t==='下页'||t==='Next')&&!disabled(all[j]))return all[j];}return null;}";
+    }
+
+    /** grade 模式：抓当前页，找到下一页就点击，等 AJAX 换页后再抓，直到没有下一页或最多 20 页。 */
+    private void scrapeGradePages() {
+        gradePages.clear(); gradeLastSig = ""; gradePageCount = 0;
+        gradeScrapeStep();
+    }
+
+    private void gradeScrapeStep() {
+        String js = "(function(){try{var sels=" + gradeSelectorJs() + ";var el=null;"
+            + "for(var i=0;i<sels.length;i++){try{el=document.querySelector(sels[i]);}catch(e){}if(el){break;}}"
+            + "if(!el){return JSON.stringify({error:'no-table',url:location.href});}"
+            + nextButtonJs()
+            + "var body=el.querySelector('.ui-jqgrid-btable tbody')||el.querySelector('tbody')||el;"
+            + "var sig=(body.innerText||body.textContent||'').replace(/\s+/g,' ').slice(0,1200);"
+            + "return JSON.stringify({html:el.outerHTML,sig:sig,next:!!nextBtn(),url:location.href,title:document.title});"
+            + "}catch(e){return JSON.stringify({error:'scrape-failed:'+e.message,url:location.href});}})()";
+        webView.evaluateJavascript(js, value -> {
+            try {
+                String raw = value == null || value.equals("null") ? "{}" : value;
+                String unwrapped = new JSONObject("{\"v\":" + raw + "}").getString("v");
+                JSONObject obj = new JSONObject(unwrapped);
+                if (obj.has("error")) {
+                    if (gradePages.isEmpty()) finishWith("", obj.getString("error"));
+                    else finishGradePages();
+                    return;
+                }
+                String sig = obj.optString("sig", "");
+                if (gradePageCount > 0 && sig.equals(gradeLastSig)) { finishGradePages(); return; }
+                gradePages.add(obj.getString("html"));
+                gradeLastSig = sig;
+                gradePageCount++;
+                if (gradePageCount >= 20 || !obj.optBoolean("next", false)) { finishGradePages(); return; }
+                clickNextGradePage();
+            } catch (Exception e) { finishWith("", "parse-failed"); }
+        });
+    }
+
+    private void clickNextGradePage() {
+        String js = "(function(){try{" + nextButtonJs()
+            + "var b=nextBtn();if(!b)return 'none';b.click();return 'ok';}catch(e){return 'error';}})()";
+        webView.evaluateJavascript(js, ignored -> webView.postDelayed(this::gradeScrapeStep, 800));
+    }
+
+    private void finishGradePages() {
+        if (gradePages.isEmpty()) { finishWith("", "no-table"); return; }
+        finishWith(String.join("\n<!--unimate-page-->\n", gradePages), "");
     }
 
     private void finishWith(String html, String reason) {

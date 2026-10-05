@@ -43,7 +43,7 @@ public class JwWebViewPlugin extends Plugin {
     public static final String EXTRA_TITLE = "unimate:title";
     public static final String EXTRA_SELECTOR = "unimate:selector";
     public static final String EXTRA_ALLOW_EXTERNAL = "unimate:allowExternal";
-    /** timetable = 抓课表；exam = 抓考试（按钮常驻，叫「识别考试」）；campus = 校园数据；zfimport = 正方接口导入 */
+    /** timetable = 抓课表；exam = 抓考试；grade = 抓成绩（后两者常驻「识别」按钮）；campus = 校园数据；zfimport = 正方接口导入 */
     public static final String EXTRA_MODE = "unimate:mode";
     public static final String EXTRA_ACTION_LABEL = "unimate:actionLabel";
     /** zfimport 专用：课表接口参数（v2.68）。学期码由前端用 zfClient.xqmOf() 算好传入 */

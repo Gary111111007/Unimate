@@ -136,6 +136,7 @@ npm run test:jwaddress    # 教务地址解析纯函数（48 条，v2.71）
 npm run test:zfimport     # 外校正方导入编排（33 条）
 npm run test:zfclient     # 正方协议纯函数（68 条）
 npm run test:jwsystems    # 教务系统品牌识别（24 条）
+npm run test:academic     # P4 成绩/考试识别、本机持久化、不上云（32 条）
 node scripts\make-pages-package.mjs v2.65   # 只出可拖放目录（不压 ZIP）
 npm run check:cloud       # 线上账号链路自检（临时账号走注册→上传→下载→注销，自清理；需外网）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
@@ -144,7 +145,7 @@ npx wrangler pages deploy dist --project-name unimate3                       # �
 curl.exe -sS https://unimate3.pages.dev/ | Select-String 'index-.*\.js'      # 核对线上跑的是哪个包
 ```
 
-**31 个测试套件**（以 `package.json` 的 `test:*` 为准，新增套件必须同时登记进 `package.json` 与 `scripts/build-apk.ps1`，否则等于没跑）：
+**32 个测试套件**（以 `package.json` 的 `test:*` 为准，新增套件必须同时登记进 `package.json` 与 `scripts/build-apk.ps1`，否则等于没跑）：
 
 ```
 parser 57 · zip 15 · notify 124 · color 15 · guard 6 · order 4 · boot 14 · refs 2 · css 42

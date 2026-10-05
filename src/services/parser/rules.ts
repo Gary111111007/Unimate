@@ -12,7 +12,28 @@
 
 import { ref } from 'vue';
 
-export type RuleKind = 'timetable' | 'exam';
+export type RuleKind = 'timetable' | 'exam' | 'academic';
+
+/** P4 通用学术记录规则：成绩/考试共用别名表 + JSON 载荷优先级 */
+export interface AcademicRules {
+  schoolId: string;
+  menuHints: string[];
+  payloadArrayPriority: string[];
+  scopes: {
+    grades?: { aliases: Record<string, string[]> };
+    exams?: { aliases: Record<string, string[]> };
+  };
+}
+
+export const ACADEMIC_GRADE_FIELDS = [
+  'courseCode', 'courseName', 'credits', 'score', 'point', 'nature', 'category',
+  'teacher', 'assessment', 'status', 'remark', 'year', 'term'
+];
+
+export const ACADEMIC_EXAM_FIELDS = [
+  'courseCode', 'courseName', 'examType', 'examTime', 'location', 'campus',
+  'seat', 'mode', 'remark', 'year', 'term'
+];
 
 /** 课表解析规则（键名即白名单；未知键一律拒收） */
 export interface TimetableRules {
@@ -119,10 +140,54 @@ export const EXAM_DEFAULTS: ExamRules = {
   }
 };
 
+export const ACADEMIC_DEFAULTS: AcademicRules = {
+  schoolId: 'buct',
+  menuHints: ['jwglxt', 'cjcx', 'kbcx', 'kwgl'],
+  payloadArrayPriority: [
+    'kblist', 'items', 'rows', 'data', 'result', 'list', 'aadata', 'records',
+    'recordlist', 'datalist', 'gradelist', 'courselist', 'sjklist', 'jxhjkclist'
+  ],
+  scopes: {
+    grades: {
+      aliases: {
+        courseCode: ['kch', 'courseCode', '课程代码', 'kch_id', 'kcdm', '课程号'],
+        courseName: ['kcmc', 'courseName', '课程名称', '课程'],
+        credits: ['xf', 'credits', '学分'],
+        score: ['cj', 'score', '成绩'],
+        point: ['jd', 'point', '绩点'],
+        nature: ['kcxz', 'nature', '课程性质'],
+        category: ['kclb', 'category', '课程类别'],
+        teacher: ['jsxm', 'teacher', '教师'],
+        assessment: ['ksxz', 'assessment', '考核方式'],
+        status: ['cjbs', 'status', '成绩状态'],
+        remark: ['bzxx', 'cjbz', 'bz', 'ksbz', 'remark', '备注'],
+        year: ['xnm', 'xn', 'xnmc', 'year', '学年'],
+        term: ['xqm', 'xq', 'xqmmc', 'semester', '学期']
+      }
+    },
+    exams: {
+      aliases: {
+        courseCode: ['kch', 'courseCode', '课程代码', 'kch_id', 'kcdm', '课程号'],
+        courseName: ['kcmc', 'courseName', '课程名称', '课程'],
+        examType: ['ksmc', 'examType', '考试名称'],
+        examTime: ['kssj', 'examTime', '考试时间'],
+        location: ['cdmc', 'location', '考试地点'],
+        campus: ['xqmc', 'cdxqmc', 'campus', '校区', '考试校区'],
+        seat: ['zwh', 'seat', '座号', '座位号', '考试座号'],
+        mode: ['ksfs', 'mode', '考试方式'],
+        remark: ['ksbz', 'bzxx', 'bz', 'remark', '备注'],
+        year: ['xnm', 'xn', 'xnmc', 'year', '学年'],
+        term: ['xqm', 'xq', 'xqmmc', 'semester', '学期']
+      }
+    }
+  }
+};
+
 /** 内置规则版本：下发的规则包只有 `version > 这里` 才会被激活（口径同学校档案） */
 export const BUILTIN_ADAPTER_VERSIONS: Record<string, number> = {
   'jwglxt-buct': 1,
-  'jwglxt-exam': 1
+  'jwglxt-exam': 1,
+  'academic-buct': 1
 };
 
 export function builtinAdapterVersion(adapterId: string): number {
@@ -150,6 +215,39 @@ export function compile(pattern: string, flags = ''): RegExp | null {
   try { return new RegExp(pattern, flags); } catch { return null; }
 }
 
+function validateAcademicPack(json: any): { ok: true; pack: RulePack } | { ok: false; error: string } {
+  const fail = (error: string) => ({ ok: false as const, error });
+  const adapterId = String(json.adapterId || '');
+  if (!/^[a-z][a-z0-9-]{2,31}$/.test(adapterId)) return fail('adapterId 不合法');
+  if (!(Number(json.version) >= 1)) return fail('version 必须是 >=1 的整数');
+  if (!(Number(json.schemaVersion) >= 1)) return fail('schemaVersion 必须是 >=1 的整数');
+  if (Number(json.schemaVersion) > 1) return fail('规则包格式比这份 App 新，已跳过（请更新 App）');
+  const rules = json.rules;
+  if (!rules || typeof rules !== 'object' || Array.isArray(rules)) return fail('rules 必须是对象');
+  const allowed = ['schoolId', 'menuHints', 'payloadArrayPriority', 'scopes'];
+  for (const k of Object.keys(rules)) if (allowed.indexOf(k) < 0) return fail('不认识的规则键：' + k);
+  if (!/^[a-z][a-z0-9-]{1,15}$/.test(String(rules.schoolId || ''))) return fail('rules.schoolId 不合法');
+  const listOk = (value: unknown, max: number): boolean => Array.isArray(value) && value.length > 0 && value.length <= max && value.every((x) => !badString(x));
+  if (!listOk(rules.menuHints, MAX_LIST)) return fail('menuHints 必须是非空短字符串数组');
+  if (!listOk(rules.payloadArrayPriority, 32)) return fail('payloadArrayPriority 必须是非空短字符串数组');
+  const scopes = rules.scopes;
+  if (!scopes || typeof scopes !== 'object' || Array.isArray(scopes)) return fail('scopes 必须是对象');
+  for (const scope of Object.keys(scopes)) if (scope !== 'grades' && scope !== 'exams') return fail('scopes 包含未知范围：' + scope);
+  for (const scope of ['grades', 'exams'] as const) {
+    const raw = scopes[scope];
+    if (raw === undefined) continue;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !raw.aliases || typeof raw.aliases !== 'object' || Array.isArray(raw.aliases)) {
+      return fail('scopes.' + scope + '.aliases 必须是对象');
+    }
+    const fields = scope === 'grades' ? ACADEMIC_GRADE_FIELDS : ACADEMIC_EXAM_FIELDS;
+    for (const field of Object.keys(raw.aliases)) {
+      if (fields.indexOf(field) < 0) return fail('scopes.' + scope + '.aliases 包含未知字段：' + field);
+      if (!listOk(raw.aliases[field], 16)) return fail('scopes.' + scope + '.aliases.' + field + ' 必须是非空短字符串数组');
+    }
+  }
+  return { ok: true, pack: { schemaVersion: Number(json.schemaVersion), adapterId, kind: 'academic', version: Number(json.version), note: String(json.note || ''), rules } };
+}
+
 /**
  * 校验一份规则包（**结构 + 键白名单 + 正则可编译 + 取值范围**）。
  * 不做"猜你想干什么"的宽容：多一个键就整份拒收 —— 规则包是安全边界上的东西。
@@ -157,8 +255,9 @@ export function compile(pattern: string, flags = ''): RegExp | null {
 export function validateRulePack(json: any): { ok: true; pack: RulePack } | { ok: false; error: string } {
   const fail = (error: string) => ({ ok: false as const, error });
   if (!json || typeof json !== 'object') return fail('规则包不是对象');
+  if (json.kind === 'academic') return validateAcademicPack(json);
   const kind = json.kind;
-  if (kind !== 'timetable' && kind !== 'exam') return fail('kind 必须是 timetable 或 exam');
+  if (kind !== 'timetable' && kind !== 'exam') return fail('kind 必须是 timetable、exam 或 academic');
   const adapterId = String(json.adapterId || '');
   if (!/^[a-z][a-z0-9-]{2,31}$/.test(adapterId)) return fail('adapterId 不合法');
   if (!(Number(json.version) >= 1)) return fail('version 必须是 >=1 的整数');
@@ -252,6 +351,44 @@ export function setActiveRulePacks(packs: Record<string, RulePack>): void {
 
 export function activeRulePacks(): Record<string, RulePack> { return activeRef.value; }
 
+function cloneAliases(source: Record<string, string[]>): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const key of Object.keys(source)) out[key] = source[key].slice();
+  return out;
+}
+
+function academicDefaults(): AcademicRules {
+  return {
+    schoolId: ACADEMIC_DEFAULTS.schoolId,
+    menuHints: ACADEMIC_DEFAULTS.menuHints.slice(),
+    payloadArrayPriority: ACADEMIC_DEFAULTS.payloadArrayPriority.slice(),
+    scopes: {
+      grades: { aliases: cloneAliases(ACADEMIC_DEFAULTS.scopes.grades!.aliases) },
+      exams: { aliases: cloneAliases(ACADEMIC_DEFAULTS.scopes.exams!.aliases) }
+    }
+  };
+}
+
+/** P4 通用学术规则：内置默认值 + 已下载 academic 规则包覆盖项（逐字段别名合并） */
+export function academicRules(adapterId = 'academic-buct'): AcademicRules {
+  const base = academicDefaults();
+  const pack = activeRef.value[adapterId];
+  if (!pack || pack.kind !== 'academic') return base;
+  const rules = pack.rules as AcademicRules;
+  const mergeScope = (scope: 'grades' | 'exams'): { aliases: Record<string, string[]> } => {
+    const defaults = base.scopes[scope]!.aliases;
+    const supplied = rules.scopes && rules.scopes[scope] && rules.scopes[scope]!.aliases ? rules.scopes[scope]!.aliases : {};
+    const aliases = cloneAliases(defaults);
+    for (const key of Object.keys(supplied)) aliases[key] = supplied[key].slice();
+    return { aliases };
+  };
+  return {
+    schoolId: String(rules.schoolId || base.schoolId),
+    menuHints: Array.isArray(rules.menuHints) && rules.menuHints.length ? rules.menuHints.slice() : base.menuHints,
+    payloadArrayPriority: Array.isArray(rules.payloadArrayPriority) && rules.payloadArrayPriority.length ? rules.payloadArrayPriority.slice() : base.payloadArrayPriority,
+    scopes: { grades: mergeScope('grades'), exams: mergeScope('exams') }
+  };
+}
 /** 当前该用哪套规则：内置默认值 + 生效规则包里的覆盖项（逐键合并，正则已在校验期编译过） */
 export function timetableRules(adapterId = 'jwglxt-buct'): TimetableRules {
   const pack = activeRef.value[adapterId];

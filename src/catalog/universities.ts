@@ -88,6 +88,7 @@ export const BUCT_PROFILE: SchoolProfile = {
     // 默认顺序按使用频次排：北化在线 → 教务系统 → 健康云 → 其余。用户可长按调整。
     { key: 'course', name: '北化在线', url: 'https://course.buct.edu.cn/', icon: '📚', desc: '在线课程与作业', builtin: true },
     { key: 'jwglxt', name: '教务系统', url: 'https://jwglxt.buct.edu.cn/', icon: '🏛', desc: '课表 · 成绩 · 选课', builtin: true },
+    { key: 'grade', name: '成绩查询', url: 'https://jwglxt.buct.edu.cn/jwglxt/cjcx/cxXscjIndex.html?gnmkdm=N305005&layout=default', icon: '📊', desc: '识别成绩 · 本机保存', builtin: true, action: 'grade' },
     // 考试查询：不是普通外链 —— 点它会用"考试模式"打开教务系统的考试页，
     // 界面上常驻一个「识别考试」按钮，识别到的考试按时间写进课表 → 记事本，
     // 并自动带上「提前 1 天 + 提前 30 分钟」两个提醒（PRD 5.11）。

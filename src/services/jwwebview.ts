@@ -17,12 +17,13 @@ export interface JwWebViewPlugin {
     /**
      * 'timetable'（默认）：抓课表，圆钮只在教务域名下出现；
      * 'exam'：抓考试，按钮**常驻**并显示「识别考试」。
+     * 'grade'：抓成绩，按钮**常驻**并显示「识别成绩」。
      * 'campus'：校园数据只读采集，按钮常驻，只读取调用方给出的结果容器。
      * 'zfimport'（v2.68，外校正方 jwglxt）：不抓页面 DOM，而是在**同源会话**里由原生拼装 JS
      * 调课表接口取 kbList JSON。三个 zf* 参数是必填的（学期码由前端用 zfClient.xqmOf() 算好）。
      * 安全边界：脚本完全由原生构造、只走同源 fetch、不读 Cookie 值、不读表单值。
      */
-    mode?: 'timetable' | 'exam' | 'campus' | 'zfimport';
+    mode?: 'timetable' | 'exam' | 'grade' | 'campus' | 'zfimport';
     /** 仅 zfimport 用：学年（如 "2025"） */
     zfXnm?: string;
     /** 仅 zfimport 用：学期码 1/2/3（1=第一学期，2=第二学期，3=短学期） */

@@ -43,7 +43,8 @@
     "apk": "scripts/build-apk.ps1",
     "check:provider": "node scripts/check-provider.mjs",
     "check:cloud": "node --experimental-strip-types scripts/selftest-cloud-account.mjs",
-    "fix:history": "node scripts/fix-codex-history.mjs"
+    "fix:history": "node scripts/fix-codex-history.mjs",
+    "test:academic": "node --experimental-strip-types tests/academic.test.ts"
   },
   "dependencies": {
     "@capacitor/app": "^6.0.2",

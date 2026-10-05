@@ -33,6 +33,15 @@
       "builtin": true
     },
     {
+      "key": "grade",
+      "name": "成绩查询",
+      "url": "https://jwglxt.buct.edu.cn/jwglxt/cjcx/cxXscjIndex.html?gnmkdm=N305005&layout=default",
+      "icon": "📊",
+      "desc": "识别成绩 · 本机保存",
+      "builtin": true,
+      "action": "grade"
+    },
+    {
       "key": "exam",
       "name": "考试查询",
       "url": "https://jwglxt.buct.edu.cn/jwglxt/kwgl/kscx_cxXsksxxIndex.html?gnmkdm=N358105&layout=default",
