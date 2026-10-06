@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import type {
-  Account, Course, CourseMaterial, HourEntry, HourKind, InterestEntry, NoteItem, SchoolProfile, SecondClassRecord,
+  Account, Course, CourseMaterial, GradeItem, HourEntry, HourKind, InterestEntry, NoteItem, SchoolProfile, SecondClassRecord,
   Settings, Timetable, WeatherLocation
 } from '../types.ts';
 import { BUILTIN_PROFILE_VERSIONS, findSchool, profileFor, SCHOOLS } from '../catalog/universities.ts';
@@ -107,6 +107,8 @@ const screen = ref<'school' | 'login' | 'app'>('login');
   const timetables = ref<Timetable[]>([]);
   const courses = ref<Course[]>([]);
   const notes = ref<NoteItem[]>([]);
+  /** 成绩只在本机持久化；不走 saveData()、不进入云端 study 备份 */
+  const grades = ref<GradeItem[]>([]);
   const records = ref<SecondClassRecord[]>([]);
   const hours = ref<HourEntry[]>([]);
   const materials = ref<CourseMaterial[]>([]);
@@ -499,7 +501,7 @@ function answerConfirm(ok: boolean): void {
   function logout(): void {
     session.value = null;
     profile.value = null;
-    timetables.value = []; courses.value = []; notes.value = []; records.value = []; hours.value = [];
+    timetables.value = []; courses.value = []; notes.value = []; grades.value = []; records.value = []; hours.value = [];
     screen.value = 'login';
     activeTab.value = 0;
     // 回登录页时把字号复位：不把上一个账号的大字号带到下一个人的登录界面
@@ -510,7 +512,7 @@ function answerConfirm(ok: boolean): void {
   /** 切换学校：保留登录状态，回到学校选择页 */
   async function changeSchool(): Promise<void> {
     profile.value = null;
-    timetables.value = []; courses.value = []; notes.value = []; records.value = []; hours.value = [];
+    timetables.value = []; courses.value = []; notes.value = []; grades.value = []; records.value = []; hours.value = [];
     screen.value = 'school';
     activeTab.value = 0;
     try { await persistManifest(); } catch (e) { fail('切换学校', e); }
@@ -535,6 +537,7 @@ function answerConfirm(ok: boolean): void {
     timetables.value = await readJson<Timetable[]>(b + '/timetable/timetables.json', []);
     courses.value = await readJson<Course[]>(b + '/timetable/courses.json', []);
     notes.value = await readJson<NoteItem[]>(b + '/notes/notes.json', []);
+    grades.value = await readJson<GradeItem[]>(b + '/grades/grades.json', []);
     records.value = await readJson<SecondClassRecord[]>(b + '/secondclass/records.json', []);
     hours.value = await readJson<HourEntry[]>(b + '/hours/entries.json', []);
     materials.value = await readJson<CourseMaterial[]>(b + '/materials/index.json', []);
@@ -571,6 +574,31 @@ function answerConfirm(ok: boolean): void {
     notifyDataChanged();
   }
 
+  /**
+   * 成绩只写本机：直接写 grades/grades.json。
+   * 刻意不走 saveData()，因为 saveData() 会触发账号研究的自动同步信号；
+   * 成绩不进入 STUDY_TEXT_FILES，所以不会上云、也不会被换机备份携带。
+   */
+  async function saveGrades(): Promise<void> {
+    if (!session.value) return;
+    await writeJson(base() + '/grades/grades.json', grades.value);
+  }
+
+  /** 用一次识别结果替换本机成绩列表；调用方随后应调 saveGrades()。 */
+  function replaceGrades(parts: Partial<GradeItem>[]): GradeItem[] {
+    const stamp = nowStamp();
+    grades.value = parts.map((part) => ({
+      id: uuid(), courseCode: '', courseName: '', credits: null, score: '', point: null,
+      nature: '', category: '', teacher: '', assessment: '', status: '', remark: '', termId: '',
+      source: 'jwglxt', createdAt: stamp, updatedAt: stamp, ...part
+    } as GradeItem));
+    return grades.value;
+  }
+
+  function clearGrades(): void {
+    grades.value = [];
+  }
+
   async function seedDemo(): Promise<void> {
     const p = profile.value!;
     const tt = buildDemoTimetable(p.name, p.academic.semesterLabel, p.academic.semesterStartMonday, p.academic.totalWeeks);
@@ -595,7 +623,7 @@ function answerConfirm(ok: boolean): void {
   }
 
   async function resetDemo(): Promise<void> {
-    timetables.value = []; courses.value = []; notes.value = []; records.value = []; hours.value = [];
+    timetables.value = []; courses.value = []; notes.value = []; grades.value = []; records.value = []; hours.value = [];
     await seedDemo();
   }
 
@@ -1006,7 +1034,7 @@ function hourTotal(kind: HourKind): number {
   }
 
   return {
-    booted, screen, profile, accounts, session, interests, timetables, courses, notes, records, hours, materials, settings, focus,
+    booted, screen, profile, accounts, session, interests, timetables, courses, notes, grades, records, hours, materials, settings, focus,
     activeTab, activeSheet, toast, toastSeq, busy, lastError, storage, activeTimetable, currentWeek, confirmReq, confirm, answerConfirm,
     /** v2.47：主页那行小字「账号找回」与面板共用这套开关 */
     recoveryOpen, openRecovery, closeRecovery,
@@ -1018,6 +1046,7 @@ function hourTotal(kind: HourKind): number {
     /** v2.45：订阅"数据已落盘"的信号（自动同步用）。只登记回调，不做退订/去重 —— 调用方自己保证只注册一次 */
     onDataChanged,
     newTimetable, addCourse, removeCourse, addNote, addRecord, addHour, removeHour, addMaterial, removeMaterial, materialsOf, hourTotal, blockScore, totalScore, coursesOn, persistManifest,
+    saveGrades, replaceGrades, clearGrades,
     weatherBusy, weatherMsg, ensureWeather,
     downloadedSchools, downloadedList, schoolRows, catalog, profileOf, checkCatalog, downloadSchool, removeDownloaded,
     /** v2.71：「正方识别」面板用 —— 把用户自己填的教务地址写进本机档案副本 */

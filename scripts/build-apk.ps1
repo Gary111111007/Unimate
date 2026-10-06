@@ -87,6 +87,7 @@ Invoke-Npm 'test:calendar'
 Invoke-Npm 'test:sync'
 Invoke-Npm 'test:schoolpack'
 Invoke-Npm 'test:adapters'
+Invoke-Npm 'test:academic'
 Invoke-Npm 'test:zip'
 
 Invoke-Npm 'test:notify'

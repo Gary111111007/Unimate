@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "adapterId": "academic-buct",
+  "kind": "academic",
+  "version": 2,
+  "note": "P4 成绩/考试通用识别：别名表 + JSON/HTML 双通道",
+  "rules": {
+    "schoolId": "buct",
+    "menuHints": ["jwglxt", "cjcx", "kbcx", "kwgl"],
+    "payloadArrayPriority": [
+      "kblist",
+      "items",
+      "rows",
+      "data",
+      "result",
+      "list",
+      "aadata",
+      "records",
+      "recordlist",
+      "datalist",
+      "gradelist",
+      "courselist",
+      "sjklist",
+      "jxhjkclist"
+    ],
+    "scopes": {
+      "grades": {
+        "aliases": {
+          "courseCode": ["kch", "courseCode", "课程代码", "kch_id", "kcdm", "课程号"],
+          "courseName": ["kcmc", "courseName", "课程名称", "课程"],
+          "credits": ["xf", "credits", "学分"],
+          "score": ["cj", "score", "成绩"],
+          "point": ["jd", "point", "绩点"],
+          "nature": ["kcxz", "nature", "课程性质"],
+          "category": ["kclb", "category", "课程类别"],
+          "teacher": ["jsxm", "teacher", "教师"],
+          "assessment": ["ksxz", "assessment", "考核方式"],
+          "status": ["cjbs", "status", "成绩状态"],
+          "remark": ["bzxx", "cjbz", "bz", "ksbz", "remark", "备注"],
+          "year": ["xnm", "xn", "xnmc", "year", "学年"],
+          "term": ["xqm", "xq", "xqmmc", "semester", "学期"]
+        }
+      },
+      "exams": {
+        "aliases": {
+          "courseCode": ["kch", "courseCode", "课程代码", "kch_id", "kcdm", "课程号"],
+          "courseName": ["kcmc", "courseName", "课程名称", "课程"],
+          "examType": ["ksmc", "examType", "考试名称"],
+          "examTime": ["kssj", "examTime", "考试时间"],
+          "location": ["cdmc", "location", "考试地点"],
+          "campus": ["xqmc", "cdxqmc", "campus", "校区", "考试校区"],
+          "seat": ["zwh", "seat", "座号", "座位号", "考试座号"],
+          "mode": ["ksfs", "mode", "考试方式"],
+          "remark": ["ksbz", "bzxx", "bz", "remark", "备注"],
+          "year": ["xnm", "xn", "xnmc", "year", "学年"],
+          "term": ["xqm", "xq", "xqmmc", "semester", "学期"]
+        }
+      }
+    }
+  }
+}

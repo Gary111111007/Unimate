@@ -140,7 +140,7 @@ function loadAdapters() {
 function checkAdapterPack(p) {
   const bad = [];
   if (!p || typeof p !== 'object') return ['不是对象'];
-  if (p.kind !== 'timetable' && p.kind !== 'exam') bad.push('kind 必须是 timetable 或 exam');
+  if (p.kind !== 'timetable' && p.kind !== 'exam' && p.kind !== 'academic') bad.push('kind 必须是 timetable、exam 或 academic');
   if (!/^[a-z][a-z0-9-]{2,31}$/.test(String(p.adapterId || ''))) bad.push('adapterId 不合法');
   if (!(Number(p.version) >= 1)) bad.push('version 必须是 >=1 的整数');
   if (!(Number(p.schemaVersion) >= 1) || Number(p.schemaVersion) > 1) bad.push('schemaVersion 必须是 1');

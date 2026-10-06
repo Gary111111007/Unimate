@@ -65,6 +65,26 @@ export interface NoteItem {
   deletedAt: string | null;
 }
 
+/** 从教务页面识别出的成绩记录（本机持久化，不参与云端同步） */
+export interface GradeItem {
+  id: string;
+  courseCode: string;
+  courseName: string;
+  credits: number | null;
+  score: string;
+  point: number | null;
+  nature: string;
+  category: string;
+  teacher: string;
+  assessment: string;
+  status: string;
+  remark: string;
+  termId: string;
+  source: 'jwglxt' | 'manual';
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PhotoEvidence {
   id: string;
   originalPath: string;

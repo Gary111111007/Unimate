@@ -98,4 +98,15 @@ npm run test:exam         # 45 条 Golden Test：同上
 **注意广告边界**：识别 ≠ 支持。标签写的是"这所学校用的是哪套教务系统"，不是"Unimate 支持这所学校"。
 两者必须分开讲，避免把"认识"说成"能用"。
 
+## 8. P4 通用成绩/考试（academic kind）
 
+P4 新增 `kind: "academic"`，用于成绩与考试的跨校/改版识别。它和旧规则包共用签名清单、sha256 校验、每天一次限频和 `validateRulePack()` 白名单校验。
+
+`academic` 的 `rules` 包含：
+
+- `schoolId`：学校 id；
+- `menuHints`：页面菜单入口关键词；
+- `payloadArrayPriority`：JSON 载荷数组键优先级；
+- `scopes.grades.aliases` / `scopes.exams.aliases`：字段别名表。
+
+它不包含可执行代码。解析全在本机完成；成绩只落本机 `grades/grades.json`，不进入 `STUDY_TEXT_FILES`，不上云。

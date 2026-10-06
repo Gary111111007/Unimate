@@ -6,7 +6,8 @@
 import { ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { JwWebView, isNativeWebView } from '../services/jwwebview.ts';
-import { parseJwglxtExams, examNoteDraft } from '../services/parser/jwglxtExam.ts';
+import { parseJwglxtExams, examNoteDraft, type ExamItem } from '../services/parser/jwglxtExam.ts';
+import { parseAcademicExams, type ExamDraft } from '../services/parser/academic.ts';
 import { buildExamSampleHtml } from '../services/examDemo.ts';
 import ParserRulesBar from '../components/ParserRulesBar.vue';
 
@@ -16,7 +17,8 @@ const db = useDb();
 
 const step = ref<'intro' | 'working' | 'error'>('intro');
 const errMsg = ref('');
-const summary = ref<{ total: number; added: number; dup: number; past: number; items: { title: string; when: string }[]; demo: boolean } | null>(null);
+const summary = ref<{ total: number; added: number; dup: number; past: number; items: { title: string; when: string }[]; demo: boolean; source: string } | null>(null);
+const activeAdapter = ref('jwglxt-exam');
 
 /** 真实抓取：打开教务系统考试页 → 学生自己点「查询」→ 点常驻的「识别考试」→ 回传表格 HTML */
 async function openJwglxt(): Promise<void> {
@@ -51,17 +53,49 @@ async function useSample(): Promise<void> {
   await importHtml(buildExamSampleHtml(), true);
 }
 
+function fromAcademicExam(ex: ExamDraft): ExamItem {
+  return {
+    course: ex.courseName,
+    name: ex.examType || '考试',
+    semester: ex.termId,
+    date: ex.date,
+    start: ex.start,
+    end: ex.end,
+    campus: ex.campus,
+    room: ex.location,
+    seat: ex.seat,
+    examType: '',
+    mode: ex.mode,
+    college: '',
+    className: '',
+    note: ex.remark
+  };
+}
+
 async function importHtml(html: string, demo: boolean): Promise<void> {
-  const parsed = parseJwglxtExams(html);
-  if (!parsed.exams.length) {
-    errMsg.value = parsed.diagnostics[0]?.message || '没有解析到考试安排。';
+  const legacy = parseJwglxtExams(html);
+  let exams = legacy.exams;
+  let source = '内置规则';
+  let fallbackDiagnostic = '';
+  if (!exams.length) {
+    const generic = parseAcademicExams(html);
+    if (generic.records.length) {
+      exams = generic.records.map(fromAcademicExam);
+      source = '通用识别';
+    } else {
+      fallbackDiagnostic = generic.diagnostics[0]?.message || '';
+    }
+  }
+  if (!exams.length) {
+    errMsg.value = fallbackDiagnostic || legacy.diagnostics[0]?.message || '没有解析到考试安排。';
     step.value = 'error';
     return;
   }
+  activeAdapter.value = source === '通用识别' ? 'academic-buct' : 'jwglxt-exam';
   let added = 0; let dup = 0; let past = 0;
   const items: { title: string; when: string }[] = [];
   const now = new Date();
-  for (const ex of parsed.exams) {
+  for (const ex of exams) {
     const d = examNoteDraft(ex, now);
     if (d.past) past++;
     // 同一条考试（标题 + 提醒时刻一致）不重复写入：反复识别、两条路径各来一次都不会堆重复
@@ -71,11 +105,11 @@ async function importHtml(html: string, demo: boolean): Promise<void> {
     items.push({ title: d.title, when: d.remindAt.slice(5, 16) });
   }
   await db.saveData();
-  summary.value = { total: parsed.exams.length, added, dup, past, items: items.slice(0, 5), demo };
+  summary.value = { total: exams.length, added, dup, past, items: items.slice(0, 5), demo, source };
   step.value = 'intro';
   db.notify(added
     ? '已写入记事本 ' + added + ' 条考试（提前 1 天 + 提前 30 分钟提醒）'
-    : '这 ' + parsed.exams.length + ' 场考试都已经在记事本里了');
+    : '这 ' + exams.length + ' 场考试都已经在记事本里了');
 }
 </script>
 
@@ -101,11 +135,11 @@ async function importHtml(html: string, demo: boolean): Promise<void> {
         <button class="btn block" style="margin-top: 14px" @click="openJwglxt">🏛 打开教务系统（识别考试）</button>
         <button class="btn block grey" style="margin-top: 10px" @click="useSample">用内置演示样本走一遍（离线可用）</button>
         <div class="small muted" style="margin-top: 10px">演示样本是虚构数据，考试日期会跟着今天走（今天 +2 / +9 / +16 / +23 天），所以「提前 1 天 / 半小时」的提醒能真的触发。样本结构与真实教务页面一致，走的是同一个解析器。</div>
-        <ParserRulesBar adapter-id="jwglxt-exam" />
+        <ParserRulesBar :adapter-id="activeAdapter" />
 
         <div v-if="summary" class="card res">
           <div class="row" style="justify-content: space-between">
-            <b class="small">{{ summary.demo ? '演示样本' : '教务系统' }}：识别到 {{ summary.total }} 场考试</b>
+            <b class="small">{{ summary.demo ? '演示样本' : '教务系统' }} · {{ summary.source }}：识别到 {{ summary.total }} 场考试</b>
             <span class="pill live">已写入 {{ summary.added }} 条</span>
           </div>
           <div class="small muted" style="margin-top: 4px">

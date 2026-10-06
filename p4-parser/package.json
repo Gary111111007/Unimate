@@ -1,0 +1,11 @@
+{
+  "name": "unimate-p4-parser",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "P4 standalone prototype: local grade/exam recognition from JSON or HTML",
+  "scripts": {
+    "test": "node --experimental-strip-types tests/run-tests.ts",
+    "bench": "node --experimental-strip-types tests/bench.ts"
+  }
+}

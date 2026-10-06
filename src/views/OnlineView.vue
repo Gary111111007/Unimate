@@ -7,6 +7,7 @@ import { computed, ref } from 'vue';
 import { useDb } from '../stores/db.ts';
 import { JwWebView, isNativeWebView } from '../services/jwwebview.ts';
 import ExamPanel from './ExamPanel.vue';
+import GradePanel from './GradePanel.vue';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import type { CampusApp } from '../types.ts';
 import CampusToolsView from './CampusToolsView.vue';
@@ -39,6 +40,9 @@ const showAdd = ref(false);
 /** 考试查询面板（两条路径：教务系统真实抓取 / 内置演示样本） */
 const showExam = ref(false);
 const examUrl = ref('');
+/** 成绩查询面板：识别后只写本机 grades/grades.json，不触发云同步 */
+const showGrade = ref(false);
+const gradeUrl = ref('');
 const nf = ref({ name: '', url: '', icon: 'link', iconData: '' });
 
 function normUrl(u: string): string {
@@ -50,6 +54,7 @@ function validUrl(u: string): boolean { return /^https?:\/\/[^\s.]+\.[^\s]{2,}$/
 
 async function openTarget(a: CampusApp): Promise<void> {
   if (a.action === 'exam') { examUrl.value = a.url; showExam.value = true; return; }
+  if (a.action === 'grade') { gradeUrl.value = a.url; showGrade.value = true; return; }
   status.value = '正在打开 ' + a.name + '…';
   if (!isNativeWebView()) {
     status.value = '桌面预览环境不支持内嵌 WebView；安装 APK 后可在 App 内直接打开。';
@@ -65,7 +70,7 @@ async function openTarget(a: CampusApp): Promise<void> {
 /** 预设图标统一走单色线性 SVG；旧数据里的 Emoji 仍可读，但显示时映射到同语义图标。 */
 const ICON_CHOICES = ['link', 'school', 'book', 'document', 'heartPulse', 'key', 'compass', 'creditCard', 'bus', 'home', 'briefcase', 'target', 'chart', 'archive'];
 const BUILTIN_ICONS: Record<string, string> = {
-  course: 'book', jwglxt: 'school', exam: 'document', health: 'heartPulse', library: 'book', zy: 'key'
+  course: 'book', jwglxt: 'school', exam: 'document', grade: 'chart', health: 'heartPulse', library: 'book', zy: 'key'
 };
 const LEGACY_ICONS: Record<string, string> = {
   '🔗': 'link', '🏛': 'school', '📚': 'book', '📝': 'document', '🩺': 'heartPulse', '📖': 'book', '🔑': 'key',
@@ -419,6 +424,7 @@ async function probeAll(): Promise<void> {
   </div>
 
   <ExamPanel v-if="showExam" :start-url="examUrl" @close="showExam = false" />
+  <GradePanel v-if="showGrade" :start-url="gradeUrl" @close="showGrade = false" />
   <CampusToolsView v-if="showCampusTools" @close="showCampusTools = false" />
 </template>
 
