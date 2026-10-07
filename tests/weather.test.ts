@@ -190,8 +190,9 @@ ok('隐私文案含 Net.md 指定原句', mev.includes('开启天气后会向 Op
 ok('面板写明了「关着一次请求都不发」与「30 分钟最多更新一次」', mev.includes('一次请求都不发') && mev.includes('30 分钟最多更新一次'), '');
 ok('天气条用的 CSS 变量在主题里有定义', ['--card', '--shadow', '--strong', '--muted', '--warn'].every((k) => styles.includes(k + ':')), '');
 // 有了联网功能，登录页那句"不联网"就变成不实文案了；顺带修掉它指向的"清空本账号数据"（这个入口根本不存在）
+// 2026-10-07：产品负责人删掉了登录页那段"会联网的功能"说明 —— 披露不再在登录页，上面几条已钉住「我的 → 关于」里的口径
 const loginVue = read('src/screens/Login.vue');
-ok('登录页不再声称"不联网"', !loginVue.includes('不联网') && loginVue.includes('默认关闭'), '');
+ok('登录页不再声称"不联网"', !loginVue.includes('不联网') && !/会联网的功能/.test(loginVue), '');
 ok('登录页不再指向不存在的「清空本账号数据」', !loginVue.includes('清空本账号数据'), '');
 ok('禁用的按钮看起来就是禁用的（.btn:disabled 有样式）', /\.btn:disabled\s*\{[^}]*opacity/.test(styles), '');
 
