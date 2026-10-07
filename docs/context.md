@@ -8,16 +8,16 @@ Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·
 
 **v2.76 修掉了那个"怎么就修不好"的历史入口**（产品负责人第四次追问，原话：「**还是有问题啊，怎么就修不好吗？这么简单的一件事**」）。这轮换了方法 —— **先量后改**：装 Playwright + 起 dev server，登录演示账号走一遍，`getBoundingClientRect()` 一量就破案：**滚动 500px 后 `.uni-chat-history.top = -434`**，它从来没 sticky 过。真因是两条 CSS 约束叠加（祖先 `overflow` 构成约束容器 + 真正在滚的是 `<html>`），**跟颜色边框一点关系都没有**。修法是**改层级**：历史入口移出 `.uni-chat-page`、与 `.head` 做兄弟，外包一层不裁剪的 `.uni-chat-wrap`，`top` 走脚本实测的 `--unih-head`；实测改后未滚动与滚 500px **都是 gap=0**。测试也一并升级：从"外观断言"改成"结构断言"（历史入口必须在滚动容器之外），**agent 85→89、css 41→42，全量 1399 条**。
 
-**v2.77（2026-10-07）按产品负责人口述改了 5 处文案**（对着真机截图说一条改一条）：课表页顶部「北化 · 课表」→ **「课程表」**；登录页头部「Unimate · 本地账号」→ **「请登录/注册您的 Unimate 账号」**；账号框占位「3~64 个字符，学号或自己起一个」→ **「输入您的账号」**；密码框占位「至少 8 个字符」→ **「请输入您的密码（至少 8 个字符）」**；**删掉**登录页「换新手机就直接登这个账号：云端有备份会自动取回…」与整段「会联网的功能：…」两段说明 —— 联网/云端披露跟着搬家（账号那条落在注册同意行，其余在「我的 → 关于」与「账号与找回」），`weather` / `schoolpack` / `sync` 五条断言改钉这些位置。全量 32 套件 1430 条绿；**未出包、未真机验证**。详见 PRD 11.84。
+**v2.77（2026-10-07）按产品负责人口述改了 5 处文案**（对着真机截图说一条改一条）：课表页顶部「北化 · 课表」→ **「课程表」**；登录页头部「Unimate · 本地账号」→ **「请登录/注册您的 Unimate 账号」**；账号框占位「3~64 个字符，学号或自己起一个」→ **「输入您的账号」**；密码框占位「至少 8 个字符」→ **「请输入您的密码（至少 8 个字符）」**；**删掉**登录页「换新手机就直接登这个账号：云端有备份会自动取回…」与整段「会联网的功能：…」两段说明 —— 联网/云端披露跟着搬家（账号那条落在注册同意行，其余在「我的 → 关于」与「账号与找回」），`weather` / `schoolpack` / `sync` 五条断言改钉这些位置。全量 32 套件 1430 条绿；**已出包**（SHA-256 `9DFF8152…FAE5`）并发布 **GitHub Release v2.77**，PR #3 **已合并进 main**；**真机点按安装未验证**（手机锁屏，vivo 拒了一次，包已推到手机 Download）。详见 PRD 11.84。
 
 ## 2. 代码与版本
 
 | 项 | 值 |
 | --- | --- |
 | 仓库 | 工作目录 `D:\zzycampus\Unimate\UnimateUL`（**是 git 仓库**：`origin = Gary111111007/Unimate`，当前分支 `ui/copy-slim`，PR #3 开着；早前记录里的 `D:\BUCT\Unimate\UnimateUL-main` 是另一台机器的无 git 副本） |
-| 最新版本 | **v2.77**（标题与登录页文案按产品负责人口述精简，2026-10-07；**只改文案、未出包**） |
-| 版本脉络（近期） | v2.65 Workers AI 免费在线 → v2.66 AI 独立入口 + 在线 AI APK → v2.67 下线语音 + 历史人性化 → v2.68 选校页教务系统识别 → v2.69 外校 jwglxt 导入链路 → v2.70 对话 Markdown + 历史按轮 + 整卡进正方 + 降蓝 → v2.71 正方识别面板 + 历史入口吸顶 → v2.72 北化/外校分家 → v2.73 面板三段式 + 历史入口真吸顶 → v2.74 面板拆三段防裁切 + 贴紧标题栏 → v2.75 课表识别改口径 + 教务类型做实 → v2.76 历史入口改层级（移出滚动容器 + `--unih-head` 实测吸附）→ **v2.77 标题「课程表」+ 登录页头部/占位文案 + 删两段联网说明（披露搬到注册同意行与「我的 → 关于」）** |
-| 最新 APK | `artifacts/android/unimate-debug.apk`，**6.74 MB**，SHA-256 `66FBFCACE91DEE0280C673340064242D0D2068ADD37C1EA8C00243CECFD0FD76`（2026-10-07 出包，已作为 GitHub Release `v2.76` 资产发布：<https://github.com/Gary111111007/Unimate/releases/tag/v2.76>；**v2.77 这轮文案改动尚未出包**）。上一版留档指纹 `7E4DDE7E…8E2F`（2026-10-04）、`05BC3896…9FD13`（v2.75） |
+| 最新版本 | **v2.77**（标题与登录页文案按产品负责人口述精简，2026-10-07；已出包并发布 **GitHub Release `v2.77`**，PR #3 已合并进 main `76d4464`） |
+| 版本脉络（近期） | v2.65 Workers AI 免费在线 → v2.66 AI 独立入口 + 在线 AI APK → v2.67 下线语音 + 历史人性化 → v2.68 选校页教务系统识别 → v2.69 外校 jwglxt 导入链路 → v2.70 对话 Markdown + 历史按轮 + 整卡进正方 + 降蓝 → v2.71 正方识别面板 + 历史入口吸顶 → v2.72 北化/外校分家 → v2.73 面板三段式 + 历史入口真吸顶 → v2.74 面板拆三段防裁切 + 贴紧标题栏 → v2.75 课表识别改口径 + 教务类型做实 → v2.76 历史入口改层级（移出滚动容器 + `--unih-head` 实测吸附）→ **v2.77 标题「课程表」+ 登录页头部/占位文案 + 删两段联网说明（披露搬到注册同意行与「我的 → 关于」）→ 已发布 Release v2.77、合并进 main** |
+| 最新 APK | `artifacts/android/unimate-debug.apk`，**6.74 MB**，SHA-256 `9DFF815217861789D974A4CEA74B9EA317C056C0AC730A6B79C1E865D077FAE5`（**v2.77**，2026-10-07 19:25 出包，六步全绿；已发 GitHub Release <https://github.com/Gary111111007/Unimate/releases/tag/v2.77>，资产 `unimate-debug.apk`；**真机点按安装未验证** —— 手机锁屏时 vivo 拒了一次，包已推到手机 `Download/unimate-v2.77-debug.apk`）。上一版留档指纹 `66FBFCAC…FD76`（v2.76，2026-10-07 18:13 出包）、`7E4DDE7E…8E2F`（2026-10-04 出包）、`05BC3896…9FD13`（v2.75） |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages）；线上前端 = **v2.45** 时代 bundle（`assets/index-BrCScQRS.js`）；AI 独立入口 `https://unimate3-ai-pages.pages.dev`（v2.66 起） |
 | Pages 交付 | **只有目录**：`node scripts\make-pages-package.mjs v2.65` → `artifacts\cloudflare\unimate-cloudflare-v2.65-upload`（15 文件 / 0.8 MB，根目录含 `_worker.js`）。**v2.52 起不再压 ZIP**（历史 ZIP 留档仍在 `artifacts/`）。v2.70 未动 Pages（前端 bundle 变了但要重拖时另出包） |
 | 先读哪 | 云端与 P3 的最新状态看 **`PRD.md` 开头的「当前接续摘要」** 与 **`Net.md` 的「当前云端接续摘要」**（本节只保留工程侧的通用交接） |
@@ -164,6 +164,8 @@ p5-prototype 3（node --test，TAP 形式）
 - **删 UI 文案前先 `grep -rn "<原句>" tests/`**：产品负责人删掉登录页两段说明，直接带倒 4 条断言（`weather` 1 条、`schoolpack` 1 条、`sync` 2 条）—— 这个仓库里**界面文案是一等公民**，很多句是当年产品负责人点名要写的，测试把它们钉死了。删之前先查钉子；删之后二选一：**披露搬到别处就把断言改钉新位置**（本轮 3 条），**彻底删就改成反向取证**（本轮 2 条）。别顺手把断言一起删 —— 那等于把"UI 不许撒谎"的护栏也拆了。
 - **"如实披露"类文案只许搬家、不许静默消失**：登录页那两段删掉后，账号模式"服务器持有密钥、可以读取"落在注册页签的同意行，天气 / 高校档案检查 / 端到端加密三条留在「我的 → 关于」—— 删除前先确认每一条披露在新结构里有落点。
 - **title 里的 `${校名} · 课表` 被改成固定值后，`shortName` 在该文件里就没有引用了**：改文案时顺手 `grep shortName` 确认没有别处依赖同一表达式（本轮 `Main.vue` 只有那一处）。
+- **构建工具链会在眼皮底下消失**：19:2x 发现 `%LOCALAPPDATA%\Android\{Sdk,jdk17}` 整个不见了（同一台机器 18:10 会话内自检还是 `SDK === True`、18:12 还 `BUILD SUCCESSFUL in 55s`）。出包脚本第一句就抛「找不到 Android SDK」。**恢复**：跑 `scripts\setup-android-toolchain.ps1`（幂等，装 JDK17 + cmdline-tools + platform-tools + platforms;android-34 + build-tools;34.0.0，约 450 MB 下载、需外网、不需管理员）；`~/.gradle/caches` 还在，所以重装后出包只要 ~3 分钟。**怀疑工具链丢了先看这里，别急着改构建脚本**。
+- **手机锁屏时 `adb install -r` 必失败**：`INSTALL_FAILED_ABORTED: User rejected permissions` —— vivo 的 USB 安装许可要解锁后点确认，ADB 唤屏（`input keyevent KEYCODE_WAKEUP`，`mWakefulness=Awake`）也没用，锁屏（`mShowingLockscreen=true`）照样拒。**应急**：`adb push <apk> /sdcard/Download/` 让用户解锁后自己点装；**Git Bash 里必须带 `MSYS_NO_PATHCONV=1`**，否则 `/sdcard/...` 会被路径改写吃掉（实测变成 `C:/Program Files/Git/sdcard/...`，报 `remote secure_mkdirs failed`）。
 
 ### 本轮新增（v2.76）
 - **【最重要】"位置钉不住"要先量后改，别猜样式**。前四轮（v2.72~v2.75）我每次都在调底色/边框/负边距，真机上永远差一条缝。这轮装了 Playwright、起 dev server、登录演示账号 → 选北化 → 切 Uni，一句 `getBoundingClientRect()` 就拿到铁证：
