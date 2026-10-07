@@ -477,57 +477,32 @@ async function copyInterests(): Promise<void> {
             那就**如实写明后果**，不再让他反复试（AGENTS.md 第 7 条：文案必须与实现一致）。
           -->
           <div v-if="power.ok && !power.ignoring" class="small muted" style="margin-top: 6px; line-height: 1.6">
-            <b>你选择不开这一项的话</b>：系统会在后台把 Unimate 冻住，提醒可能晚到（通常几分钟到十几分钟，
-            由兜底心跳补投），极端情况下要等你打开 App 才补发。想准点有两条路：开这一项，或者打开下面的
-            <b>「同步到系统日历」</b>（由系统日历 App 负责到点弹）。
+            <b>你选择不开这一项的话</b>：系统会冻住 Unimate，提醒可能晚到几分钟到十几分钟；想准点就开它，或打开下面的
+            <b>「同步到系统日历」</b>。
           </div>
           <div v-if="power.rom" class="small muted" style="margin-top: 6px">机型：{{ power.rom }}{{ power.hint ? ' · ' + power.hint : '' }}</div>
           <div class="small muted" style="margin-top: 8px">
-            <b>精确闹钟不是自启动</b>：它只是允许 App 设"准点闹钟"的系统开关，不占后台、不影响耗电与隐私，建议开（上面那个按钮就是）。
-            电池优化豁免（允许后台运行）是第二项。<br />
-            厂商的"自启动 / 后台保留"是第三项，<b>不想开也可以</b>——代价是提醒可能晚几分钟到十几分钟，
-            App 侧的 15 分钟兜底心跳会尽量补投（下面能看到它有没有在跑）。
+            <b>精确闹钟</b>只是允许 App 设"准点闹钟"的系统开关，不占后台、不影响耗电，建议开（就是上面那个按钮）。
           </div>
-        </div>
-        <div class="card" style="box-shadow: none; background: var(--soft); margin-top: 10px">
-          <div class="row" style="justify-content: space-between"><span class="small">系统已排期提醒</span><b class="small">{{ sched }} 条</b></div>
-          <div class="small muted" style="margin-top: 4px">上课 {{ stats.classReminders }} · 待办 {{ stats.todoReminders }} · 测试 {{ stats.testReminders }}<template v-if="stats.nextFireAt">；下一条 {{ stats.nextFireAt }}</template></div>
-          <div class="row" style="justify-content: space-between; margin-top: 4px"><span class="small">提醒时刻自检</span><span class="pill" :class="wire.ok ? 'live' : 'danger'">{{ wire.ok ? '正常' : '异常' }}</span></div>
-          <div v-if="!wire.ok" class="small muted" style="margin-top: 4px">{{ wire.hint }}（样本 {{ wire.sample }}）</div>
-
-          <div class="row" style="justify-content: space-between; margin-top: 4px"><span class="small">最近一次重建结果</span><span class="small">{{ schedMsg || '—' }}</span></div>
-          <!-- 冷启动清理结果（v2.30）：missed 就是"系统把闹钟攒着没投递"的硬证据 -->
-          <div v-if="db.notifyCleanup.at" class="small muted" style="margin-top: 6px">
-            上次启动清理：取消 {{ db.notifyCleanup.cancelled }} 条过期排期<template v-if="db.notifyCleanup.missed">，其中 <b>{{ db.notifyCleanup.missed }} 条本该响过、但系统一直没投递</b>（这就是"到点不响、一打开才补发"的直接证据）</template>。
-            <template v-if="db.notifyCleanup.missed">建议按上面的「精确闹钟授权」「电池优化豁免」两项去开；App 侧另有 15 分钟兜底心跳会自动补投（最多晚 15 分钟）。</template>
-          </div>
-          <!-- 兜底心跳状态（v2.31）：光有代码不算数，真机上要看得到它在跑 -->
-          <div class="row" style="justify-content: space-between; margin-top: 6px"><span class="small">兜底心跳</span>
-            <span class="pill" :class="hb.ok ? (hb.armed ? 'live' : 'danger') : 'dev'">{{ hb.ok ? (hb.armed ? '已排' : '未排') : '未检测' }}</span>
-          </div>
-          <div v-if="hb.ok" class="small muted" style="margin-top: 4px">
-            下一跳 {{ hb.nextAt ? new Date(hb.nextAt).toTimeString().slice(0, 5) : '—' }} · 累计补投 {{ hb.totalPosted }} 条<template v-if="hb.lastPostedCount">（上次 {{ hb.lastPostedCount }} 条）</template>
-          </div>
-          <!-- 提醒守护前台服务（v2.34）：三项系统开关全开仍"只有打开 App 才收到提醒"时的最后一道保活 -->
-          <div class="row" style="justify-content: space-between; margin-top: 8px">
+          <div class="hairline" style="margin: 12px 0"></div>
+          <div class="row" style="justify-content: space-between">
             <span class="grow small">提醒守护（前台服务）</span>
             <button type="button" class="me-ios-switch" role="switch" :aria-checked="db.settings.reminderGuard" aria-label="提醒守护" @click="toggleGuard(!db.settings.reminderGuard)"><span></span></button>
           </div>
           <div class="small muted" style="margin-top: 4px; line-height: 1.6">
-            开启后通知栏会常驻一条<b>静音小通知</b>（"Unimate 提醒运行中"），让系统不把 App 冻住 ——
-            这是国产 ROM 上唯一还能由 App 自己做到的保活手段。状态：{{ guardState.ok ? (guardState.running ? '正在运行' : (guardState.enabled ? '已开但没跑起来' : '已关闭')) : '未检测' }}。<br />
-            关掉也能用，只是提醒可能晚到，或等你打开 App 时才补发。
+            开着会在通知栏常驻一条<b>静音小通知</b>，让系统不冻住 Unimate。
           </div>
           <button class="btn block sm grey" style="margin-top: 10px" @click="copySelfCheck()">复制自检报告（发我即可）</button>
-          <!-- v2.56：选择性写系统日历（默认关）。国产 ROM 不给"允许后台运行"时的兜底：闹钟由系统日历持有 -->
-          <div class="hairline" style="margin: 12px 0"></div>
+          <div v-if="reportMsg" class="card small" style="margin-top: 8px; background: var(--soft); box-shadow: none; white-space: pre-wrap; word-break: break-all; user-select: text">{{ reportMsg }}</div>
+        </div>
+        <!-- v2.56：选择性写系统日历（默认关）。国产 ROM 不给"允许后台运行"时的兜底：闹钟由系统日历持有 -->
+        <div class="card" style="box-shadow: none; background: var(--soft); margin-top: 10px">
           <label class="row small" style="align-items: flex-start">
             <input type="checkbox" :checked="calSync" @change="toggleCalendarSync" />
             <span>
               <b>同步到系统日历（默认关）</b><br />
-              打开后，未来三周的提醒会写成<b>系统日历里的日程</b>，由日历 App 到点弹通知 ——
-              这样即使 Unimate 被系统冻住，提醒也能准点。代价：这些日程会出现在你的日历里（标题就是提醒内容）。
-              关掉开关会**自动删除**由 Unimate 写入的日程；也可手动清空。
+              打开后，未来三周的提醒会写成<b>系统日历里的日程</b>，由日历 App 到点弹通知，被冻住也能准点。
+              代价：日程会出现在你的日历里（标题即提醒内容）；关掉开关会**自动删除**它们。
             </span>
           </label>
           <div class="small muted" style="margin-top: 6px; line-height: 1.6">
@@ -541,18 +516,6 @@ async function copyInterests(): Promise<void> {
             <button class="btn sm grow grey" :disabled="!calState.written" @click="clearCalendarNow">清空已写入的日程</button>
           </div>
           <div v-if="calMsg" class="small muted" style="margin-top: 6px">{{ calMsg }}</div>
-          <button class="btn block sm ghost" style="margin-top: 8px" @click="rebuildChannels()">重建通知渠道（到点不响时先点这个）</button>
-          <div class="small muted" style="margin-top: 6px; line-height: 1.6">
-            如果自检报告里"通知渠道"显示<b>不是 HIGH(横幅)</b>或<b>无声</b>，说明渠道被系统静音/降级了 —— 点上面这个按钮换一条新渠道，
-            然后按「演示一条通知」等 2 分钟，锁屏看它有没有横幅 + 声音。
-          </div>
-          <div v-if="reportMsg" class="card small" style="margin-top: 8px; background: var(--soft); box-shadow: none; white-space: pre-wrap; word-break: break-all; user-select: text">{{ reportMsg }}</div>
-          <div class="row" style="gap: 8px; margin-top: 10px">
-            <button class="btn sm grow" @click="test(1)">测试提醒（1 分钟）</button>
-            <button class="btn sm grey grow" @click="test(2)">2 分钟</button>
-            <button class="btn sm danger grow" @click="clearAll()">清空排期</button>
-          </div>
-          <div class="small muted" style="margin-top: 8px">测试提醒会在指定时间弹一条系统横幅通知。若到点没弹：先看上面「下一条」时间是否已过，再确认系统设置里 Unimate 的通知横幅已开启。</div>
         </div>
         <button class="btn block grey" style="margin-top: 10px" @click="reschedule()">重建提醒队列</button>
         <button class="btn block ghost" style="margin-top: 8px" @click="saveSettings('通知设置')">保存设置</button>
@@ -572,11 +535,6 @@ async function copyInterests(): Promise<void> {
             <button v-for="f in FONT_LEVELS" :key="f.k" class="chip" :class="{ on: (db.settings.fontSize || 100) === f.k }" @click="setFont(f.k)">{{ f.t }}</button>
           </div>
         </div>
-        <div class="small muted" style="margin-top: 4px; line-height: 1.7">
-          选「跟随系统」时，手机开深色模式 App 会立刻跟着变，不用重启。<br />
-          深色下页面底色、卡片、输入框与文字会整体换一套；课表色块保持原色（白字对比度已够），不做额外降饱和。<br />
-          字号用系统 WebView 的 textZoom，只放大文字、不改布局，所以课表格子不会被挤歪；切换后立即生效，无需重启。
-        </div>
         <button class="btn block grey" style="margin-top: 12px" @click="saveSettings('外观与主题')">保存设置</button>
       </template>
       <template v-else-if="panel === 'watermark'">
@@ -592,7 +550,6 @@ async function copyInterests(): Promise<void> {
         </div>
         <div class="field"><label>固定自定义文字（如姓名 / 学号后四位，会追加在活动名后）</label><input v-model="db.settings.watermarkCustomText" maxlength="20" placeholder="留空则只显示活动名称" /></div>
         <div class="field"><label>底色浓淡 {{ Math.round(db.settings.watermarkOpacity * 100) }}%</label><input v-model.number="db.settings.watermarkOpacity" type="range" min="0.15" max="0.8" step="0.05" /></div>
-        <div class="small muted">不使用任何第三方地图服务与 Key，因此离线也能加水印；每条记录仍可单独关掉水印。</div>
         <button class="btn block" style="margin-top: 10px" @click="saveSettings('拍照水印')">保存设置</button>
       </template>
 
@@ -602,17 +559,12 @@ async function copyInterests(): Promise<void> {
           <button type="button" class="me-ios-switch" role="switch" :aria-checked="db.settings.weatherEnabled" aria-label="天气" @click="db.settings.weatherEnabled = !db.settings.weatherEnabled"><span></span></button>
         </div>
         <div class="small muted" style="line-height: 1.7; margin-bottom: 10px">
-          <b>默认关闭</b>，打开后课表页顶部才出现一行天气。<br />
-          关着的时候 App <b>一次请求都不发</b>；打开后 <b>30 分钟最多更新一次</b>（失败也算一次，不会在没网时反复试）。<br />
-          打开开关或改城市后保存，会<b>立刻</b>拉一次；其它时候点「保存设置」不会重复请求。
+          <b>默认关闭</b>；关着的时候 App <b>一次请求都不发</b>，打开后 <b>30 分钟最多更新一次</b>。
         </div>
 
         <div class="field">
           <label>查询位置（留空 = 用系统定位）</label>
           <input v-model="db.settings.weatherCity" maxlength="20" placeholder="如：北京（拒绝定位授权时在这里手填）" />
-        </div>
-        <div class="small muted" style="margin-bottom: 10px">
-          留空时用系统定位（会申请定位权限）；填了城市名就只按你填的查，<b>不再申请定位权限</b>。
         </div>
 
         <div class="card" style="box-shadow: none; background: var(--soft)">
@@ -625,17 +577,9 @@ async function copyInterests(): Promise<void> {
             <template v-else>打开开关 → 点下面的「立即更新」，课表页顶部就会出现那一行</template>
           </div>
           <div v-if="db.weatherMsg" class="small" style="margin-top: 6px">{{ db.weatherMsg }}</div>
-          <div class="small muted" style="margin-top: 6px">
-            课表页那张卡点一下也会更新，同样受 30 分钟限制；要立刻重拉就点这里的「立即更新」。
-          </div>
         </div>
 
         <button class="btn block" style="margin-top: 10px" :disabled="db.weatherBusy || !db.settings.weatherEnabled" @click="updateWeatherNow()">{{ db.weatherBusy ? '更新中…' : '立即更新' }}</button>
-        <div v-if="!db.settings.weatherEnabled" class="small muted" style="margin-top: 6px">天气现在是关闭状态，点它也不会发请求 —— 先打开上面的开关。</div>
-        <div class="small muted" style="margin-top: 10px; line-height: 1.7">
-          数据来自 Open-Meteo（免费、免注册、不用 Key）。只把<b>大致坐标</b>（或你手填的城市名）发过去查天气，
-          不带账号、课表、设备号；断网或接口失败时显示上次结果 + "x 分钟前更新"，不影响其它功能。
-        </div>
         <button class="btn block ghost" style="margin-top: 10px" @click="saveWeather()">保存设置</button>
       </template>
 
@@ -683,12 +627,12 @@ async function copyInterests(): Promise<void> {
           这些数据在哪、联网时发了什么、怎么关掉。
         -->
         <div class="small" style="line-height: 1.8">
-          <b>你的数据：</b>课表、记事、二课材料都存在这台手机上。<b>教务系统的账号密码 App 从不读取、不保存、不代填</b>，也没有埋点上报。<br />
+          <b>你的数据：</b>课表、记事、二课材料都在本机；<b>教务系统的账号密码 App 从不读取、不保存、不代填</b>。<br />
           <b>会联网的功能（都可以不用）：</b><br />
-          · <b>天气</b>（默认关闭，开关在「我的 → 天气」）：<b>开启天气后会向 Open-Meteo 发送你的大致位置用于查询天气，不发送其他信息</b>；关掉后一次请求都不发，打开后 30 分钟最多更新一次；<br />
-          · <b>高校档案更新</b>：在「选择高校」页每天最多检查一次，只下载公开的学校信息，<b>不上传任何信息</b>；内容带 Ed25519 签名，<b>验签不过一律不安装</b>；<br />
-          · <b>账号登录</b>（可选）：登录后课表等会备份到云端，<b>服务器持有密钥、可以读取这份备份</b>（所以换机能取回、忘了密码能找回）；密码原文不会上传；<br />
-          · <b>端到端加密同步</b>（可选）：服务器只拿到读不懂的密文，口令和恢复码不上传 —— 代价是忘记口令且恢复码丢失就找不回来。<br />
+          · <b>天气</b>（默认关闭）：<b>开启天气后会向 Open-Meteo 发送你的大致位置用于查询天气，不发送其他信息</b>；关掉后一次请求都不发；<br />
+          · <b>高校档案更新</b>：每天最多检查一次，只下载公开信息，<b>不上传任何信息</b>；内容带 Ed25519 签名，<b>验签不过一律不安装</b>；<br />
+          · <b>账号登录</b>（可选）：登录后课表等会备份到云端，<b>服务器持有密钥、可以读取这份备份</b>（换机能取回、忘了密码能找回）；密码原文不会上传；<br />
+          · <b>端到端加密同步</b>（可选）：服务器只拿到读不懂的密文，口令和恢复码不上传 —— 忘记口令且丢恢复码就找不回来。<br />
           <b>声明：</b>学生自制演示作品，与学校官方无关；第二课堂分数为自评记录，非学校认定结果。
         </div>
       </template>

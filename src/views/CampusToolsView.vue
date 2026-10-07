@@ -19,11 +19,11 @@ const capabilities = computed(() => campusCapabilities(db.profile?.schoolId));
 const status = ref('');
 
 const tools = [
-  { key: 'map', icon: '🗺️', name: '校园地图', desc: '离线示意图 · 教室定位' },
-  { key: 'venues', icon: '🏟️', name: '场馆状态', desc: 'MOTION 公开状态 · 只读' },
-  { key: 'fitness', icon: '🏃', name: '体测评分', desc: '本机估算 · 不上传数据' },
-  { key: 'rooms', icon: '🏫', name: '空闲教室', desc: '登录教务后读取结果' },
-  { key: 'courses', icon: '🎯', name: '选课工具', desc: '目录与目标 · 提交已关闭' }
+  { key: 'map', icon: '🗺️', name: '校园地图', desc: '离线示意图' },
+  { key: 'venues', icon: '🏟️', name: '场馆状态', desc: 'MOTION 公开状态' },
+  { key: 'fitness', icon: '🏃', name: '体测评分', desc: '本机估算' },
+  { key: 'rooms', icon: '🏫', name: '空闲教室', desc: '需登录教务' },
+  { key: 'courses', icon: '🎯', name: '选课工具', desc: '提交已关闭' }
 ] as const;
 
 function available(key: typeof tools[number]['key']): boolean {
@@ -209,13 +209,12 @@ onMounted(async () => {
 
     <main class="ct-body">
       <template v-if="panel === 'home'">
-        <div class="ct-hero"><b>校园学习与生活工具</b><span>离线能力直接使用；学校数据只在你主动登录并读取时更新。</span></div>
+        <div class="ct-hero"><b>校园学习与生活工具</b><span>离线可用；联网数据只在你主动读取时更新。</span></div>
         <div class="ct-grid">
           <button v-for="tool in tools" :key="tool.key" class="ct-tile" :class="{ disabled: !available(tool.key) }" @click="openTool(tool.key)">
             <span class="ct-icon">{{ tool.icon }}</span><b>{{ tool.name }}</b><small>{{ available(tool.key) ? tool.desc : '该高校暂未适配' }}</small>
           </button>
         </div>
-        <div class="ct-note">成绩、体测明细和选课目标默认不发送给 Uni、n8n 或云端。教务密码、Cookie 值与登录表单内容不会被读取或保存。</div>
       </template>
 
       <template v-else-if="panel === 'map'">
