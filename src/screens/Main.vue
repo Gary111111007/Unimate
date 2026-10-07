@@ -24,7 +24,7 @@ const TABS = computed(() => [
   { label: '我的', icon: 'user' }
 ]);
 const titles = computed(() => {
-  if (db.activeTab === 0) return (db.profile?.shortName || '') + ' · 课表';
+  if (db.activeTab === 0) return '课程表';
   if (db.activeTab === 1) return db.profile?.secondClass.label || '第二课堂';
   if (db.activeTab === 2) return 'Uni';
   if (db.activeTab === 3) return db.profile?.tabs.online || '校园在线';

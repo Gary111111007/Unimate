@@ -376,12 +376,8 @@ async function probeAll(): Promise<void> {
     <div class="card" style="margin-top: 10px">
       <div class="bold small" style="margin-bottom: 6px">关于登录状态</div>
       <div class="small muted" style="line-height: 1.75">
-        · 这些站点大多会跳到学校统一身份认证。App 内登录后，<b style="color:#3A424E">Cookie 会在页面加载完成时立即写入本机</b>，
-          并在你切到后台、退出界面时再各刷一次盘。<br />
-        · 点右上角「查登录态」可以看到本机当前为每个站点保存了几条 Cookie。
-          显示"无"意味着要么从未在此登录，要么<b style="color:#3A424E">学校把会话设成了不落盘的临时 Cookie</b>。<br />
-        · 本 App 不保存、也读不到你的账号密码：不代填表单、不读取输入框、不导出 Cookie 内容（诊断只统计条数）。<br />
-        · 企业微信必须用它自己的 App（设备级认证，内嵌网页登不上），所以没有列进来。
+        · 这些站点会跳到学校统一身份认证，登录状态记在本机。<br />
+        · App 不保存、也读不到你的账号密码：不代填表单、不读取输入框、不导出 Cookie。
       </div>
     </div>
 

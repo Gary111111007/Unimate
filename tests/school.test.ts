@@ -221,8 +221,9 @@ console.log('\n--- 选校页 v2.71：去课表识别 ---');
    * v2.75 那条提示本身**从阻断降级成说明**（见下面 v2.75 那组），
    * 但"必须出现在 idcard 之前"这个位置要求不变，所以断言跟着换成 .idinfo-top。
    */
+  // v2.76（2026-10-07 文案精简）：没档案那条中性说明被产品负责人划掉，顶部保留的就是"可用导入"那条
   ok('提示条仍在字段之前（不再压在按钮上方）',
-    /idinfo-top/.test(bare) && bare.indexOf('idinfo-top') < bare.indexOf('idcard'), '');
+    /idok-top/.test(bare) && bare.indexOf('idok-top') < bare.indexOf('idcard'), '');
   // v2.73：idwarn 原本写死浅色（#FFF7E8）暗色下会刺眼，改语义色 + 暗色覆盖
   ok('idwarn 不再写死 #FFF7E8，且有暗色覆盖',
     !bare.includes('#FFF7E8') && /:root\[data-theme='dark'\] \.idwarn/.test(bare), '');
@@ -280,8 +281,12 @@ console.log('\n--- 选校页 v2.71：去课表识别 ---');
    */
   ok('没档案不再拦截导入：那段"先去点可下载"的 return 已删除（v2.75）',
     !/needDownload/.test(bare) && !bare.includes('先去卡片上点「可下载」再回来'), '');
-  ok('没档案时给的是中性说明（.idinfo），不是警告（v2.75）',
-    /class="idinfo idinfo-top"/.test(bare) && /\.idinfo \{[^}]*background:\s*var\(--soft\)/.test(bare), '');
+  /*
+   * v2.76（2026-10-07 文案精简）：产品负责人把"这台设备还没有《X》的云端档案"那条说明划掉了。
+   * 行为不变（照样不拦人，见上一条），只是没档案时不再显示任何提示条。
+   */
+  ok('没档案时不再显示说明条（v2.76 精简；仍然不拦人）',
+    !/class="idinfo idinfo-top"/.test(bare) && !/\.idinfo \{/.test(bare), '');
   ok('submit() 不再因缺档案 return（只挡"这个教务类型还没做"）（v2.75）',
     /if \(!canImport\.value\) \{/.test(bare) && /started\.value = true;/.test(bare), '');
 

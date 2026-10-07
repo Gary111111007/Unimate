@@ -279,10 +279,7 @@ const loginPreview = computed(() => loginUrlFor(parsed.value.ok ? parsed.value.p
         所以没档案现在只**告知**（不下载也能试，取回来的课表存本机），
         有档案且已判定可导入的才显示正向结论。
       -->
-      <div v-if="!hasProfile" class="idinfo idinfo-top">
-        这台设备还没有《{{ schoolName }}》的云端档案 —— <b>不影响</b>：填好地址就能直接试，取回来的课表存在本机。
-      </div>
-      <div v-else-if="vendor.importable" class="idok idok-top">
+      <div v-if="vendor.importable" class="idok idok-top">
         这台设备已判定《{{ schoolName }}》可用导入，直接试即可。
       </div>
 
@@ -431,14 +428,6 @@ const loginPreview = computed(() => loginUrlFor(parsed.value.ok ? parsed.value.p
 .idpreview { margin-top: 10px; padding: 9px 12px; border-radius: 12px; background: var(--soft); font-size: 11.5px; color: var(--muted); }
 .idpreview code { display: block; margin-top: 3px; color: var(--text); word-break: break-all; font-size: 11.5px; }
 .idok { margin-top: 10px; padding: 9px 12px; border-radius: 12px; background: var(--tint); color: var(--brand); font-size: 12.5px; line-height: 1.6; }
-/*
- * v2.75：中性的"说明"条（没档案但不拦人）。
- * 不复用 .idwarn —— 那是"有代价的警告"，这里是"告诉你一声，不影响你用"，语气必须轻。
- * 底色仍走语义变量（--soft），暗色下自动翻转，不重演 v2.71/.jwtag 写死浅色的老病。
- */
-.idinfo { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--soft); color: var(--muted); font-size: 12.5px; line-height: 1.6; }
-.idinfo b { color: var(--text); }
-.idinfo-top { margin: 0 0 14px; }
 .idwarn { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255, 159, 10, .14); color: #8A5A00; font-size: 12.5px; line-height: 1.6; }
 /* 顶部那两条（说明/结论）在字段之前出现，边距与字段拉开一点，别贴着抓手条 */
 .idok-top, .idwarn-top { margin: 0 0 14px; }

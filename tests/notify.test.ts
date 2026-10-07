@@ -188,7 +188,12 @@ console.log('');
   ok('App 启动时就把心跳排上（否则是鸡生蛋问题）', /ReminderHeartbeat\.arm\(this\)/.test(activity), '');
   // 自检数字：missed = 账本里有计划、但系统没投递
   ok('清理结果区分"取消数"与"系统没投递数"', /missed: stale\.filter\(\(id\) => planned\.has\(id\)\)\.length/.test(notifySrc), '');
-  ok('通知设置面板显示这个数字（证据要看得见）', /db\.notifyCleanup\.missed/.test(fs.readFileSync(pathMod.join(root, 'src', 'views', 'MeView.vue'), 'utf8')), '');
+  /*
+   * v2.76（2026-10-07 文案精简）：产品负责人把这行诊断信息划掉了，面板不再逐行罗列。
+   * 数据仍在数据层记账（上面那条断言），需要时走「复制自检报告」看。
+   */
+  ok('“系统没投递数”仍由数据层记账（面板不再逐行展示）',
+    /notifyCleanup/.test(fs.readFileSync(pathMod.join(root, 'src', 'stores', 'db.ts'), 'utf8')), '');
 }
 
 /*
@@ -227,7 +232,8 @@ console.log('');
     && /电池优化豁免/.test(notifySrc) && /兜底心跳/.test(notifySrc), '');
   const me = fsMod.readFileSync(pathMod.join(root, 'src', 'views', 'MeView.vue'), 'utf8');
   ok('面板有「复制自检报告」按钮并显示报告', /copySelfCheck/.test(me) && /复制自检报告/.test(me), '');
-  ok('面板显示心跳状态（已排/未排/未检测）', /兜底心跳/.test(me) && /hb\.armed/.test(me), '');
+  // v2.76：面板不再逐行显示心跳状态，改由「复制自检报告」呈现（报告里带 已排/未排 + 累计补投）
+  ok('心跳状态由自检报告呈现（面板不再逐行显示）', /兜底心跳/.test(notifySrc) && /hb\.armed/.test(notifySrc), '');
   // 产品负责人明确不来自启动：文案要把"精确闹钟"与"自启动"分开说清楚
   ok('文案把精确闹钟与自启动分开（不逼用户开自启动）',
     /精确闹钟不是自启动/.test(me) || /精确闹钟/.test(me), '');

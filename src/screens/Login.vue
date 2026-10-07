@@ -136,7 +136,7 @@ async function useDemo(): Promise<void> {
 <template>
   <div class="screen">
     <div class="top">
-      <div class="schoolname">Unimate · 本地账号</div>
+      <div class="schoolname">请登录/注册您的 Unimate 账号</div>
     </div>
 
     <div class="body">
@@ -154,8 +154,8 @@ async function useDemo(): Promise<void> {
           <button :class="{ on: mode === 'register' }" @click="mode = 'register'">注册账号</button>
         </div>
 
-        <div class="field"><label>Unimate 账号</label><input v-model.trim="cloudUser" autocomplete="off" placeholder="3~64 个字符，学号或自己起一个" /></div>
-        <div class="field"><label>密码</label><input v-model="cloudPass" type="password" autocomplete="off" placeholder="至少 8 个字符" /></div>
+        <div class="field"><label>Unimate 账号</label><input v-model.trim="cloudUser" autocomplete="off" placeholder="输入您的账号" /></div>
+        <div class="field"><label>密码</label><input v-model="cloudPass" type="password" autocomplete="off" placeholder="请输入您的密码（至少 8 个字符）" /></div>
         <div v-if="mode === 'register'" class="field"><label>再次输入密码</label><input v-model="cloudPassAgain" type="password" autocomplete="off" placeholder="两次要一致" /></div>
         <label v-if="mode === 'register'" class="row small" style="margin: 4px 0 10px">
           <input v-model="cloudConsent" type="checkbox" />
@@ -164,10 +164,7 @@ async function useDemo(): Promise<void> {
         <!-- v2.49：按钮只写"登录/注册"——"取回课表"是登录之后自动发生的事，不该写进按钮承诺 -->
         <button v-if="mode === 'login'" class="btn block" :disabled="cloudBusy" @click="cloudSignIn">{{ cloudBusy ? '处理中，请勿退出…' : '登录' }}</button>
         <button v-else class="btn block" :disabled="cloudBusy" @click="cloudRegister">{{ cloudBusy ? '处理中，请勿退出…' : '注册' }}</button>
-        <div class="slowhint">
-          <template v-if="mode === 'login'">换新手机就直接登这个账号：云端有备份会自动取回。服务器可能有点慢，通常十几秒到一分钟，期间请勿退出。</template>
-          <template v-else>注册后先选高校、正常用；改完课表会自动备份到云端。</template>
-        </div>
+        <div v-if="mode === 'register'" class="slowhint">注册后先选高校、正常用；改完课表会自动备份到云端。</div>
         <div v-if="cloudMsg" class="cloudmsg">{{ cloudMsg }}</div>
 
         <button class="btn block ghost" style="margin-top: 10px" @click="useDemo">用演示账号登录（admin / buct）</button>
@@ -177,14 +174,6 @@ async function useDemo(): Promise<void> {
 
         <div class="diag" :class="{ bad: !db.storage.ok }">本机存储自检：{{ db.storage.ok ? '正常' : '异常' }} · {{ db.storage.detail }}</div>
         <div v-if="db.lastError" class="errbox">{{ db.lastError }}</div>
-        <div class="note muted small">
-          本机账号与数据默认只保存在本机。会联网的功能包括你主动打开的网页（教务系统等）、<b>默认关闭</b>的天气、
-          "选择高校"页每天最多一次的高校档案检查（只下载公开档案），以及两条<b>可选</b>的云端备份路径：
-          <b>① 账号登录</b>（备份存云端服务器、服务端持密钥可读，换机输账号密码即可取回）；
-          <b>② 端到端加密同步</b>（服务器只存密文，口令与恢复码不上传、不保存）。
-          <b>登录状态会保留</b>：第一次登录需要联网，之后打开 App 不用再登；只有退出登录之后才需要再登一次。
-          换机或忘了密码，点下面的「账号与找回」。
-        </div>
       </div>
     </div>
   </div>
@@ -204,7 +193,6 @@ async function useDemo(): Promise<void> {
 .diag { margin-top: 12px; font-size: 11px; color: var(--muted); background: var(--soft); border-radius: 8px; padding: 7px 9px; word-break: break-all; }
 .diag.bad { background: #FDECEA; color: #7A1F1A; }
 .errbox { margin-top: 12px; background: #FDECEA; color: #7A1F1A; border-radius: 10px; padding: 10px; font-size: 11px; white-space: pre-wrap; word-break: break-all; max-height: 130px; overflow: auto; }
-.note { margin-top: 14px; line-height: 1.6; }
 .cloudmsg { margin-top: 10px; font-size: 11px; line-height: 1.7; color: var(--muted); background: var(--soft-2); border-radius: 8px; padding: 8px 10px; word-break: break-all; }
 .slowhint { margin-top: 8px; font-size: 11px; line-height: 1.6; color: var(--muted); }
 </style>

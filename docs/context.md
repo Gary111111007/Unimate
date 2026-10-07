@@ -1,21 +1,23 @@
-# 项目上下文交接（压缩版 · 2026-10-04，v2.76）
+# 项目上下文交接（压缩版 · 2026-10-07，v2.77）
 
 > 用途：一页装下"现在到哪了、下一步做什么、别踩什么坑"。配合 `AGENTS.md`（硬规则）、`PRD.md`（需求与操作日志）、`Net.md`（联网路线图）、`docs/deploy.md`（部署）一起看。
 
 ## 1. 一句话现状
 
-Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·无二课），APK 可装、演示站已上线；**分享课表**（含二维码）、**天气**（默认关闭、课表页一行）、**学校档案热更新（P2）**、**解析适配器热更新（P2.5）** 均已落地。**v2.68 起选校页装上教务系统识别**（正方优先，卡片显示品牌标签）；**v2.69 把外校正方 jwglxt 的课表导入链路真正做出来**（扩展原生桥 `mode=zfimport`，用户在 WebView 里自助登录 → 原生同源取 `kbList` JSON → 导入）。**AI 侧**：v2.65 在线 Provider 改为 Cloudflare Workers AI（免费额度 + 本机离线兜底），v2.66 起 AI 流量走独立 Pages 入口（与原同步账号解耦），v2.67 下线了整条语音链路、对话历史改成人性化分组。**v2.70 按三张真机截图做了一轮 UI 整改**：Uni 对话接上**安全 Markdown 渲染**（零依赖 token 解析，无 `v-html`）、历史面板改成**以轮为单位**、选校页**整卡点击直接进正方**、卡片状态标签换掉会被 flex 拉成扁白条的全局 `.pill`、主色从 `#007AFF` **降饱和到 `#2C6FE0`**。**v2.71 按第四张真机截图 + 三张参考图又做三项**：外校"待识别"从**死路**（弹「尚未加入落地计划」）改成**活路**（新增 `JwIdentifyPanel.vue`「正方识别」面板，用户自己填域名/基础路径/协议 → 试导入）、Uni **历史入口吸顶常驻**、修暗色下 `.jwtag` 对比度（写死 `#F0F2F5` 的病）。**v2.72 把北化与正校外校分家**（产品负责人：「这个就不要正方了，原来的那样是最好的」）：北化走回**抓页面老路**（`ImportPanel.vue` + `jwglxt-buct` + `#kbgrid_table_0`），外校正方仍走 `kbList` 接口；选校页按 `chainOf()` 分流。**v2.73 按三张真机截图修三处**：正方识别面板 UI 优化（字段三段式 + 阻断提示上移 + 暗色隐患）、**Uni 历史入口这次才真吸顶**（v2.71 漏了"`.uni-chat-list` 也是滚动容器"，两层嵌套导致 sticky 失效）、Uni 底部大片空白（双重留白 272px + grid `align-content: stretch`）。**v2.74 按两张真机截图修两处阻断问题**：①正方识别面板**被裁到无法操作**（`.mask` 用 `overflow: auto` + 面板不限高，上下都被切、按钮点不到）→ 遮罩改 flex 居中 + 面板 `max-height: calc(100dvh - 28px - var(--safe-b))`，面板内部拆成"固定头 / 唯一滚动身 / 固定脚"三段；②Uni 历史入口**贴紧 Uni 标题栏**（v2.73 已吸顶，但负边距只有 `-12px`，与 header 之间仍留一条缝）→ 改 `margin: -12px -16px 10px`、底色条通栏。**v2.75 按一句真机反馈 + 三句要求改三件事**：①面板**改名「课表识别」**（不再自称"正方识别"）；②**不再要求先下载档案**（「我做正方系统的识别是为了让没有云端档案的也可以用这个软件」）—— 面板去掉"先去卡片点可下载"的拦截，`db.ts` 的 `base()` / `newTimetable()` / `loadUserData()` 与 `ZfImportPanel` 的留证路径**共 4 处 `profile.value!` 非空断言**改为安全降级（新增 `LOCAL_SCOPE = '_local'` 占位校名），没有档案也能真的把课表存下来；③**教务类型下拉做实**（新增纯函数 `services/jwKind.ts` 的 `inferTypeFromUrl`，「识别网址」顺带推断类型，「强智/URP/其它」如实说明"链路还没做"，不再假装能导）；Uni 历史入口进一步**内层去卡片化**贴死标题栏下沿。当前全量 **31 套件 / 1391 条断言**（`school` 132 条、`agent` 85 条）。
+Unimate（北化校园助手）已落地 **两所高校**（北化、北二外·无二课），APK 可装、演示站已上线；**分享课表**（含二维码）、**天气**（默认关闭、课表页一行）、**学校档案热更新（P2）**、**解析适配器热更新（P2.5）** 均已落地。**v2.68 起选校页装上教务系统识别**（正方优先，卡片显示品牌标签）；**v2.69 把外校正方 jwglxt 的课表导入链路真正做出来**（扩展原生桥 `mode=zfimport`，用户在 WebView 里自助登录 → 原生同源取 `kbList` JSON → 导入）。**AI 侧**：v2.65 在线 Provider 改为 Cloudflare Workers AI（免费额度 + 本机离线兜底），v2.66 起 AI 流量走独立 Pages 入口（与原同步账号解耦），v2.67 下线了整条语音链路、对话历史改成人性化分组。**v2.70 按三张真机截图做了一轮 UI 整改**：Uni 对话接上**安全 Markdown 渲染**（零依赖 token 解析，无 `v-html`）、历史面板改成**以轮为单位**、选校页**整卡点击直接进正方**、卡片状态标签换掉会被 flex 拉成扁白条的全局 `.pill`、主色从 `#007AFF` **降饱和到 `#2C6FE0`**。**v2.71 按第四张真机截图 + 三张参考图又做三项**：外校"待识别"从**死路**（弹「尚未加入落地计划」）改成**活路**（新增 `JwIdentifyPanel.vue`「正方识别」面板，用户自己填域名/基础路径/协议 → 试导入）、Uni **历史入口吸顶常驻**、修暗色下 `.jwtag` 对比度（写死 `#F0F2F5` 的病）。**v2.72 把北化与正校外校分家**（产品负责人：「这个就不要正方了，原来的那样是最好的」）：北化走回**抓页面老路**（`ImportPanel.vue` + `jwglxt-buct` + `#kbgrid_table_0`），外校正方仍走 `kbList` 接口；选校页按 `chainOf()` 分流。**v2.73 按三张真机截图修三处**：正方识别面板 UI 优化（字段三段式 + 阻断提示上移 + 暗色隐患）、**Uni 历史入口这次才真吸顶**（v2.71 漏了"`.uni-chat-list` 也是滚动容器"，两层嵌套导致 sticky 失效）、Uni 底部大片空白（双重留白 272px + grid `align-content: stretch`）。**v2.74 按两张真机截图修两处阻断问题**：①正方识别面板**被裁到无法操作**（`.mask` 用 `overflow: auto` + 面板不限高，上下都被切、按钮点不到）→ 遮罩改 flex 居中 + 面板 `max-height: calc(100dvh - 28px - var(--safe-b))`，面板内部拆成"固定头 / 唯一滚动身 / 固定脚"三段；②Uni 历史入口**贴紧 Uni 标题栏**（v2.73 已吸顶，但负边距只有 `-12px`，与 header 之间仍留一条缝）→ 改 `margin: -12px -16px 10px`、底色条通栏。**v2.75 按一句真机反馈 + 三句要求改三件事**：①面板**改名「课表识别」**（不再自称"正方识别"）；②**不再要求先下载档案**（「我做正方系统的识别是为了让没有云端档案的也可以用这个软件」）—— 面板去掉"先去卡片点可下载"的拦截，`db.ts` 的 `base()` / `newTimetable()` / `loadUserData()` 与 `ZfImportPanel` 的留证路径**共 4 处 `profile.value!` 非空断言**改为安全降级（新增 `LOCAL_SCOPE = '_local'` 占位校名），没有档案也能真的把课表存下来；③**教务类型下拉做实**（新增纯函数 `services/jwKind.ts` 的 `inferTypeFromUrl`，「识别网址」顺带推断类型，「强智/URP/其它」如实说明"链路还没做"，不再假装能导）；Uni 历史入口进一步**内层去卡片化**贴死标题栏下沿。当前全量 **32 套件 / 1430 条断言**（`school` 132 条、`agent` 89 条、`sync` 189 条；逐套件条数见第 5 节，2026-10-07 实测）。
 
 **v2.76 修掉了那个"怎么就修不好"的历史入口**（产品负责人第四次追问，原话：「**还是有问题啊，怎么就修不好吗？这么简单的一件事**」）。这轮换了方法 —— **先量后改**：装 Playwright + 起 dev server，登录演示账号走一遍，`getBoundingClientRect()` 一量就破案：**滚动 500px 后 `.uni-chat-history.top = -434`**，它从来没 sticky 过。真因是两条 CSS 约束叠加（祖先 `overflow` 构成约束容器 + 真正在滚的是 `<html>`），**跟颜色边框一点关系都没有**。修法是**改层级**：历史入口移出 `.uni-chat-page`、与 `.head` 做兄弟，外包一层不裁剪的 `.uni-chat-wrap`，`top` 走脚本实测的 `--unih-head`；实测改后未滚动与滚 500px **都是 gap=0**。测试也一并升级：从"外观断言"改成"结构断言"（历史入口必须在滚动容器之外），**agent 85→89、css 41→42，全量 1399 条**。
+
+**v2.77（2026-10-07）按产品负责人口述改了 5 处文案**（对着真机截图说一条改一条）：课表页顶部「北化 · 课表」→ **「课程表」**；登录页头部「Unimate · 本地账号」→ **「请登录/注册您的 Unimate 账号」**；账号框占位「3~64 个字符，学号或自己起一个」→ **「输入您的账号」**；密码框占位「至少 8 个字符」→ **「请输入您的密码（至少 8 个字符）」**；**删掉**登录页「换新手机就直接登这个账号：云端有备份会自动取回…」与整段「会联网的功能：…」两段说明 —— 联网/云端披露跟着搬家（账号那条落在注册同意行，其余在「我的 → 关于」与「账号与找回」），`weather` / `schoolpack` / `sync` 五条断言改钉这些位置。全量 32 套件 1430 条绿；**未出包、未真机验证**。详见 PRD 11.84。
 
 ## 2. 代码与版本
 
 | 项 | 值 |
 | --- | --- |
-| 仓库 | 工作目录 `D:\BUCT\Unimate\UnimateUL-main\UnimateUL-main`（该目录**不是 git 仓库**，无 `.git`） |
-| 最新版本 | **v2.76**（历史入口"钉不住"真因 = 层级问题，2026-10-04） |
-| 版本脉络（近期） | v2.65 Workers AI 免费在线 → v2.66 AI 独立入口 + 在线 AI APK → v2.67 下线语音 + 历史人性化 → v2.68 选校页教务系统识别 → v2.69 外校 jwglxt 导入链路 → v2.70 对话 Markdown + 历史按轮 + 整卡进正方 + 降蓝 → v2.71 正方识别面板 + 历史入口吸顶 → v2.72 北化/外校分家 → v2.73 面板三段式 + 历史入口真吸顶 → v2.74 面板拆三段防裁切 + 贴紧标题栏 → v2.75 课表识别改口径 + 教务类型做实 → **v2.76 历史入口改层级（移出滚动容器 + `--unih-head` 实测吸附）** |
-| 最新 APK | `artifacts/android/unimate-debug.apk`，**6.74 MB**，SHA-256 `7E4DDE7E347C116843E4A13159315D9E847C2C0550F3FA1F2E8F85A632518E2F`（**v2.76**，2026-10-04 出包，六步全绿：第 6 步 13 项完整性全 True、`apksigner verify` 通过、bundle 名/内容与 dist 一致）。上一版 v2.75 留档指纹 `05BC3896…9FD13` |
+| 仓库 | 工作目录 `D:\zzycampus\Unimate\UnimateUL`（**是 git 仓库**：`origin = Gary111111007/Unimate`，当前分支 `ui/copy-slim`，PR #3 开着；早前记录里的 `D:\BUCT\Unimate\UnimateUL-main` 是另一台机器的无 git 副本） |
+| 最新版本 | **v2.77**（标题与登录页文案按产品负责人口述精简，2026-10-07；**只改文案、未出包**） |
+| 版本脉络（近期） | v2.65 Workers AI 免费在线 → v2.66 AI 独立入口 + 在线 AI APK → v2.67 下线语音 + 历史人性化 → v2.68 选校页教务系统识别 → v2.69 外校 jwglxt 导入链路 → v2.70 对话 Markdown + 历史按轮 + 整卡进正方 + 降蓝 → v2.71 正方识别面板 + 历史入口吸顶 → v2.72 北化/外校分家 → v2.73 面板三段式 + 历史入口真吸顶 → v2.74 面板拆三段防裁切 + 贴紧标题栏 → v2.75 课表识别改口径 + 教务类型做实 → v2.76 历史入口改层级（移出滚动容器 + `--unih-head` 实测吸附）→ **v2.77 标题「课程表」+ 登录页头部/占位文案 + 删两段联网说明（披露搬到注册同意行与「我的 → 关于」）** |
+| 最新 APK | `artifacts/android/unimate-debug.apk`，**6.74 MB**，SHA-256 `66FBFCACE91DEE0280C673340064242D0D2068ADD37C1EA8C00243CECFD0FD76`（2026-10-07 出包，已作为 GitHub Release `v2.76` 资产发布：<https://github.com/Gary111111007/Unimate/releases/tag/v2.76>；**v2.77 这轮文案改动尚未出包**）。上一版留档指纹 `7E4DDE7E…8E2F`（2026-10-04）、`05BC3896…9FD13`（v2.75） |
 | 演示站 | `https://unimate3.pages.dev`（Cloudflare Pages）；线上前端 = **v2.45** 时代 bundle（`assets/index-BrCScQRS.js`）；AI 独立入口 `https://unimate3-ai-pages.pages.dev`（v2.66 起） |
 | Pages 交付 | **只有目录**：`node scripts\make-pages-package.mjs v2.65` → `artifacts\cloudflare\unimate-cloudflare-v2.65-upload`（15 文件 / 0.8 MB，根目录含 `_worker.js`）。**v2.52 起不再压 ZIP**（历史 ZIP 留档仍在 `artifacts/`）。v2.70 未动 Pages（前端 bundle 变了但要重拖时另出包） |
 | 先读哪 | 云端与 P3 的最新状态看 **`PRD.md` 开头的「当前接续摘要」** 与 **`Net.md` 的「当前云端接续摘要」**（本节只保留工程侧的通用交接） |
@@ -136,7 +138,7 @@ npm run test:jwaddress    # 教务地址解析纯函数（48 条，v2.71）
 npm run test:zfimport     # 外校正方导入编排（33 条）
 npm run test:zfclient     # 正方协议纯函数（68 条）
 npm run test:jwsystems    # 教务系统品牌识别（24 条）
-npm run test:academic     # P4 成绩/考试识别、本机持久化、不上云（32 条）
+npm run test:academic     # P4 成绩/考试识别、本机持久化、不上云（34 条）
 node scripts\make-pages-package.mjs v2.65   # 只出可拖放目录（不压 ZIP）
 npm run check:cloud       # 线上账号链路自检（临时账号走注册→上传→下载→注销，自清理；需外网）
 node --experimental-strip-types scripts\make-school-pack.mjs   # 重新导出 + 签名学校档案下发包（见 docs/school-pack.md）
@@ -151,12 +153,17 @@ curl.exe -sS https://unimate3.pages.dev/ | Select-String 'index-.*\.js'      # �
 parser 57 · zip 15 · notify 124 · color 15 · guard 6 · order 4 · boot 14 · refs 2 · css 42
 handbook 23 · toolbox 29 · watermark 19 · exam 45 · gesture 12 · school 132 · jwsystems 24
 zfclient 68 · zfimport 33 · markdown 37 · jwaddress 48 · share 53 · avatar 12 · calendar 8
-weather 75 · sync 188 · schoolpack 105 · adapters 62 · login 27 · uni 24 · agent 89
+weather 75 · sync 189 · schoolpack 105 · adapters 62 · academic 34 · login 27 · uni 24 · agent 89
 p5-prototype 3（node --test，TAP 形式）
-合计 1399 条
+合计 1430 条（2026-10-07 全量实测 · 32 套件全绿）
 ```
 
 ## 6. 踩过的坑（别重复）
+
+### 本轮新增（v2.77）
+- **删 UI 文案前先 `grep -rn "<原句>" tests/`**：产品负责人删掉登录页两段说明，直接带倒 4 条断言（`weather` 1 条、`schoolpack` 1 条、`sync` 2 条）—— 这个仓库里**界面文案是一等公民**，很多句是当年产品负责人点名要写的，测试把它们钉死了。删之前先查钉子；删之后二选一：**披露搬到别处就把断言改钉新位置**（本轮 3 条），**彻底删就改成反向取证**（本轮 2 条）。别顺手把断言一起删 —— 那等于把"UI 不许撒谎"的护栏也拆了。
+- **"如实披露"类文案只许搬家、不许静默消失**：登录页那两段删掉后，账号模式"服务器持有密钥、可以读取"落在注册页签的同意行，天气 / 高校档案检查 / 端到端加密三条留在「我的 → 关于」—— 删除前先确认每一条披露在新结构里有落点。
+- **title 里的 `${校名} · 课表` 被改成固定值后，`shortName` 在该文件里就没有引用了**：改文案时顺手 `grep shortName` 确认没有别处依赖同一表达式（本轮 `Main.vue` 只有那一处）。
 
 ### 本轮新增（v2.76）
 - **【最重要】"位置钉不住"要先量后改，别猜样式**。前四轮（v2.72~v2.75）我每次都在调底色/边框/负边距，真机上永远差一条缝。这轮装了 Playwright、起 dev server、登录演示账号 → 选北化 → 切 Uni，一句 `getBoundingClientRect()` 就拿到铁证：
