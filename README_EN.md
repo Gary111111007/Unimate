@@ -1,10 +1,25 @@
-# Unimate
+<p align="center">
+  <img src="./readme-banner.svg" alt="Unimate — your campus, in one place" width="100%">
+</p>
 
-[中文](./README.md) | **English**
+<h1 align="center">Unimate</h1>
+<p align="center"><strong>Your companion for university study and campus life.</strong><br>Timetables, notes, campus services, and Uni by your side.</p>
+<p align="center"><a href="./README.md">简体中文</a> · <strong>English</strong></p>
+<p align="center"><a href="#features">Features</a> &nbsp; · &nbsp; <a href="#try-the-demo">Try the demo</a> &nbsp; · &nbsp; <a href="#development-testing-and-android-builds">Development</a> &nbsp; · &nbsp; <a href="#data-backup-and-privacy">Data &amp; privacy</a></p>
 
-> An all-in-one companion for university study and campus life. Bring timetables, notes, extracurricular records and campus services together, with Uni as a text assistant.
+---
 
 Unimate is built for Android, with **Beijing University of Chemical Technology (BUCT)** as its first university deployment. The Android application ID is `com.unimate.app`. The project is currently a student-built demonstration and personal-use application; see the [PRD](./PRD.md) and [project context](./docs/context.md) for requirements and acceptance details.
+
+## Unimate at a glance
+
+| 📅 Timetables | 📝 Notes & exams | 📷 Extracurriculars |
+| :--- | :--- | :--- |
+| Weekly views, academic imports, course management and sharing | To-dos, exam recognition and local reminders | Activity records, self-assessment and photo materials |
+| **💬 Uni assistant** | **🏫 Campus services** | **☁️ Backup & transfer** |
+| Local rules for common requests, with an online option for open questions | University links, an illustrative map and useful tools | Account backup, optional encrypted sync and local ZIP |
+
+> **Trying Unimate?** Choose the demo account `admin` / `buct` on the sign-in screen. See below for feature and university availability.
 
 ## Contents
 
@@ -15,6 +30,8 @@ Unimate is built for Android, with **Beijing University of Chemical Technology (
 - [Development, testing and Android builds](#development-testing-and-android-builds)
 - [Architecture and repository](#architecture-and-repository)
 - [Limitations and documentation](#limitations-and-documentation)
+
+---
 
 ## Features
 
@@ -52,6 +69,8 @@ Unimate is built for Android, with **Beijing University of Chemical Technology (
 - Common requests are handled by local rules first; open-ended requests can use the Unimate online service. If the network or service is unavailable, the app attempts local rules; not every question can be answered offline.
 - Online requests contain text deliberately sent by the user. The client does not automatically attach timetables, teachers, classrooms or notes. Avoid entering information you do not wish to share. See the [Uni architecture](./docs/agent-architecture.md).
 
+---
+
 ## University and academic-system support
 
 | University | Profile and availability |
@@ -61,6 +80,8 @@ Unimate is built for Android, with **Beijing University of Chemical Technology (
 | Other universities | Listed as “in development,” not fully supported. The timetable identification flow can attempt Zhengfang imports, depending on the actual system. Import paths for Qiangzhi, URP and other types are not complete. |
 
 School profiles and declarative parser rule packs support signature verification and updates; failed verification falls back to bundled content. See [school profiles](./docs/school-pack.md) and [parser adapters](./docs/adapters.md).
+
+---
 
 ## Data, backup and privacy
 
@@ -74,6 +95,8 @@ A complete copy of app data remains on the device; cloud services provide backup
 
 The cloud currently uses **Cloudflare nodes outside mainland China**. Readable backups in account mode involve cross-border data transfer. Before operating for real users, move storage to mainland China or address applicable personal-information and cross-border transfer requirements. See the [cloud service documentation](./cloudflare/sync-worker/README.md).
 
+---
+
 ## Try the demo
 
 1. Start the project and select the **demo account** on the sign-in screen (`admin` / `buct`).
@@ -81,6 +104,8 @@ The cloud currently uses **Cloudflare nodes outside mainland China**. Readable b
 3. Try the timetable toolbox, notes and Uni. Some native entry points use demo samples or fallbacks in a desktop browser; this does not replace an Android test.
 
 The signed-in session persists. Initial sign-in, signing in again after logging out, and changing schools require the relevant network access. Service availability depends on deployment and network conditions.
+
+---
 
 ## Development, testing and Android builds
 
@@ -119,6 +144,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-apk.ps1
 
 The script runs tests, builds, syncs Android and checks package contents. Its output is `artifacts/android/unimate-debug.apk`. Native WebView, camera, file selection, notifications and background reminders still require testing on a real device. A successful build alone does not establish that device testing passed.
 
+---
+
 ## Architecture and repository
 
 ```text
@@ -137,6 +164,8 @@ p5-assistant/         standalone AI assistant workspace
 ```
 
 The UI and local data layer live in `src/`. Android bridges provide device features such as WebView and notifications. Cloud services provide account backup, encrypted sync and the online assistant endpoint. P4 and P5 are separate workspaces; consult their READMEs and NOTES for integration status.
+
+---
 
 ## Limitations and documentation
 
